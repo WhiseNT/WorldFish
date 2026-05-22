@@ -5,9 +5,10 @@
 """
 
 import os
+import re
 import uuid
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -19,6 +20,27 @@ from ..config import Config
 from ..utils.logger import get_logger
 
 logger = get_logger("worldfish.rag")
+
+RAG_CHUNK_PRESETS = [
+    {
+        "id": "novel",
+        "name": "小说章节",
+        "description": "优先按“第X章/第X节/Chapter X”等章节标题切分，超长章节自动再切块。",
+        "default": True,
+    },
+    {
+        "id": "default",
+        "name": "通用段落",
+        "description": "按段落和句子边界切分，适合设定文档、说明书和短文本。",
+        "default": False,
+    },
+]
+
+CHAPTER_HEADING_RE = re.compile(
+    r"(?m)^(?P<title>\s*(?:第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[章节卷部回]|Chapter\s+\d+|CHAPTER\s+\d+|Part\s+\d+|PART\s+\d+)[^\n]{0,80})$"
+)
+
+ProgressCallback = Callable[[str, int, str, Optional[Dict[str, Any]]], None]
 
 # ChromaDB 全局客户端（线程安全）
 _chroma_client: Optional[chromadb.PersistentClient] = None
@@ -157,15 +179,36 @@ class RagService:
             cls._local_model = SentenceTransformer(model_name)
         return cls._local_model
 
-    def _embed(self, texts: List[str], batch_size: int = 20) -> List[List[float]]:
-        """将文本列表转为向量。先尝试 API，失败则回退到本地模型。
-        
-        ModelScope API 请求体限制 6MB，因此分批发送。
-        """
+    def _emit_progress(
+        self,
+        progress_callback: Optional[ProgressCallback],
+        stage: str,
+        progress: int,
+        message: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if progress_callback:
+            progress_callback(stage, max(0, min(int(progress), 100)), message, detail or {})
+
+    @classmethod
+    def get_chunk_presets(cls) -> List[Dict[str, Any]]:
+        return [dict(item) for item in RAG_CHUNK_PRESETS]
+
+    def _embed(
+        self,
+        texts: List[str],
+        batch_size: int = 20,
+        progress_callback: Optional[ProgressCallback] = None,
+        progress_start: int = 25,
+        progress_end: int = 80,
+    ) -> List[List[float]]:
+        """将文本列表转为向量。先尝试 API，失败则回退到本地模型。"""
         if not texts:
             return []
 
         emb_config = Config.get_embedding_config()
+        total = len(texts)
+        batch_count = max(1, (total + batch_size - 1) // batch_size)
 
         def _api_embed_batch(batch: List[str]) -> List[List[float]]:
             response = self._embedding_client.embeddings.create(
@@ -178,16 +221,39 @@ class RagService:
         all_embeddings = []
 
         try:
-            # 优先使用 API Embedding，分批发送
-            for i in range(0, len(texts), batch_size):
+            self._emit_progress(progress_callback, "embedding", progress_start, f"正在生成向量：共 {total} 个文本块，{batch_count} 个批次", {
+                "total_chunks": total,
+                "batch_count": batch_count,
+                "embedding_provider": "api",
+            })
+            for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
                 batch = texts[i:i + batch_size]
                 all_embeddings.extend(_api_embed_batch(batch))
+                processed = min(i + len(batch), total)
+                progress = progress_start + int((progress_end - progress_start) * processed / max(total, 1))
+                self._emit_progress(progress_callback, "embedding", progress, f"正在生成向量：第 {batch_index}/{batch_count} 批，已处理 {processed}/{total} 个文本块", {
+                    "total_chunks": total,
+                    "processed_chunks": processed,
+                    "batch_index": batch_index,
+                    "batch_count": batch_count,
+                    "embedding_provider": "api",
+                })
             return all_embeddings
         except Exception as e:
             logger.warning(f"API Embedding 失败 ({e})，回退到本地模型")
+            self._emit_progress(progress_callback, "embedding_fallback", progress_start, "API Embedding 失败，正在回退到本地模型", {
+                "total_chunks": total,
+                "embedding_provider": "local",
+                "api_error": str(e)[:200],
+            })
             try:
                 model = self._get_local_embedding_fn()
                 embeddings = model.encode(texts, normalize_embeddings=True)
+                self._emit_progress(progress_callback, "embedding", progress_end, f"本地向量生成完成：{total}/{total} 个文本块", {
+                    "total_chunks": total,
+                    "processed_chunks": total,
+                    "embedding_provider": "local",
+                })
                 return [emb.tolist() for emb in embeddings]
             except Exception as local_e:
                 logger.error(f"本地 Embedding 也失败: {local_e}")
@@ -202,6 +268,7 @@ class RagService:
         texts: List[str],
         metadatas: Optional[List[Dict[str, Any]]] = None,
         source: str = "manual",
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> List[str]:
         """批量添加文档到 RAG。
 
@@ -224,7 +291,10 @@ class RagService:
             meta.setdefault("indexed_at", datetime.now().isoformat())
 
         try:
-            embeddings = self._embed(texts)
+            embeddings = self._embed(texts, progress_callback=progress_callback)
+            self._emit_progress(progress_callback, "writing", 85, f"正在写入向量数据库：{len(texts)} 个文本块", {
+                "total_chunks": len(texts),
+            })
             self._collection.add(
                 ids=doc_ids,
                 embeddings=embeddings,
@@ -232,6 +302,10 @@ class RagService:
                 metadatas=metadatas,
             )
             logger.info(f"RAG [{self.world_id}]: 添加 {len(texts)} 个文档 ({source})")
+            self._emit_progress(progress_callback, "done", 100, f"索引完成：已写入 {len(texts)} 个文本块", {
+                "total_chunks": len(texts),
+                "doc_ids": doc_ids,
+            })
             return doc_ids
         except Exception as e:
             logger.error(f"RAG 添加文档失败: {e}")
@@ -244,6 +318,8 @@ class RagService:
         chunk_overlap: int = None,
         source: str = "manual",
         metadata: Optional[Dict[str, Any]] = None,
+        chunk_preset: str = "default",
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> List[str]:
         """将长文本切块后添加到 RAG。
 
@@ -259,18 +335,86 @@ class RagService:
         """
         chunk_size = chunk_size or Config.RAG_CHUNK_SIZE
         chunk_overlap = chunk_overlap or Config.RAG_CHUNK_OVERLAP
+        preset = str(chunk_preset or "default").strip().lower()
+        if preset not in {item["id"] for item in RAG_CHUNK_PRESETS}:
+            preset = "default"
 
-        chunks = self._split_text(text, chunk_size, chunk_overlap)
-        if not chunks:
+        self._emit_progress(progress_callback, "preprocessing", 5, f"正在预处理文本：{len(text or '')} 字符", {
+            "chunk_preset": preset,
+            "text_length": len(text or ""),
+        })
+        chunks_with_meta = self._split_text_by_preset(text, preset, chunk_size, chunk_overlap)
+        if not chunks_with_meta:
             return []
 
-        base_meta = dict(metadata or {})
-        metadatas = [
-            {**base_meta, "chunk_index": i, "chunk_count": len(chunks)}
-            for i in range(len(chunks))
-        ]
+        chunks = [item[0] for item in chunks_with_meta]
+        self._emit_progress(progress_callback, "splitting", 18, f"切分完成：使用{self._preset_name(preset)}，生成 {len(chunks)} 个文本块", {
+            "chunk_preset": preset,
+            "chunk_count": len(chunks),
+            "chapter_count": len({meta.get("chapter_index") for _, meta in chunks_with_meta if meta.get("chapter_index") is not None}),
+        })
 
-        return self.add_documents(texts=chunks, metadatas=metadatas, source=source)
+        base_meta = dict(metadata or {})
+        metadatas = []
+        for i, (chunk_text, chunk_meta) in enumerate(chunks_with_meta):
+            metadatas.append({
+                **base_meta,
+                **chunk_meta,
+                "chunk_index": i,
+                "chunk_count": len(chunks),
+                "chunk_preset": preset,
+                "text_length": len(chunk_text),
+            })
+
+        return self.add_documents(texts=chunks, metadatas=metadatas, source=source, progress_callback=progress_callback)
+
+    def _preset_name(self, preset: str) -> str:
+        for item in RAG_CHUNK_PRESETS:
+            if item["id"] == preset:
+                return item["name"]
+        return preset
+
+    def _split_text_by_preset(self, text: str, preset: str, chunk_size: int, chunk_overlap: int) -> List[Tuple[str, Dict[str, Any]]]:
+        if preset == "novel":
+            chunks = self._split_novel_chapters(text, chunk_size, chunk_overlap)
+            if chunks:
+                return chunks
+        return [(chunk, {}) for chunk in self._split_text(text, chunk_size, chunk_overlap)]
+
+    def _split_novel_chapters(self, text: str, chunk_size: int, chunk_overlap: int) -> List[Tuple[str, Dict[str, Any]]]:
+        clean_text = text.strip()
+        if not clean_text:
+            return []
+        matches = list(CHAPTER_HEADING_RE.finditer(clean_text))
+        if not matches:
+            return [(chunk, {}) for chunk in self._split_text(clean_text, chunk_size, chunk_overlap)]
+
+        results: List[Tuple[str, Dict[str, Any]]] = []
+        for chapter_index, match in enumerate(matches):
+            start = match.start()
+            end = matches[chapter_index + 1].start() if chapter_index + 1 < len(matches) else len(clean_text)
+            chapter_text = clean_text[start:end].strip()
+            title = match.group("title").strip()
+            if not chapter_text:
+                continue
+            if len(chapter_text) <= chunk_size:
+                results.append((chapter_text, {
+                    "chapter_title": title,
+                    "chapter_index": chapter_index,
+                    "chapter_chunk_index": 0,
+                    "chapter_chunk_count": 1,
+                }))
+                continue
+
+            sub_chunks = self._split_text(chapter_text, chunk_size, chunk_overlap)
+            for sub_index, sub_chunk in enumerate(sub_chunks):
+                results.append((sub_chunk, {
+                    "chapter_title": title,
+                    "chapter_index": chapter_index,
+                    "chapter_chunk_index": sub_index,
+                    "chapter_chunk_count": len(sub_chunks),
+                }))
+        return results
 
     def _split_text(self, text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
         """按段落边界智能切分。优先在空行处断句。"""

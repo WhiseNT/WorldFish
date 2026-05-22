@@ -271,37 +271,38 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     if not os.path.exists(simulation_dir):
         return False, {"reason": "模拟目录不存在"}
     
-    # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
-    required_files = [
-        "state.json",
-        "simulation_config.json",
-        "reddit_profiles.json",
-        "twitter_profiles.csv"
-    ]
-    
-    # 检查文件是否存在
-    existing_files = []
-    missing_files = []
-    for f in required_files:
-        file_path = os.path.join(simulation_dir, f)
-        if os.path.exists(file_path):
-            existing_files.append(f)
-        else:
-            missing_files.append(f)
-    
-    if missing_files:
-        return False, {
-            "reason": "缺少必要文件",
-            "missing_files": missing_files,
-            "existing_files": existing_files
-        }
-    
-    # 检查state.json中的状态
     state_file = os.path.join(simulation_dir, "state.json")
+    if not os.path.exists(state_file):
+        return False, {"reason": "缺少必要文件", "missing_files": ["state.json"], "existing_files": []}
+
+    # 检查state.json中的状态
     try:
         import json
         with open(state_file, 'r', encoding='utf-8') as f:
             state_data = json.load(f)
+
+        # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
+        required_files = ["state.json", "simulation_config.json"]
+        if state_data.get("enable_reddit", True):
+            required_files.append("reddit_profiles.json")
+        if state_data.get("enable_twitter", True):
+            required_files.append("twitter_profiles.csv")
+
+        existing_files = []
+        missing_files = []
+        for f in required_files:
+            file_path = os.path.join(simulation_dir, f)
+            if os.path.exists(file_path):
+                existing_files.append(f)
+            else:
+                missing_files.append(f)
+
+        if missing_files:
+            return False, {
+                "reason": "缺少必要文件",
+                "missing_files": missing_files,
+                "existing_files": existing_files
+            }
         
         status = state_data.get("status", "")
         config_generated = state_data.get("config_generated", False)
@@ -1686,7 +1687,7 @@ def stop_simulation():
         manager = SimulationManager()
         state = manager.get_simulation(simulation_id)
         if state:
-            state.status = SimulationStatus.PAUSED
+            state.status = SimulationStatus.STOPPED
             manager._save_simulation_state(state)
         
         return jsonify({

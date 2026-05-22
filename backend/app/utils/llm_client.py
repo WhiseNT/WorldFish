@@ -29,14 +29,18 @@ class LLMClient:
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        role: str = "agent",
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model = model or Config.LLM_MODEL_NAME
+        resolved_config = Config.get_llm_config(role)
+        self.role = role
+        self.resolved_from = resolved_config.get("resolved_from", role)
+        self.api_key = api_key or resolved_config["api_key"]
+        self.base_url = base_url or resolved_config["base_url"]
+        self.model = model or resolved_config["model_name"]
         
         if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
+            raise ValueError("LLM API Key 未配置，请配置 LLM_API_KEY / SUBAGENT_LLM_API_KEY / PARSER_LLM_API_KEY 中至少一个")
         
         self.client = OpenAI(
             api_key=self.api_key,

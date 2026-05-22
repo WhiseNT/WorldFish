@@ -265,6 +265,8 @@ const evolutionConfig = ref({})
 const consolidationSummary = ref(null)
 let pollTimer = null
 
+const terminalStatuses = new Set(['completed', 'failed'])
+
 const graphData = ref(null)
 const graphLoading = ref(false)
 const graphMessage = ref('暂无可用图谱数据。')
@@ -551,6 +553,9 @@ async function fetchEvolution() {
 }
 
 function startPolling() {
+  if (pollTimer) {
+    return
+  }
   pollTimer = setInterval(async () => {
     try {
       const res = await service.get(`/api/evolution/${evolutionId.value}`)
@@ -573,12 +578,12 @@ function startPolling() {
       if (worldId.value && (previousRoundCount !== rounds.value.length || previousStatus !== status.value || !graphData.value)) {
         await loadGraph()
       }
-      if (status.value === 'completed' || status.value === 'failed') { clearInterval(pollTimer); pollTimer = null }
+      if (terminalStatuses.has(status.value)) { clearInterval(pollTimer); pollTimer = null }
     } catch (e) { /* ignore */ }
   }, 3000)
 }
 
-onMounted(async () => { await fetchEvolution(); if (status.value === 'running') startPolling() })
+onMounted(async () => { await fetchEvolution(); if (!terminalStatuses.has(status.value)) startPolling() })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
 function startBranchFrom(roundNum) {
@@ -621,7 +626,7 @@ async function applyChanges() {
   applying.value = true; applyMsg.value = ''; applyErr.value = ''
   try {
     const res = await service.post(`/api/evolution/${evolutionId.value}/apply`, {
-      entities: selectedEntities.value.map(e => ({ name: e.name, state_changes: e.state_changes, new_status: e.new_status })),
+      entities: selectedEntities.value.map(e => ({ round: e.round, name: e.name, state_changes: e.state_changes, new_status: e.new_status })),
       events: selectedEvents.value,
       rounds: [...new Set(selectedEntities.value.map(e => e.round))],
     })

@@ -81,7 +81,7 @@ class EnhancedWorldExtractor:
     def _get_client():
         """每线程独立 LLMClient，8 线程x独立连接池 = 8 倍并发"""
         if not hasattr(_thread_local, 'client'):
-            _thread_local.client = LLMClient()
+            _thread_local.client = LLMClient(role="parser")
         return _thread_local.client
 
     def _record_error(self, stage: str, error: Exception):

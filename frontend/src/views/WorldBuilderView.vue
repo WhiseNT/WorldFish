@@ -262,6 +262,16 @@
               <span class="progress-stage">{{ extractProgress.message }}</span>
               <span class="progress-pct">{{ extractProgress.progress }}%</span>
             </div>
+            <div v-if="extractProgress.ragProgress" class="rag-sub-progress">
+              <div class="rag-sub-header">
+                <span>RAG 向量索引</span>
+                <span>{{ extractProgress.ragProgress.progress || 0 }}%</span>
+              </div>
+              <div class="progress-bar-container sub-progress-bar">
+                <div class="progress-bar-fill rag-progress-fill" :style="{ width: (extractProgress.ragProgress.progress || 0) + '%' }"></div>
+              </div>
+              <p class="rag-sub-message">{{ extractProgress.ragProgress.message }}</p>
+            </div>
           </div>
 
           <p v-if="extractError" class="extract-error">{{ extractError }}</p>
@@ -2780,7 +2790,7 @@ export default {
       },
       extractText: '',
       isExtracting: false,
-      extractProgress: { stage: '', progress: 0, message: '' },
+      extractProgress: { stage: '', progress: 0, message: '', detail: {}, ragProgress: null },
       extractPollTimer: null,
       extractedData: null,
       selectedFiles: [],
@@ -3683,7 +3693,7 @@ export default {
       this.isExtracting = true
       this.extractError = ''
       this.extractedData = null
-      this.extractProgress = { stage: 'starting', progress: 0, message: '正在提交提取任务...' }
+      this.extractProgress = { stage: 'starting', progress: 0, message: '正在提交提取任务...', detail: {}, ragProgress: null }
       try {
         // 如果没有 worldId，先轻量创建以便 RAG 自动索引
         const hasWorldId = await this.ensureWorldId()
@@ -3724,6 +3734,8 @@ export default {
               stage: progResp.stage || '',
               progress: progResp.progress || 0,
               message: progResp.message || '',
+              detail: progResp.detail || {},
+              ragProgress: progResp.rag_progress || progResp.detail?.rag_progress || null,
             }
             if (progResp.done) {
               if (progResp.extracted_data) {
@@ -4749,6 +4761,38 @@ export default {
   outline: none;
   border-color: var(--primary-blue);
   box-shadow: 0 0 0 2px var(--primary-blue-light);
+}
+
+.rag-sub-progress {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: var(--radius-sm);
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.rag-sub-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--wf-text-secondary);
+}
+
+.sub-progress-bar {
+  height: 6px;
+}
+
+.rag-progress-fill {
+  background: linear-gradient(90deg, #10b981, #3b82f6);
+}
+
+.rag-sub-message {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--wf-text-muted);
 }
 
 /* =========== Buttons =========== */

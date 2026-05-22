@@ -5,6 +5,7 @@ OASIS模拟管理器
 """
 
 import os
+import csv
 import json
 import shutil
 from typing import Dict, Any, List, Optional
@@ -501,8 +502,14 @@ class SimulationManager:
             raise ValueError(f"模拟不存在: {simulation_id}")
         
         sim_dir = self._get_simulation_dir(simulation_id)
-        profile_path = os.path.join(sim_dir, f"{platform}_profiles.json")
-        
+        if platform == "twitter":
+            profile_path = os.path.join(sim_dir, "twitter_profiles.csv")
+            if not os.path.exists(profile_path):
+                return []
+            with open(profile_path, 'r', encoding='utf-8', newline='') as f:
+                return list(csv.DictReader(f))
+
+        profile_path = os.path.join(sim_dir, "reddit_profiles.json")
         if not os.path.exists(profile_path):
             return []
         

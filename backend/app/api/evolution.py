@@ -8,7 +8,7 @@ from flask import Blueprint, request, jsonify
 from ..config import Config
 from ..models.world import WorldManager
 from ..models.evolution import Evolution, EvolutionManager
-from ..services.world_evolution_engine import WorldEvolutionEngine
+from ..services.world_evolution_engine import WorldEvolutionEngine, _coerce_focus_areas, _coerce_rounds, _coerce_temperature
 from ..utils.logger import get_logger
 
 evolution_bp = Blueprint('evolution', __name__)
@@ -362,8 +362,12 @@ def create_evolution():
             return jsonify({'success': False, 'message': '请提供世界观 ID'}), 400
         if not scenario:
             return jsonify({'success': False, 'message': '请提供推演场景'}), 400
-        if not Config.LLM_API_KEY:
+        if not Config.get_llm_config('subagent').get('api_key'):
             return jsonify({'success': False, 'message': 'LLM API Key 未配置'}), 400
+
+        config['rounds'] = _coerce_rounds(config.get('rounds', 5))
+        config['temperature'] = _coerce_temperature(config.get('temperature', 0.7))
+        config['focus_areas'] = _coerce_focus_areas(config.get('focus_areas') or [])
 
         world = WorldManager.get_world(world_id)
         if not world:
@@ -389,6 +393,8 @@ def create_evolution():
                         r.narrative for r in selected_parent_rounds
                     ],
                     'parent_affected_entities': [],
+                    'parent_new_events': [],
+                    'parent_rounds': [],
                 }
                 if last_parent_round:
                     accumulated_context['parent_anchor'] = {
@@ -400,8 +406,22 @@ def create_evolution():
                         config['time_span_start'] = last_parent_round.year_advanced_to
 
                 for r in selected_parent_rounds:
+                    round_affected_entities = []
+                    round_new_events = []
                     for ent in (r.affected_entities or []):
-                        accumulated_context['parent_affected_entities'].append(ent)
+                        if isinstance(ent, dict):
+                            accumulated_context['parent_affected_entities'].append(ent)
+                            round_affected_entities.append(ent)
+                    for evt in (r.new_events or []):
+                        if isinstance(evt, dict):
+                            accumulated_context['parent_new_events'].append(evt)
+                            round_new_events.append(evt)
+                    accumulated_context['parent_rounds'].append({
+                        'round_number': r.round_number,
+                        'year_advanced_to': r.year_advanced_to,
+                        'affected_entities': round_affected_entities,
+                        'new_events': round_new_events,
+                    })
 
         engine = WorldEvolutionEngine()
         resolved_anchor = engine.resolve_anchor(
@@ -478,15 +498,19 @@ def apply_evolution_changes(evolution_id: str):
         # 合并实体状态变化到世界观实体，并沉淀为阶段
         for ent in selected_entities:
             name = ent.get('name', '')
-            round_number = int(ent.get('round') or (selected_round_numbers[-1] if selected_round_numbers else 0) or 0)
+            try:
+                round_number = int(ent.get('round') or (selected_round_numbers[-1] if selected_round_numbers else 0) or 0)
+            except (TypeError, ValueError):
+                round_number = 0
             year_advanced_to = round_year_map.get(round_number, '')
             stage_payload = _build_stage_payload(evolution_id, round_number, year_advanced_to, ent)
             # 查找已有实体或创建新实体
-            target_entity = None
-            for existing in world.entities:
-                if existing.name == name:
-                    target_entity = existing
-                    break
+            target_entity = _find_world_entity(world, name) if name else None
+            if target_entity and name and target_entity.name != name:
+                if not isinstance(target_entity.aliases, list):
+                    target_entity.aliases = []
+                if name not in target_entity.aliases:
+                    target_entity.aliases.append(name)
 
             if not target_entity and name:
                 from ..models.world import Entity
@@ -607,7 +631,7 @@ def entity_chat():
                 'current_status': current_status,
             })
 
-        if not Config.LLM_API_KEY:
+        if not Config.get_llm_config('subagent').get('api_key'):
             return jsonify({'success': False, 'message': 'LLM API Key 未配置'}), 400
 
         world_context = f"世界观名称: {world.name or '未命名'}\n"
@@ -699,16 +723,30 @@ def get_evolution_status(evolution_id: str):
         if not evolution:
             return jsonify({'success': False, 'message': '推演不存在'}), 404
 
+        visible_rounds = [
+            round_data for round_data in (evolution.rounds or [])
+            if getattr(round_data, 'round_number', 0) > 0
+        ]
         last_narrative = ''
-        if evolution.rounds:
-            last_narrative = evolution.rounds[-1].narrative[:200]
+        if visible_rounds:
+            last_narrative = visible_rounds[-1].narrative[:200]
+
+        warning_count = sum(len(getattr(round_data, 'warnings', []) or []) for round_data in visible_rounds)
+        latest_warnings = []
+        for round_data in reversed(visible_rounds):
+            latest_warnings = getattr(round_data, 'warnings', []) or []
+            if latest_warnings:
+                break
 
         return jsonify({
             'success': True,
             'status': evolution.status,
-            'current_round': len(evolution.rounds),
+            'current_round': len(visible_rounds),
             'total_rounds': evolution.config.get('rounds', 5) if evolution.config else 5,
             'last_narrative': last_narrative,
+            'error': getattr(evolution, 'error', ''),
+            'warning_count': warning_count,
+            'latest_warnings': latest_warnings[:5],
         })
 
     except Exception as e:

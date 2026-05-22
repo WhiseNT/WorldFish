@@ -174,10 +174,10 @@ def extract_world():
             return jsonify(resp)
 
         # 有文本内容，需要 LLM 提取
-        if not Config.LLM_API_KEY:
+        if not Config.get_llm_config('parser').get('api_key'):
             return jsonify({
                 'success': False,
-                'message': 'LLM API Key 未配置，请先在世界观提取面板中完成 LLM 配置。'
+                'message': 'LLM API Key 未配置，请至少配置 Agent/SubAgent/解析 Agent 中的一组 LLM API。'
             }), 400
 
         # 捕获请求数据供后台线程使用（JSON 或 form 中的 world_id）
@@ -205,12 +205,35 @@ def extract_world():
             _rag_thread = None
 
             try:
-                def progress_cb(stage, progress, message):
+                def progress_cb(stage, progress, message, detail=None):
                     with _tasks_lock:
                         if task_id in _extraction_tasks:
                             _extraction_tasks[task_id].update({
-                                'stage': stage, 'progress': progress, 'message': message,
+                                'stage': stage,
+                                'progress': max(0, min(int(progress), 100)),
+                                'message': message,
+                                'detail': detail or {},
                             })
+
+                def rag_progress_cb(stage, progress, message, detail=None):
+                    rag_payload = {
+                        'stage': stage,
+                        'progress': max(0, min(int(progress), 100)),
+                        'message': message,
+                        'detail': detail or {},
+                    }
+                    with _tasks_lock:
+                        if task_id in _extraction_tasks:
+                            task = _extraction_tasks[task_id]
+                            task['rag_progress'] = rag_payload
+                            # RAG 在后台并行，不直接覆盖 LLM 主进度；但在索引收尾阶段透传为主提示。
+                            if task.get('stage') == 'indexing' or progress >= 90:
+                                task.update({
+                                    'stage': 'indexing',
+                                    'progress': max(int(task.get('progress', 0)), min(95, 60 + int(progress * 0.35))),
+                                    'message': f'向量索引：{message}',
+                                    'detail': {'rag_progress': rag_payload},
+                                })
 
                 progress_cb('preparing', 5, '正在初始化...')
 
@@ -222,21 +245,27 @@ def extract_world():
                         try:
                             from ..services.rag_service import RagService
                             rag = RagService(world_id)
-                            rag.add_text_chunks(text=text, source="extraction",
-                                metadata={"filename": ", ".join(uploaded_filenames) if uploaded_filenames else "direct_text"})
+                            doc_ids = rag.add_text_chunks(
+                                text=text,
+                                source="extraction",
+                                metadata={"filename": ", ".join(uploaded_filenames) if uploaded_filenames else "direct_text"},
+                                chunk_preset="novel",
+                                progress_callback=rag_progress_cb,
+                            )
                             stats = rag.get_stats()
                             _rag_result[0] = {
                                 'rag_indexed': True,
+                                'rag_added_count': len(doc_ids),
                                 'rag_document_count': stats.get('document_count', 0),
                             }
-                            logger.info(f"RAG 并行索引完成 [{world_id}]: {stats.get('document_count', 0)} 文档"
+                            logger.info(f"RAG 并行索引完成 [{world_id}]: 新增 {len(doc_ids)} 块，总计 {stats.get('document_count', 0)} 文档"
                                         f" (来源: {uploaded_filenames or '直接输入'})")
                         except Exception as rag_err:
                             logger.warning(f"RAG 并行索引失败 [{world_id}]: {rag_err}", exc_info=True)
-                            _rag_result[0] = {'rag_indexed': False}
+                            _rag_result[0] = {'rag_indexed': False, 'rag_error': str(rag_err)}
                     _rag_thread = threading.Thread(target=_do_rag, daemon=True)
                     _rag_thread.start()
-                    progress_cb('indexing', 7, '正在并行执行 LLM 提取与向量索引...')
+                    progress_cb('indexing', 7, '正在并行执行 LLM 提取与小说章节向量索引...', {'rag_progress': {'stage': 'queued', 'progress': 0, 'message': 'RAG 索引已排队'}})
                 elif not world_id:
                     logger.info("RAG 索引跳过: 未提供 world_id")
                 elif not emb_config.get('api_key'):
@@ -321,6 +350,8 @@ def extract_progress(task_id):
         'stage': task['stage'],
         'progress': task['progress'],
         'message': task['message'],
+        'detail': task.get('detail') or {},
+        'rag_progress': task.get('rag_progress'),
         'done': task['done'],
     }
     if task['done'] and task.get('result'):
@@ -368,9 +399,10 @@ def test_llm_config():
     try:
         data = request.json or {}
 
-        api_key = data.get('api_key') or Config.LLM_API_KEY
-        base_url = data.get('base_url') or Config.LLM_BASE_URL
-        model_name = data.get('model_name') or Config.LLM_MODEL_NAME
+        resolved_llm = Config.get_llm_config('agent')
+        api_key = data.get('api_key') or resolved_llm['api_key']
+        base_url = data.get('base_url') or resolved_llm['base_url']
+        model_name = data.get('model_name') or resolved_llm['model_name']
 
         if not api_key:
             return jsonify({

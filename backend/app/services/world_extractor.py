@@ -12,7 +12,7 @@ class WorldExtractor:
     """世界观提取器"""
     
     def __init__(self):
-        self.llm_client = LLMClient()
+        self.llm_client = LLMClient(role="parser")
     
     def extract_from_text(self, text):
         """从文本提取世界观信息"""

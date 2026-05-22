@@ -106,9 +106,18 @@ class Config:
     JSON_AS_ASCII = False
     
     # LLM配置（统一使用OpenAI格式）
+    # Agent LLM API：保留旧变量名以兼容现有 .env
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # SubAgent LLM API：不填时按 Agent > Parser 回退
+    SUBAGENT_LLM_API_KEY = os.environ.get('SUBAGENT_LLM_API_KEY', '')
+    SUBAGENT_LLM_BASE_URL = os.environ.get('SUBAGENT_LLM_BASE_URL', '')
+    SUBAGENT_LLM_MODEL_NAME = os.environ.get('SUBAGENT_LLM_MODEL_NAME', '')
+    # 解析 Agent LLM API：不填时按 Agent > SubAgent 回退
+    PARSER_LLM_API_KEY = os.environ.get('PARSER_LLM_API_KEY', '')
+    PARSER_LLM_BASE_URL = os.environ.get('PARSER_LLM_BASE_URL', '')
+    PARSER_LLM_MODEL_NAME = os.environ.get('PARSER_LLM_MODEL_NAME', '')
     LLM_THINKING_ENABLED = _parse_bool_env(os.environ.get('LLM_THINKING_ENABLED'), None)
     LLM_REASONING_EFFORT = _parse_reasoning_effort(os.environ.get('LLM_REASONING_EFFORT'))
     LLM_DEFAULT_CONTEXT_WINDOW = _parse_int_env('LLM_DEFAULT_CONTEXT_WINDOW', 128 * 1024)
@@ -123,11 +132,57 @@ class Config:
     EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
 
     @classmethod
-    def get_embedding_config(cls) -> dict:
-        """获取 Embedding 配置（独立配置优先，否则复用 LLM 配置）。"""
+    def get_llm_config(cls, role: str = 'agent') -> Dict[str, Any]:
+        """按用途获取 LLM 配置，并在缺项时按 Agent > SubAgent > Parser 回退。"""
+        normalized_role = str(role or 'agent').strip().lower()
+        role_order = {
+            'agent': ['agent', 'subagent', 'parser'],
+            'subagent': ['subagent', 'agent', 'parser'],
+            'parser': ['parser', 'agent', 'subagent'],
+        }.get(normalized_role, ['agent', 'subagent', 'parser'])
+
+        configs = {
+            'agent': {
+                'api_key': cls.LLM_API_KEY or '',
+                'base_url': cls.LLM_BASE_URL or 'https://api.openai.com/v1',
+                'model_name': cls.LLM_MODEL_NAME or 'gpt-4o-mini',
+            },
+            'subagent': {
+                'api_key': cls.SUBAGENT_LLM_API_KEY or '',
+                'base_url': cls.SUBAGENT_LLM_BASE_URL or '',
+                'model_name': cls.SUBAGENT_LLM_MODEL_NAME or '',
+            },
+            'parser': {
+                'api_key': cls.PARSER_LLM_API_KEY or '',
+                'base_url': cls.PARSER_LLM_BASE_URL or '',
+                'model_name': cls.PARSER_LLM_MODEL_NAME or '',
+            },
+        }
+
+        selected_role = role_order[-1]
+        for candidate in role_order:
+            if configs[candidate]['api_key']:
+                selected_role = candidate
+                break
+
+        selected = configs[selected_role]
+        agent_defaults = configs['agent']
         return {
-            "api_key": cls.EMBEDDING_API_KEY or cls.LLM_API_KEY,
-            "base_url": cls.EMBEDDING_BASE_URL or cls.LLM_BASE_URL,
+            'role': normalized_role,
+            'resolved_from': selected_role,
+            'api_key': selected['api_key'],
+            'base_url': selected['base_url'] or agent_defaults['base_url'] or 'https://api.openai.com/v1',
+            'model_name': selected['model_name'] or agent_defaults['model_name'] or 'gpt-4o-mini',
+            'explicitly_configured': bool(configs[normalized_role]['api_key']) if normalized_role in configs else False,
+        }
+
+    @classmethod
+    def get_embedding_config(cls) -> dict:
+        """获取 Embedding 配置（独立配置优先，否则复用 Agent LLM 配置）。"""
+        llm_config = cls.get_llm_config('agent')
+        return {
+            "api_key": cls.EMBEDDING_API_KEY or llm_config['api_key'],
+            "base_url": cls.EMBEDDING_BASE_URL or llm_config['base_url'],
             "model_name": cls.EMBEDDING_MODEL_NAME,
         }
     
@@ -176,6 +231,12 @@ class Config:
         cls.LLM_API_KEY = os.environ.get('LLM_API_KEY')
         cls.LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
         cls.LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+        cls.SUBAGENT_LLM_API_KEY = os.environ.get('SUBAGENT_LLM_API_KEY', '')
+        cls.SUBAGENT_LLM_BASE_URL = os.environ.get('SUBAGENT_LLM_BASE_URL', '')
+        cls.SUBAGENT_LLM_MODEL_NAME = os.environ.get('SUBAGENT_LLM_MODEL_NAME', '')
+        cls.PARSER_LLM_API_KEY = os.environ.get('PARSER_LLM_API_KEY', '')
+        cls.PARSER_LLM_BASE_URL = os.environ.get('PARSER_LLM_BASE_URL', '')
+        cls.PARSER_LLM_MODEL_NAME = os.environ.get('PARSER_LLM_MODEL_NAME', '')
         cls.LLM_THINKING_ENABLED = _parse_bool_env(os.environ.get('LLM_THINKING_ENABLED'), None)
         cls.LLM_REASONING_EFFORT = _parse_reasoning_effort(os.environ.get('LLM_REASONING_EFFORT'))
         cls.LLM_DEFAULT_CONTEXT_WINDOW = _parse_int_env('LLM_DEFAULT_CONTEXT_WINDOW', 128 * 1024)
@@ -207,11 +268,27 @@ class Config:
     def get_llm_config_status(cls) -> Dict[str, Any]:
         cls.reload()
         agent_settings = cls.get_agent_settings_status(reload_first=False)
+
+        def role_status(role: str) -> Dict[str, Any]:
+            resolved = cls.get_llm_config(role)
+            return {
+                'api_key_configured': bool(resolved['api_key']),
+                'api_key_masked': cls.mask_secret(resolved['api_key']),
+                'base_url': resolved['base_url'],
+                'model_name': resolved['model_name'],
+                'resolved_from': resolved['resolved_from'],
+                'explicitly_configured': resolved['explicitly_configured'],
+            }
+
+        agent_llm = role_status('agent')
         return {
-            'api_key_configured': bool(cls.LLM_API_KEY),
-            'api_key_masked': cls.mask_secret(cls.LLM_API_KEY),
-            'base_url': cls.LLM_BASE_URL,
-            'model_name': cls.LLM_MODEL_NAME,
+            'api_key_configured': agent_llm['api_key_configured'],
+            'api_key_masked': agent_llm['api_key_masked'],
+            'base_url': agent_llm['base_url'],
+            'model_name': agent_llm['model_name'],
+            'agent_llm': agent_llm,
+            'subagent_llm': role_status('subagent'),
+            'parser_llm': role_status('parser'),
             **agent_settings,
         }
 
@@ -322,8 +399,12 @@ class Config:
     def validate(cls):
         """验证必要配置"""
         errors = []
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
+        if not any([
+            cls.LLM_API_KEY,
+            cls.SUBAGENT_LLM_API_KEY,
+            cls.PARSER_LLM_API_KEY,
+        ]):
+            errors.append("至少需要配置一组 LLM API Key（LLM_API_KEY / SUBAGENT_LLM_API_KEY / PARSER_LLM_API_KEY）")
         return errors
 
 

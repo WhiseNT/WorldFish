@@ -118,6 +118,15 @@
           </div>
           <div class="form-row">
             <div class="form-group">
+              <label>切分预设</label>
+              <select v-model="chunkPreset" class="form-select">
+                <option v-for="preset in chunkPresets" :key="preset.id" :value="preset.id">
+                  {{ preset.name }}
+                </option>
+              </select>
+              <span class="form-hint">{{ selectedPresetDescription }}</span>
+            </div>
+            <div class="form-group">
               <label>切块大小（字符）</label>
               <input v-model.number="chunkSize" type="number" min="100" max="4000" class="form-input" />
             </div>
@@ -227,7 +236,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { worldApi } from '../api/world'
 import { ragApi } from '../api/rag'
@@ -244,12 +253,17 @@ const stats = ref({ document_count: 0, collection_name: '', has_documents: false
 const addText = ref('')
 const addSource = ref('manual')
 const chunkSize = ref(800)
+const chunkPreset = ref('novel')
+const chunkPresets = ref([
+  { id: 'novel', name: '小说章节', description: '优先按“第X章”等章节标题切分，超长章节自动再切块。' },
+  { id: 'default', name: '通用段落', description: '按段落和句子边界切分。' },
+])
+const selectedPresetDescription = computed(() => chunkPresets.value.find(p => p.id === chunkPreset.value)?.description || '')
 const topK = ref(5)
 const adding = ref(false)
 const addResult = ref(null)
 const pendingFiles = ref([])
-const embedProgress = ref({ stage: '', progress: 0, message: '' })
-let embedProgressTimer = null
+const embedProgress = ref({ stage: '', progress: 0, message: '', detail: {} })
 let embedProgressRealTimer = null
 
 // Search tab
@@ -287,6 +301,19 @@ async function fetchStats() {
   }
 }
 
+async function fetchChunkPresets() {
+  try {
+    const res = await ragApi.getChunkPresets()
+    const presets = res.data?.presets || []
+    if (presets.length > 0) {
+      chunkPresets.value = presets
+      chunkPreset.value = presets.find(p => p.default)?.id || presets[0].id
+    }
+  } catch (e) {
+    console.warn('加载切分预设失败，使用默认预设:', e)
+  }
+}
+
 function onWorldChange() {
   stats.value = { document_count: 0, collection_name: '', has_documents: false }
   searchResults.value = []
@@ -298,72 +325,46 @@ function onWorldChange() {
   }
 }
 
-// ============== Embedding 进度模拟 ==============
+// ============== Embedding 真实进度轮询 ==============
 function clearEmbedTimers() {
-  if (embedProgressTimer) { clearTimeout(embedProgressTimer); embedProgressTimer = null }
   if (embedProgressRealTimer) { clearInterval(embedProgressRealTimer); embedProgressRealTimer = null }
 }
 
-function updateEmbedProgress(progress, message) {
+function updateEmbedProgress(progress, message, stage = 'processing', detail = {}) {
   embedProgress.value = {
-    stage: progress >= 100 ? 'done' : 'processing',
-    progress,
+    stage,
+    progress: Math.max(0, Math.min(Math.round(progress || 0), 100)),
     message,
+    detail,
   }
 }
 
-function startEmbedProgress(estimatedChunks) {
-  clearEmbedTimers()
-  const stageCount = estimatedChunks > 20 ? estimatedChunks : 20
-
-  // 阶段定义（模拟 Embedding 过程的不同阶段）
-  const stages = [
-    { at: 0, message: '正在分析文本内容...' },
-    { at: 5, message: '正在切分文档块...' },
-    { at: 15, message: '正在计算向量嵌入 (Embedding)...' },
-    { at: 30, message: `正在处理 ${stageCount} 个文档块...` },
-    { at: 50, message: '正在写入向量数据库...' },
-    { at: 70, message: '正在建立语义索引...' },
-    { at: 85, message: '正在优化索引结构...' },
-    { at: 95, message: '即将完成...' },
-  ]
-
-  let currentProgress = 0
-  // 根据估计的 chunks 数量动态计算更新间隔
-  const totalDuration = Math.min(stageCount * 800, 30000) // 最多30秒模拟
-  const intervalMs = Math.max(totalDuration / 100, 50)
-
-  embedProgressRealTimer = setInterval(() => {
-    // 真实进度慢慢推进到90%左右等待实际请求完成
-    if (currentProgress < 85) {
-      currentProgress += (85 - currentProgress) * 0.06 + 0.3
-      if (currentProgress > 85) currentProgress = 85
-    } else if (currentProgress < 90) {
-      currentProgress += 0.15
-    }
-
-    currentProgress = Math.min(currentProgress, 90)
-
-    // 找到当前进度对应的阶段消息
-    let message = stages[stages.length - 1].message
-    for (let i = stages.length - 1; i >= 0; i--) {
-      if (currentProgress >= stages[i].at) {
-        message = stages[i].message
-        break
-      }
-    }
-
-    updateEmbedProgress(Math.round(currentProgress), message)
-  }, intervalMs)
-}
-
-function finishEmbedProgress(success) {
+function finishEmbedProgress(success, message) {
   clearEmbedTimers()
   if (success) {
-    updateEmbedProgress(100, 'Embedding 完成，知识库已更新')
-  } else {
-    clearEmbedTimers()
+    updateEmbedProgress(100, message || 'Embedding 完成，知识库已更新', 'done')
   }
+}
+
+function pollIndexTask(taskId) {
+  clearEmbedTimers()
+  return new Promise((resolve, reject) => {
+    embedProgressRealTimer = setInterval(async () => {
+      try {
+        const res = await ragApi.getIndexTask(selectedWorldId.value, taskId)
+        const task = res.data || {}
+        updateEmbedProgress(task.progress || 0, task.message || '正在索引...', task.stage || 'processing', task.detail || {})
+        if (task.done) {
+          clearEmbedTimers()
+          if (task.error) reject(new Error(task.error))
+          else resolve(task.result || {})
+        }
+      } catch (e) {
+        clearEmbedTimers()
+        reject(e)
+      }
+    }, 700)
+  })
 }
 
 // Add
@@ -373,13 +374,14 @@ async function addToRag() {
     if (pendingFiles.value.length === 0) return
     adding.value = true
     addResult.value = null
-    startEmbedProgress(pendingFiles.value.length * 10)
+    updateEmbedProgress(3, '正在上传文件并准备索引...', 'uploading')
     try {
       const res = await ragApi.uploadFile(
         selectedWorldId.value,
         pendingFiles.value,
         chunkSize.value || undefined,
         Math.floor((chunkSize.value || 800) / 8),
+        chunkPreset.value,
       )
       const r = res.data
       const ok = r.results.filter(f => f.success)
@@ -404,21 +406,22 @@ async function addToRag() {
   adding.value = true
   addResult.value = null
 
-  // 估算文档块数量
-  const textLength = addText.value.trim().length
-  const estimatedChunks = Math.ceil(textLength / (chunkSize.value || 800))
-  startEmbedProgress(estimatedChunks)
+  updateEmbedProgress(1, '正在创建索引任务...', 'queued')
 
   try {
-    const res = await ragApi.addDocuments(selectedWorldId.value, {
+    const taskRes = await ragApi.createIndexTask(selectedWorldId.value, {
       text: addText.value.trim(),
       chunk_size: chunkSize.value || undefined,
       chunk_overlap: Math.floor((chunkSize.value || 800) / 8),
+      chunk_preset: chunkPreset.value,
       source: addSource.value,
     })
+    const taskId = taskRes.data?.task_id
+    if (!taskId) throw new Error('索引任务创建失败')
+    const result = await pollIndexTask(taskId)
     addResult.value = {
       success: true,
-      message: `成功添加 ${res.data.added_count} 个文档块，知识库现有 ${res.data.total_count} 条`,
+      message: `成功添加 ${result.added_count || 0} 个文档块，知识库现有 ${result.total_count || 0} 条`,
     }
     finishEmbedProgress(true)
     addText.value = ''
@@ -511,6 +514,7 @@ async function confirmClear() {
 }
 
 onMounted(async () => {
+  await fetchChunkPresets()
   await fetchWorlds()
   // 从 URL query 参数读取 worldId（从 Home 页导航而来）
   const queryWorldId = route.query.worldId
@@ -663,6 +667,14 @@ onMounted(async () => {
 
 .form-select-sm {
   max-width: 160px;
+}
+
+.form-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--wf-text-muted);
+  line-height: 1.4;
 }
 
 .form-textarea {

@@ -228,12 +228,13 @@ class SimulationConfigGenerator:
         base_url: Optional[str] = None,
         model_name: Optional[str] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model_name = model_name or Config.LLM_MODEL_NAME
+        llm_config = Config.get_llm_config('subagent')
+        self.api_key = api_key or llm_config['api_key']
+        self.base_url = base_url or llm_config['base_url']
+        self.model_name = model_name or llm_config['model_name']
         
         if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
+            raise ValueError("LLM API Key 未配置，请配置 LLM_API_KEY / SUBAGENT_LLM_API_KEY / PARSER_LLM_API_KEY 中至少一个")
         
         self.client = OpenAI(
             api_key=self.api_key,

@@ -18,12 +18,14 @@ class EvolutionRound:
         year_advanced_to: str = "",
         affected_entities: Optional[List[Dict]] = None,
         new_events: Optional[List[Dict]] = None,
+        warnings: Optional[List[str]] = None,
     ):
         self.round_number = round_number
         self.narrative = narrative
         self.year_advanced_to = year_advanced_to
         self.affected_entities = affected_entities or []
         self.new_events = new_events or []
+        self.warnings = warnings or []
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -32,6 +34,7 @@ class EvolutionRound:
             "year_advanced_to": self.year_advanced_to,
             "affected_entities": self.affected_entities,
             "new_events": self.new_events,
+            "warnings": self.warnings,
         }
 
     @classmethod
@@ -42,6 +45,7 @@ class EvolutionRound:
             year_advanced_to=data.get("year_advanced_to", ""),
             affected_entities=data.get("affected_entities") or [],
             new_events=data.get("new_events") or [],
+            warnings=data.get("warnings") or [],
         )
 
 
@@ -57,6 +61,7 @@ class Evolution:
         parent_evolution_id: str = "",
         parent_round: int = -1,
         evolution_type: str = "forward",  # "forward" | "branch"
+        error: str = "",
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
     ):
@@ -70,6 +75,7 @@ class Evolution:
         self.parent_evolution_id = parent_evolution_id
         self.parent_round = parent_round
         self.evolution_type = evolution_type
+        self.error = error or ""
         self.consolidation = None  # 推演后整合结果
         self.created_at = created_at or now
         self.updated_at = updated_at or now
@@ -100,6 +106,7 @@ class Evolution:
             "parent_evolution_id": self.parent_evolution_id,
             "parent_round": self.parent_round,
             "evolution_type": self.evolution_type,
+            "error": self.error,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -119,6 +126,7 @@ class Evolution:
             parent_evolution_id=data.get("parent_evolution_id", ""),
             parent_round=data.get("parent_round", -1),
             evolution_type=data.get("evolution_type", "forward"),
+            error=data.get("error", ""),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -167,12 +175,16 @@ class EvolutionManager:
             return cls.save(evolution)
 
     @classmethod
-    def update_status(cls, evolution_id: str, status: str) -> Optional[Evolution]:
+    def update_status(cls, evolution_id: str, status: str, error: str = "") -> Optional[Evolution]:
         with cls._lock:
             evolution = cls.get(evolution_id)
             if not evolution:
                 return None
             evolution.status = status
+            if error:
+                evolution.error = error
+            elif status not in {"failed"}:
+                evolution.error = ""
             return cls.save(evolution)
 
     @classmethod

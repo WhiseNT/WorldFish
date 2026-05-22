@@ -3,7 +3,7 @@
 import threading
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Config
 from ..utils.llm_client import LLMClient
@@ -116,11 +116,83 @@ def _build_cumulative_state(rounds_data: List[Dict], world_entities: set) -> str
     return "\n".join(parts)
 
 
+def _coerce_rounds(value: Any, default: int = 5, minimum: int = 1, maximum: int = 50) -> int:
+    try:
+        rounds = int(value)
+    except (TypeError, ValueError):
+        rounds = default
+    return max(minimum, min(rounds, maximum))
+
+
+def _coerce_temperature(value: Any, default: float = 0.7, minimum: float = 0.0, maximum: float = 1.5) -> float:
+    try:
+        temperature = float(value)
+    except (TypeError, ValueError):
+        temperature = default
+    return max(minimum, min(temperature, maximum))
+
+
+def _coerce_focus_areas(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _build_parent_rounds_data(accumulated_context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    accumulated_context = accumulated_context or {}
+    parent_rounds = accumulated_context.get("parent_rounds") or []
+    if parent_rounds:
+        return [rd for rd in parent_rounds if isinstance(rd, dict)]
+
+    affected = accumulated_context.get("parent_affected_entities") or []
+    events = accumulated_context.get("parent_new_events") or []
+    parent_anchor = accumulated_context.get("parent_anchor") or {}
+    if not affected and not events:
+        return []
+    return [{
+        "year_advanced_to": parent_anchor.get("year_advanced_to") or parent_anchor.get("time_span_start") or "",
+        "affected_entities": [item for item in affected if isinstance(item, dict)],
+        "new_events": [item for item in events if isinstance(item, dict)],
+    }]
+
+
+def _extract_time_sort_key(value: Any) -> Optional[Tuple[int, int]]:
+    """提取粗略时间排序键。无法确定时返回 None，避免误判。"""
+    text = str(value or "").strip()
+    if not text or text in {"未知", "当前世界主线"}:
+        return None
+
+    year_matches = re.findall(r"(?<!\d)(\d{1,6})(?:\s*年|\b)", text)
+    if not year_matches:
+        year_matches = re.findall(r"Year\s*(\d{1,6})", text, flags=re.IGNORECASE)
+    if not year_matches:
+        return None
+
+    year = int(year_matches[-1])
+    season_order = {"春": 1, "夏": 2, "秋": 3, "冬": 4}
+    season = 0
+    for label, order in season_order.items():
+        if label in text:
+            season = order
+            break
+    month_match = re.search(r"(\d{1,2})\s*月", text)
+    if month_match:
+        month = max(1, min(int(month_match.group(1)), 12))
+        season = 10 + month
+    return year, season
+
+
+def _is_time_regression(previous: Any, current: Any) -> bool:
+    previous_key = _extract_time_sort_key(previous)
+    current_key = _extract_time_sort_key(current)
+    return bool(previous_key and current_key and current_key < previous_key)
+
+
 class WorldEvolutionEngine:
     """世界观进化推演引擎 — 规划→分阶段推演→整合"""
 
     def __init__(self):
-        self.llm_client = LLMClient()
+        self.llm_client = LLMClient(role="subagent")
 
     @staticmethod
     def _normalize_match_key(value: Any) -> str:
@@ -299,11 +371,14 @@ class WorldEvolutionEngine:
                 phase_rounds = 1
             phase_rounds = max(1, min(phase_rounds, remaining_rounds))
             remaining_rounds -= phase_rounds
+            phase_time_span = str(phase.get("time_span") or "").strip()
+            if not phase_time_span:
+                phase_time_span = f"从{anchor_label}开始" if index == 0 else "承接上一阶段继续推进"
 
             normalized.append({
                 "phase_name": str(phase.get("phase_name") or f"第{index + 1}阶段").strip() or f"第{index + 1}阶段",
                 "rounds": phase_rounds,
-                "time_span": f"从{anchor_label}开始" if index == 0 else "承接上一阶段继续推进",
+                "time_span": phase_time_span,
                 "focus": str(phase.get("focus") or phase.get("plan_summary") or "延续既有世界状态继续发展").strip() or "延续既有世界状态继续发展",
                 "key_turning_points": [
                     str(item).strip() for item in (phase.get("key_turning_points") or [])
@@ -338,8 +413,11 @@ class WorldEvolutionEngine:
     def _evolve_worker(self, evolution_id: str, world: WorldSetting, scenario: str, config: Dict[str, Any],
                        accumulated_context: Dict[str, Any] = None):
         try:
-            rounds = int(config.get("rounds", 5))
-            temperature = float(config.get("temperature", 0.7))
+            config = dict(config or {})
+            rounds = _coerce_rounds(config.get("rounds", 5))
+            temperature = _coerce_temperature(config.get("temperature", 0.7))
+            config["rounds"] = rounds
+            config["temperature"] = temperature
             resolved_anchor = config.get("resolved_anchor") or self.resolve_anchor(
                 world,
                 scenario,
@@ -347,11 +425,17 @@ class WorldEvolutionEngine:
                 accumulated_context=accumulated_context,
             )
             time_span_start = resolved_anchor.get("start_time") or config.get("time_span_start") or world.anchor_time or "未知"
-            focus_areas = config.get("focus_areas") or []
+            focus_areas = _coerce_focus_areas(config.get("focus_areas") or [])
             anchor_instruction = self._build_anchor_instruction(resolved_anchor)
 
             world_context = _world_to_context(world)
             known_entity_names = {e.name for e in (world.entities or []) if e.name}
+            parent_rounds_data = _build_parent_rounds_data(accumulated_context)
+            for parent_round in parent_rounds_data:
+                known_entity_names.update(
+                    ae.get("name", "") for ae in (parent_round.get("affected_entities") or [])
+                    if isinstance(ae, dict) and ae.get("name")
+                )
 
             accumulated_narrative = []
             if accumulated_context and accumulated_context.get('parent_narratives'):
@@ -392,9 +476,8 @@ class WorldEvolutionEngine:
                     logger.info(f"轮次 {round_num}/{rounds} [{phase_name}] (evolution_id={evolution_id})")
 
                     # 构建累计状态上下文
-                    cumulative_state = _build_cumulative_state(
-                        self._get_completed_rounds(evolution_id, round_num - 1), known_entity_names
-                    )
+                    completed_rounds = parent_rounds_data + self._get_completed_rounds(evolution_id, round_num - 1)
+                    cumulative_state = _build_cumulative_state(completed_rounds, known_entity_names)
 
                     # RAG 检索：查找与当前阶段场景相关的原始资料
                     rag_context = ""
@@ -431,14 +514,19 @@ class WorldEvolutionEngine:
                         cumulative_state=cumulative_state,
                     )
 
-                    round_result = self._validate_round_result(round_result, known_entity_names, round_num)
+                    round_result = self._validate_round_result(
+                        round_result,
+                        known_entity_names,
+                        round_num,
+                        previous_time=current_year,
+                    )
 
-                    if round_result.get("year_advanced_to"):
+                    known_entity_names.update(
+                        ae.get("name", "") for ae in (round_result.get("affected_entities") or [])
+                        if ae.get("name")
+                    )
+                    if round_result.get("year_advanced_to") and not _is_time_regression(current_year, round_result.get("year_advanced_to")):
                         current_year = round_result["year_advanced_to"]
-                        known_entity_names.update(
-                            ae.get("name", "") for ae in (round_result.get("affected_entities") or [])
-                            if ae.get("name")
-                        )
 
                     evolution_round = EvolutionRound(
                         round_number=round_num,
@@ -446,6 +534,7 @@ class WorldEvolutionEngine:
                         year_advanced_to=round_result.get("year_advanced_to", ""),
                         affected_entities=round_result.get("affected_entities") or [],
                         new_events=round_result.get("new_events") or [],
+                        warnings=round_result.get("warnings") or [],
                     )
                     EvolutionManager.add_round(evolution_id, evolution_round)
                     accumulated_narrative.append(round_result.get("narrative", ""))
@@ -456,14 +545,6 @@ class WorldEvolutionEngine:
             try:
                 summary = self._consolidate_evolution(world_context, evolution_id, rounds, temperature)
                 if summary:
-                    # 将整合摘要保存为推演的"总结轮次"
-                    summary_round = EvolutionRound(
-                        round_number=-1,  # -1 表示整合轮
-                        narrative=summary.get("summary", ""),
-                        year_advanced_to=current_year,
-                        affected_entities=summary.get("final_entity_states") or [],
-                        new_events=summary.get("causal_chains") or [],
-                    )
                     # 将整合结果附加到 evolution 的额外数据中
                     evo = EvolutionManager.get(evolution_id)
                     if evo:
@@ -478,7 +559,7 @@ class WorldEvolutionEngine:
         except Exception as e:
             logger.error(f"进化失败: {evolution_id}: {e}")
             try:
-                EvolutionManager.update_status(evolution_id, "failed")
+                EvolutionManager.update_status(evolution_id, "failed", error=str(e))
             except Exception:
                 pass
 
@@ -694,7 +775,7 @@ class WorldEvolutionEngine:
             try:
                 result = self.llm_client.chat_json(
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=temperature - (attempt * 0.1),
+                    temperature=max(0.0, temperature - (attempt * 0.1)),
                     max_tokens=8192,
                 )
                 if not isinstance(result, dict):
@@ -772,49 +853,84 @@ class WorldEvolutionEngine:
 
     # ==================== 事实校验 ====================
 
-    def _validate_round_result(self, result: Dict[str, Any], known_entities: set, round_num: int) -> Dict[str, Any]:
-        """事实一致性校验"""
-        if not result.get("year_advanced_to", "").strip():
+    def _validate_round_result(
+        self,
+        result: Dict[str, Any],
+        known_entities: set,
+        round_num: int,
+        previous_time: Any = None,
+    ) -> Dict[str, Any]:
+        """事实一致性校验。保持返回 dict，警告写入 result['warnings']。"""
+        if not isinstance(result, dict):
+            result = {}
+
+        warnings = [str(item).strip() for item in (result.get("warnings") or []) if str(item).strip()]
+
+        year_advanced_to = str(result.get("year_advanced_to", "") or "").strip()
+        if not year_advanced_to:
             logger.warning("轮次%d: year_advanced_to 为空" % round_num)
+            warnings.append("year_advanced_to 为空，已标记为未知")
             result["year_advanced_to"] = "未知"
+        elif previous_time is not None and _is_time_regression(previous_time, year_advanced_to):
+            warnings.append(f"本轮结束时间可能早于上一轮时间：{year_advanced_to} < {previous_time}")
+            logger.warning("轮次%d: 检测到时间倒退: %s < %s" % (round_num, year_advanced_to, previous_time))
 
         affected = result.get("affected_entities") or []
-        hallucinated = []
+        if not isinstance(affected, list):
+            warnings.append("affected_entities 不是列表，已丢弃")
+            affected = []
         validated_affected = []
         for ae in affected:
             if not isinstance(ae, dict):
+                warnings.append("存在非对象实体变化，已丢弃")
                 continue
             name = str(ae.get("name", "")).strip()
             if not name:
+                warnings.append("存在缺少 name 的实体变化，已丢弃")
                 continue
             if name not in known_entities:
-                hallucinated.append(name)
-                logger.warning("轮次%d: LLM 幻觉 — 实体'%s'不在世界观中" % (round_num, name))
-                continue
+                logger.info("轮次%d: 接受推演中新引入的实体'%s'" % (round_num, name))
+                ae.setdefault("is_new_entity", True)
+            else:
+                ae.setdefault("is_new_entity", False)
             ae.setdefault("state_changes", "")
             ae.setdefault("new_status", "")
+            if not str(ae.get("state_changes") or ae.get("new_status") or "").strip():
+                warnings.append(f"实体 {name} 缺少具体状态变化")
             validated_affected.append(ae)
-        if hallucinated:
-            result["affected_entities"] = validated_affected
-            result["narrative"] = (result.get("narrative", "") +
-                "\n\n[校验: %d 个幻觉实体已过滤: %s]" % (len(hallucinated), ", ".join(hallucinated[:5])))
+        result["affected_entities"] = validated_affected
 
         events = result.get("new_events") or []
+        if not isinstance(events, list):
+            warnings.append("new_events 不是列表，已丢弃")
+            events = []
         validated_events = []
         for evt in events:
             if not isinstance(evt, dict):
+                warnings.append("存在非对象事件，已丢弃")
                 continue
             name = str(evt.get("name", "")).strip()
             if not name:
+                warnings.append("存在缺少 name 的事件，已丢弃")
                 continue
             evt.setdefault("date", "")
             evt.setdefault("description", "")
+            if not str(evt.get("date") or "").strip():
+                warnings.append(f"事件 {name} 缺少发生时间")
             if not isinstance(evt.get("involved_entities"), list):
+                warnings.append(f"事件 {name} 的 involved_entities 不是列表，已修正为空列表")
                 evt["involved_entities"] = []
             validated_events.append(evt)
         result["new_events"] = validated_events
+        if len(validated_events) < 3:
+            warnings.append(f"本轮重要事件数量少于建议值：{len(validated_events)} < 3")
 
-        if not result.get("narrative", "").strip():
+        narrative = str(result.get("narrative", "") or "").strip()
+        if not narrative:
+            warnings.append("narrative 为空，已填充占位文本")
             result["narrative"] = "第%d轮推演未产生有效叙事。" % round_num
+        elif len(narrative) < 120:
+            warnings.append(f"narrative 可能过短：{len(narrative)} 字符")
 
+        result["warnings"] = list(dict.fromkeys(warnings))
         return result

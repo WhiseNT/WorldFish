@@ -1,6 +1,9 @@
 """RAG API — 世界观向量知识库 CRUD + 检索。"""
 
+import threading
 import traceback
+import uuid
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from ..config import Config
@@ -10,6 +13,16 @@ from ..utils.logger import get_logger
 
 rag_bp = Blueprint("rag", __name__)
 logger = get_logger("worldfish.api.rag")
+
+_index_tasks = {}
+_index_tasks_lock = threading.Lock()
+
+
+def _update_index_task(task_id: str, **updates):
+    with _index_tasks_lock:
+        if task_id in _index_tasks:
+            _index_tasks[task_id].update(updates)
+            _index_tasks[task_id]["updated_at"] = datetime.now().isoformat()
 
 
 def _get_rag_service(world_id: str) -> RagService:
@@ -21,6 +34,12 @@ def _get_rag_service(world_id: str) -> RagService:
 
 
 # ============== 文档管理 ==============
+
+
+@rag_bp.route("/rag/chunk-presets", methods=["GET"])
+def get_chunk_presets():
+    """获取 RAG 切分预设。"""
+    return jsonify({"success": True, "data": {"presets": RagService.get_chunk_presets()}})
 
 
 @rag_bp.route("/<world_id>/rag/documents", methods=["POST"])
@@ -65,12 +84,14 @@ def add_documents(world_id: str):
         elif single_text and str(single_text).strip():
             chunk_size = data.get("chunk_size")
             chunk_overlap = data.get("chunk_overlap")
+            chunk_preset = data.get("chunk_preset", "default")
             doc_ids = rag.add_text_chunks(
                 text=str(single_text).strip(),
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
                 source=source,
                 metadata=metadata,
+                chunk_preset=chunk_preset,
             )
         else:
             return jsonify({"success": False, "error": "请提供 texts 或 text 参数"}), 400
@@ -229,6 +250,72 @@ def clear_rag(world_id: str):
 # ============== 文件上传 ==============
 
 
+@rag_bp.route("/<world_id>/rag/index-task", methods=["POST"])
+def create_index_task(world_id: str):
+    """异步添加文本到 RAG，提供真实 Embedding 进度。"""
+    try:
+        _get_rag_service(world_id)
+        data = request.get_json() or {}
+        text = str(data.get("text") or "").strip()
+        if not text:
+            return jsonify({"success": False, "error": "请提供 text 参数"}), 400
+
+        task_id = f"ragidx_{uuid.uuid4().hex[:12]}"
+        with _index_tasks_lock:
+            _index_tasks[task_id] = {
+                "task_id": task_id,
+                "world_id": world_id,
+                "stage": "queued",
+                "progress": 0,
+                "message": "索引任务已创建",
+                "detail": {},
+                "done": False,
+                "error": None,
+                "result": None,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+            }
+
+        def run_task():
+            try:
+                rag = _get_rag_service(world_id)
+
+                def progress_cb(stage, progress, message, detail=None):
+                    _update_index_task(task_id, stage=stage, progress=progress, message=message, detail=detail or {})
+
+                doc_ids = rag.add_text_chunks(
+                    text=text,
+                    chunk_size=data.get("chunk_size"),
+                    chunk_overlap=data.get("chunk_overlap"),
+                    source=data.get("source", "manual"),
+                    metadata=data.get("metadata") or {},
+                    chunk_preset=data.get("chunk_preset", "novel"),
+                    progress_callback=progress_cb,
+                )
+                result = {"added_count": len(doc_ids), "total_count": rag.count(), "doc_ids": doc_ids}
+                _update_index_task(task_id, stage="done", progress=100, message=f"索引完成：新增 {len(doc_ids)} 个文本块", detail=result, done=True, result=result)
+            except Exception as e:
+                logger.error(f"RAG 索引任务失败: {traceback.format_exc()}")
+                _update_index_task(task_id, stage="error", progress=100, message=f"索引失败: {str(e)[:120]}", error=str(e), done=True)
+
+        threading.Thread(target=run_task, daemon=True).start()
+        return jsonify({"success": True, "data": {"task_id": task_id}})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 404
+    except Exception as e:
+        logger.error(f"创建 RAG 索引任务失败: {traceback.format_exc()}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@rag_bp.route("/<world_id>/rag/index-task/<task_id>", methods=["GET"])
+def get_index_task(world_id: str, task_id: str):
+    with _index_tasks_lock:
+        task = dict(_index_tasks.get(task_id) or {})
+    if not task or task.get("world_id") != world_id:
+        return jsonify({"success": False, "error": "任务不存在或已过期"}), 404
+    return jsonify({"success": True, "data": task})
+
+
 @rag_bp.route("/<world_id>/rag/upload", methods=["POST"])
 def upload_rag_file(world_id: str):
     """上传文件到 RAG 知识库。
@@ -250,6 +337,7 @@ def upload_rag_file(world_id: str):
         files = request.files.getlist("files")
         chunk_size = int(request.form.get("chunk_size", 800))
         chunk_overlap = int(request.form.get("chunk_overlap", 100))
+        chunk_preset = request.form.get("chunk_preset", "novel")
 
         results = []
         total_added = 0
@@ -288,10 +376,15 @@ def upload_rag_file(world_id: str):
                 from ..services.text_processor import TextProcessor
                 text = TextProcessor.preprocess_text(text)
 
-                # 使用与世界观构建相同的切块算法
-                from ..utils.file_parser import split_text_into_chunks
-                chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
-                if not chunks:
+                doc_ids = rag.add_text_chunks(
+                    text=text,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    source="file",
+                    metadata={"filename": file.filename},
+                    chunk_preset=chunk_preset,
+                )
+                if not doc_ids:
                     results.append({
                         "filename": file.filename,
                         "success": False,
@@ -299,25 +392,11 @@ def upload_rag_file(world_id: str):
                     })
                     continue
 
-                # 批量添加到向量库
-                metadatas = [{
-                    "filename": file.filename,
-                    "chunk_index": i,
-                    "chunk_count": len(chunks),
-                    "source": "file",
-                } for i in range(len(chunks))]
-
-                doc_ids = rag.add_documents(
-                    texts=chunks,
-                    metadatas=metadatas,
-                    source="file",
-                )
-
                 total_added += len(doc_ids)
                 results.append({
                     "filename": file.filename,
                     "success": True,
-                    "message": f"已添加 {len(doc_ids)} 个文档块（{len(text)} 字符 → {len(chunks)} 块）",
+                    "message": f"已添加 {len(doc_ids)} 个文档块（{len(text)} 字符 → {len(doc_ids)} 块）",
                     "chunks": len(doc_ids),
                     "chars": len(text),
                 })
