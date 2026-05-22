@@ -70,6 +70,7 @@ class Evolution:
         self.parent_evolution_id = parent_evolution_id
         self.parent_round = parent_round
         self.evolution_type = evolution_type
+        self.consolidation = None  # 推演后整合结果
         self.created_at = created_at or now
         self.updated_at = updated_at or now
 
@@ -89,7 +90,7 @@ class Evolution:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             "id": self.id,
             "world_id": self.world_id,
             "scenario": self.scenario,
@@ -102,10 +103,13 @@ class Evolution:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.consolidation:
+            d["consolidation"] = self.consolidation
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Evolution":
-        return cls(
+        evo = cls(
             id=data.get("id", ""),
             world_id=data.get("world_id", ""),
             scenario=data.get("scenario", ""),
@@ -118,6 +122,9 @@ class Evolution:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
+        if data.get("consolidation"):
+            evo.consolidation = data["consolidation"]
+        return evo
 
 
 class EvolutionManager:

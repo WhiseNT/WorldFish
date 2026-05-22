@@ -180,6 +180,14 @@ def extract_world():
                 'message': 'LLM API Key 未配置，请先在世界观提取面板中完成 LLM 配置。'
             }), 400
 
+        # 捕获请求数据供后台线程使用（JSON 或 form 中的 world_id）
+        request_data = request.get_json(silent=True) or {}
+        if not isinstance(request_data, dict):
+            request_data = {}
+        # 也合并 form 数据
+        if request.form:
+            request_data.update(dict(request.form))
+
         # 启动后台提取任务，立即返回 task_id
         task_id = f"extract_{uuid.uuid4().hex[:12]}"
         with _tasks_lock:
@@ -193,6 +201,9 @@ def extract_world():
             }
 
         def run_extraction():
+            _rag_result = [None]
+            _rag_thread = None
+
             try:
                 def progress_cb(stage, progress, message):
                     with _tasks_lock:
@@ -202,13 +213,42 @@ def extract_world():
                             })
 
                 progress_cb('preparing', 5, '正在初始化...')
+
+                # ── 启动 RAG 索引（与 LLM 提取并行）──
+                world_id = request_data.get('world_id', '').strip()
+                emb_config = Config.get_embedding_config()
+                if world_id and text and emb_config.get('api_key'):
+                    def _do_rag():
+                        try:
+                            from ..services.rag_service import RagService
+                            rag = RagService(world_id)
+                            rag.add_text_chunks(text=text, source="extraction",
+                                metadata={"filename": ", ".join(uploaded_filenames) if uploaded_filenames else "direct_text"})
+                            stats = rag.get_stats()
+                            _rag_result[0] = {
+                                'rag_indexed': True,
+                                'rag_document_count': stats.get('document_count', 0),
+                            }
+                            logger.info(f"RAG 并行索引完成 [{world_id}]: {stats.get('document_count', 0)} 文档"
+                                        f" (来源: {uploaded_filenames or '直接输入'})")
+                        except Exception as rag_err:
+                            logger.warning(f"RAG 并行索引失败 [{world_id}]: {rag_err}", exc_info=True)
+                            _rag_result[0] = {'rag_indexed': False}
+                    _rag_thread = threading.Thread(target=_do_rag, daemon=True)
+                    _rag_thread.start()
+                    progress_cb('indexing', 7, '正在并行执行 LLM 提取与向量索引...')
+                elif not world_id:
+                    logger.info("RAG 索引跳过: 未提供 world_id")
+                elif not emb_config.get('api_key'):
+                    logger.warning("RAG 索引跳过: 未配置 Embedding/LLM API Key")
+
                 extractor = EnhancedWorldExtractor()
 
                 text_len = len(text) if text else 0
                 if text_len > extractor.LONG_TEXT_THRESHOLD:
-                    progress_cb('chunking', 5, f'文本 {text_len} 字符，正在章节感知切分...')
+                    progress_cb('chunking', 8, f'文本 {text_len} 字符，正在章节感知切分...')
 
-                # 注入进度回调
+                # LLM 提取（与 RAG 并行进行中）
                 result = extractor.extract_from_text(text, progress_callback=progress_cb)
 
                 # 合并直接导入的 JSON 数据
@@ -223,6 +263,15 @@ def extract_world():
                     if direct_json_data.get('settings', {}).get('calendars'):
                         result.setdefault('settings', {}).setdefault('calendars', []).extend(
                             direct_json_data['settings']['calendars'])
+
+                # 等待 RAG 索引线程（通常已提前完成）
+                if _rag_thread and _rag_thread.is_alive():
+                    progress_cb('indexing', 93, '正在等待向量索引收尾...')
+                    _rag_thread.join()
+                    import time as _time
+                    _time.sleep(0.3)  # 让前端看到收尾状态
+                if _rag_result[0]:
+                    result.update(_rag_result[0])
 
                 with _tasks_lock:
                     _extraction_tasks[task_id].update({

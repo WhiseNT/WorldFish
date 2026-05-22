@@ -12,13 +12,16 @@ export const worldApi = {
     return service.put(`/api/world/${worldId}`, data)
   },
   
-  // 从文本提取世界观信息（长文本可能需较长时间）
-  extractWorld: (text) => {
-    return service.post('/api/world/extract', { text }, { timeout: 1800000 })
+  // 从文本提取世界观信息（长文本可能需较长时间，可选 worldId 用于自动 RAG 索引）
+  extractWorld: (text, worldId = '') => {
+    const payload = { text }
+    if (worldId) payload.world_id = worldId
+    return service.post('/api/world/extract', payload, { timeout: 1800000 })
   },
 
-  // 从文件提取世界观信息（axios 自动处理 Content-Type 和 boundary）
-  extractWorldFromFile: (formData) => {
+  // 从文件提取世界观信息（axios 自动处理 Content-Type 和 boundary，可选 worldId 用于自动 RAG 索引）
+  extractWorldFromFile: (formData, worldId = '') => {
+    if (worldId) formData.append('world_id', worldId)
     return service.post('/api/world/extract', formData, { timeout: 1800000 })
   },
 

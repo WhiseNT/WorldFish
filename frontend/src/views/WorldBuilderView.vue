@@ -270,13 +270,17 @@
           <div v-if="extractedData" class="extract-preview">
             <div class="preview-header">
               <h3 class="preview-title">提取结果预览</h3>
+              <span v-if="extractedData.rag_indexed" class="rag-index-badge">
+                已索引 {{ extractedData.rag_document_count || 0 }} 条至 RAG 知识库
+              </span>
             </div>
             <div class="preview-content">
               <pre class="preview-code">{{ JSON.stringify(extractedData, null, 2) }}</pre>
             </div>
             <button @click="applyExtractedData" class="btn btn-secondary apply-btn">
-              应用提取的数据
+              合并提取的数据
             </button>
+            <p class="preview-note">会保留当前已编辑内容，仅补充新增信息，并尽量合并重复实体、事件和设定。</p>
           </div>
         </div>
 
@@ -348,43 +352,46 @@
           </div>
           <div v-if="entities.length === 0" class="overview-empty">暂无实体数据，导入或提取世界观后自动填充</div>
           <div v-else-if="showEntitiesExpanded" class="entity-card-list entity-card-grid">
-            <div v-for="entity in entities" :key="entity.id || entity.name" class="entity-card entity-card-rich" :class="{ 'entity-disabled': !isEntityEnabled(entity) }">
+            <div
+              v-for="d in entityItems"
+              :key="d.id"
+              v-memo="[d.id, d.enabled, d.bioExpanded]"
+              class="entity-card entity-card-rich"
+              :class="{ 'entity-disabled': !d.enabled }"
+            >
               <div class="entity-card-header entity-card-header-rich">
                 <label class="toggle-switch" @click.stop>
-                  <input type="checkbox" :checked="isEntityEnabled(entity)" @change="toggleEntityEnabled(entity)" />
+                  <input type="checkbox" :checked="d.enabled" @change="toggleEntityEnabled(d.entity)" />
                   <span class="toggle-slider"></span>
                 </label>
                 <div class="entity-card-main">
-                  <span class="entity-card-name">{{ entity.name }}</span>
-                  <span class="entity-card-type">{{ entity.type || '未分类' }}</span>
+                  <span class="entity-card-name">{{ d.entity.name }}</span>
+                  <span class="entity-card-type">{{ d.entity.type || '未分类' }}</span>
                 </div>
-                <button type="button" class="entity-setting-link" @click.stop="openLinkedSetting(entity)">
-                  {{ findSettingForEntity(entity) ? '查看对应设定' : '生成对应设定' }}
+                <button type="button" class="entity-setting-link" @click.stop="openLinkedSetting(d.entity)">
+                  {{ d.hasSetting ? '查看对应设定' : '生成对应设定' }}
                 </button>
               </div>
 
-              <div v-if="entity.attributes && Object.keys(entity.attributes).length > 0" class="entity-card-attrs">
-                <!-- 简单值：标签形式 -->
-                <span v-for="(value, key) in getSimpleAttrs(entity.attributes)" :key="key" class="entity-attr-tag">
-                  <span class="attr-key">{{ key }}</span>: <span class="attr-value">{{ value }}</span>
+              <div v-if="d.simpleKeys.length > 0" class="entity-card-attrs">
+                <span v-for="key in d.simpleKeys" :key="key" class="entity-attr-tag">
+                  <span class="attr-key">{{ key }}</span>: <span class="attr-value">{{ d.simpleAttrs[key] }}</span>
                 </span>
               </div>
 
-              <!-- 简介/长文本 -->
-              <div v-if="getLongTextAttr(entity.attributes)" class="entity-bio-block">
-                <div class="entity-bio-header" @click="toggleBioExpanded(entity)">
+              <div v-if="d.hasBio" class="entity-bio-block">
+                <div class="entity-bio-header" @click="toggleBioExpanded(d.entity)">
                   <span class="entity-bio-title">简介</span>
-                  <span class="entity-bio-toggle">{{ isBioExpanded(entity) ? '收起' : '展开' }}</span>
+                  <span class="entity-bio-toggle">{{ d.bioExpanded ? '收起' : '展开' }}</span>
                 </div>
-                <p v-if="isBioExpanded(entity)" class="entity-bio-text">{{ getLongTextAttr(entity.attributes) }}</p>
-                <p v-else class="entity-bio-preview">{{ (getLongTextAttr(entity.attributes) || '').slice(0, 120) }}...</p>
+                <p v-if="d.bioExpanded" class="entity-bio-text">{{ d.bio }}</p>
+                <p v-else class="entity-bio-preview">{{ d.bioPreview }}...</p>
               </div>
 
-              <!-- 实力变化 -->
-              <div v-if="getArrayAttr(entity.attributes, '实力变化').length > 0" class="entity-nested-block">
-                <div class="entity-nested-title">实力变化 ({{ getArrayAttr(entity.attributes, '实力变化').length }})</div>
+              <div v-if="d.powerChanges.length > 0" class="entity-nested-block">
+                <div class="entity-nested-title">实力变化 ({{ d.powerChanges.length }})</div>
                 <div class="entity-nested-list">
-                  <div v-for="(item, i) in getArrayAttr(entity.attributes, '实力变化')" :key="'power-'+i" class="entity-nested-card">
+                  <div v-for="(item, i) in d.powerChanges" :key="'power-'+i" class="entity-nested-card">
                     <div class="entity-nested-card-header">
                       <span class="entity-nested-time">{{ item.时间节点 || '未知时间' }}</span>
                       <span class="entity-nested-change">{{ item.变化前 || '?' }} → {{ item.变化后 || '?' }}</span>
@@ -395,11 +402,10 @@
                 </div>
               </div>
 
-              <!-- 性格变化 -->
-              <div v-if="getArrayAttr(entity.attributes, '性格变化').length > 0" class="entity-nested-block">
-                <div class="entity-nested-title">性格变化 ({{ getArrayAttr(entity.attributes, '性格变化').length }})</div>
+              <div v-if="d.personalityChanges.length > 0" class="entity-nested-block">
+                <div class="entity-nested-title">性格变化 ({{ d.personalityChanges.length }})</div>
                 <div class="entity-nested-list">
-                  <div v-for="(item, i) in getArrayAttr(entity.attributes, '性格变化')" :key="'char-'+i" class="entity-nested-card">
+                  <div v-for="(item, i) in d.personalityChanges" :key="'char-'+i" class="entity-nested-card">
                     <div class="entity-nested-card-header">
                       <span class="entity-nested-time">{{ item.时间节点 || '未知时间' }}</span>
                       <span class="entity-nested-change">{{ item.变化前 || '?' }} → {{ item.变化后 || '?' }}</span>
@@ -410,11 +416,10 @@
                 </div>
               </div>
 
-              <!-- 关键转折 -->
-              <div v-if="getArrayAttr(entity.attributes, '关键转折').length > 0" class="entity-nested-block">
-                <div class="entity-nested-title">关键转折 ({{ getArrayAttr(entity.attributes, '关键转折').length }})</div>
+              <div v-if="d.turningPoints.length > 0" class="entity-nested-block">
+                <div class="entity-nested-title">关键转折 ({{ d.turningPoints.length }})</div>
                 <div class="entity-nested-list">
-                  <div v-for="(item, i) in getArrayAttr(entity.attributes, '关键转折')" :key="'turn-'+i" class="entity-nested-card">
+                  <div v-for="(item, i) in d.turningPoints" :key="'turn-'+i" class="entity-nested-card">
                     <div class="entity-nested-card-header">
                       <span class="entity-nested-time">{{ item.时间节点 || '未知时间' }}</span>
                       <span class="entity-nested-event-name">{{ item.事件 || '' }}</span>
@@ -424,10 +429,10 @@
                 </div>
               </div>
 
-              <div v-if="entity.stages && entity.stages.length > 0" class="entity-stage-block">
-                <div class="entity-stage-title">成长阶段 ({{ entity.stages.length }})</div>
+              <div v-if="d.hasStages" class="entity-stage-block">
+                <div class="entity-stage-title">成长阶段 ({{ d.stages.length }})</div>
                 <div class="entity-stage-list">
-                  <div v-for="stage in entity.stages" :key="stage.id || stage.name" class="entity-stage-card">
+                  <div v-for="stage in d.stages" :key="stage.id || stage.name" class="entity-stage-card">
                     <div class="entity-stage-card-header">
                       <span class="entity-stage-name">{{ stage.name }}</span>
                       <span v-if="stage.era" class="entity-stage-era">{{ stage.era }}</span>
@@ -458,19 +463,25 @@
           </div>
           <div v-if="events.length === 0" class="overview-empty">暂无事件数据，导入或提取世界观后自动填充</div>
           <div v-else-if="showEventsExpanded" class="event-card-list event-card-stack">
-            <div v-for="event in events" :key="event.id || event.name" class="event-card event-card-rich" :class="{ 'entity-disabled': !isEventEnabled(event) }">
+            <div
+              v-for="d in eventItems"
+              :key="d.id"
+              v-memo="[d.id, d.enabled]"
+              class="event-card event-card-rich"
+              :class="{ 'entity-disabled': !d.enabled }"
+            >
               <div class="event-card-header">
                 <label class="toggle-switch" @click.stop>
-                  <input type="checkbox" :checked="isEventEnabled(event)" @change="toggleEventEnabled(event)" />
+                  <input type="checkbox" :checked="d.enabled" @change="toggleEventEnabled(d.event)" />
                   <span class="toggle-slider"></span>
                 </label>
-                <span class="event-card-name">{{ event.name }}</span>
-                <span v-if="event.date" class="event-card-date">{{ event.date }}</span>
+                <span class="event-card-name">{{ d.event.name }}</span>
+                <span v-if="d.event.date" class="event-card-date">{{ d.event.date }}</span>
               </div>
-              <p v-if="event.description" class="event-card-desc">{{ event.description }}</p>
-              <div v-if="event.entities && event.entities.length > 0" class="event-card-entities">
+              <p v-if="d.event.description" class="event-card-desc">{{ d.event.description }}</p>
+              <div v-if="d.event.entities && d.event.entities.length > 0" class="event-card-entities">
                 <button
-                  v-for="entityName in event.entities"
+                  v-for="entityName in d.event.entities"
                   :key="entityName"
                   type="button"
                   class="event-entity-tag event-entity-link"
@@ -606,8 +617,9 @@
       <div v-if="activeTab === 'timeline'" class="tab-pane timeline-section">
         <div class="timeline-header">
           <div class="header-info">
+            <span class="timeline-eyebrow">Chronology Atlas</span>
             <h3 class="header-title">世界时间线</h3>
-            <p class="header-description">创建和管理世界历法体系</p>
+            <p class="header-description">保留时间线：{{ timelinePrimaryLabel }}，事件与实体阶段已按可定位年份挂接。</p>
           </div>
           <div class="header-actions">
             <div class="zoom-controls">
@@ -623,26 +635,80 @@
           </div>
         </div>
 
+        <div class="timeline-status-grid">
+          <div class="timeline-status-card is-primary">
+            <span class="status-label">主轴</span>
+            <strong>{{ timelinePrimaryLabel }}</strong>
+            <small>{{ timelineRangeLabels.start }} - {{ timelineRangeLabels.end }}</small>
+          </div>
+          <div class="timeline-status-card">
+            <span class="status-label">历法</span>
+            <strong>{{ timelineDiagnostics.usableCalendars }} / {{ timelineDiagnostics.totalCalendars }}</strong>
+            <small>可定位 / 已提取</small>
+          </div>
+          <div class="timeline-status-card">
+            <span class="status-label">事件锚点</span>
+            <strong>{{ timelineDiagnostics.eventAnchors }}</strong>
+            <small>显示 {{ timelineDiagnostics.visibleEvents }} 条</small>
+          </div>
+          <div class="timeline-status-card">
+            <span class="status-label">实体阶段</span>
+            <strong>{{ timelineDiagnostics.stageAnchors }}</strong>
+            <small>显示 {{ timelineDiagnostics.visibleStages }} 条</small>
+          </div>
+        </div>
+
         <div class="timeline-insights">
-          <div class="timeline-insight-card">
+          <div class="timeline-insight-card timeline-chronology-card">
             <div class="insight-header">
-              <span class="insight-kicker">历法体系</span>
-              <span class="insight-count">{{ calendarSummaries.length }} 项</span>
+              <span class="insight-kicker">纪元 / 纪年骨架</span>
+              <span class="insight-count">{{ timelineEraSummaries.length }} 纪元 · {{ timelineYearSummaries.length }} 纪年</span>
             </div>
-            <div v-if="calendarSummaries.length > 0" class="calendar-summary-list">
-              <button
-                v-for="calendar in calendarSummaries"
-                :key="calendar.id"
-                type="button"
-                class="calendar-summary-card"
-                @click="showCalendarDetail(calendar)"
-              >
-                <span class="summary-name">{{ calendar.name }}</span>
-                <span class="summary-meta">{{ calendar.type }} · {{ calendar.timeRange || '未定义区间' }}</span>
-                <span class="summary-meta">{{ calendar.unit }} · {{ calendar.ratio }} · {{ calendar.calendarType }}</span>
-              </button>
+            <div v-if="calendarSummaries.length > 0" class="chronology-columns">
+              <div class="chronology-column">
+                <div class="chronology-column-title">纪元</div>
+                <button
+                  v-for="calendar in timelineEraSummaries"
+                  :key="calendar.id"
+                  type="button"
+                  class="calendar-summary-row is-era"
+                  @click="showCalendarDetail(calendar)"
+                >
+                  <span class="summary-name">{{ calendar.name }}</span>
+                  <span class="summary-meta">{{ calendar.timeRange || calendar.baseTime || '未定义区间' }}</span>
+                </button>
+                <div v-if="timelineEraSummaries.length === 0" class="timeline-empty-hint">没有可展示的纪元。</div>
+              </div>
+              <div class="chronology-column">
+                <div class="chronology-column-title">纪年</div>
+                <button
+                  v-for="calendar in timelineYearSummaries"
+                  :key="calendar.id"
+                  type="button"
+                  class="calendar-summary-row is-year"
+                  @click="showCalendarDetail(calendar)"
+                >
+                  <span class="summary-name">{{ calendar.name }}</span>
+                  <span class="summary-meta">{{ calendar.timeRange || calendar.baseTime || '未定义区间' }}</span>
+                </button>
+                <div v-if="timelineYearSummaries.length === 0" class="timeline-empty-hint">没有可展示的纪年。</div>
+              </div>
             </div>
             <div v-else class="timeline-empty-hint">尚未定义历法体系，请先在“历法编辑”中创建至少一条历法。</div>
+          </div>
+
+          <div class="timeline-insight-card timeline-quality-card">
+            <div class="insight-header">
+              <span class="insight-kicker">数据诊断</span>
+              <span class="insight-count">{{ timelineDiagnostics.noisyCalendars }} 项待清理</span>
+            </div>
+            <div v-if="timelineIssueCalendars.length > 0" class="timeline-issue-list">
+              <div v-for="issue in timelineIssueCalendars" :key="issue.id" class="timeline-issue-row">
+                <span class="issue-name">{{ issue.name }}</span>
+                <span class="issue-reason">{{ issue.issue }}</span>
+              </div>
+            </div>
+            <div v-else class="timeline-empty-hint">当前历法数据可以直接渲染。</div>
           </div>
         </div>
         
@@ -654,24 +720,69 @@
             </div>
             <div class="timeline-axis">
               <div class="timeline-line"></div>
+              <div
+                v-for="tick in timelineTicks"
+                :key="tick.label"
+                class="timeline-tick"
+                :style="{ left: tick.position + '%' }"
+              >
+                <span>{{ tick.label }}</span>
+              </div>
               <div class="timeline-axis-range">
                 <span class="axis-range-label">{{ timelineRangeLabels.start }}</span>
                 <span class="axis-range-label">{{ timelineRangeLabels.end }}</span>
               </div>
             </div>
 
-            <div class="timeline-lane-title" :style="{ top: timelineCalendarTop - 28 + 'px' }">历法区间</div>
+            <div class="timeline-lane-title" :style="{ top: timelineCalendarTop - 30 + 'px' }">纪元与纪年</div>
             <div class="timeline-band-layer" :style="{ top: timelineCalendarTop + 'px', height: timelineCalendarHeight + 'px' }">
               <div v-if="calendarTimelineItems.length === 0" class="timeline-empty-lane">暂无历法区间，点击“历法编辑”创建后会显示在这里。</div>
               <div 
                 v-for="(calendar, index) in calendarTimelineItems" 
                 :key="calendar.id"
                 class="timeline-band calendar-band"
+                :class="[`is-${calendar.kind}`, { 'is-low-confidence': calendar.issue }]"
                 :style="getCalendarBandStyle(calendar, index)"
                 @click="showCalendarDetail(calendar.source || calendar)"
               >
                 <div class="band-name">{{ calendar.name }}</div>
                 <div class="band-caption">{{ calendar.caption }}</div>
+              </div>
+            </div>
+
+            <div class="timeline-lane-title" :style="{ top: timelineEventTop - 30 + 'px' }">关键事件</div>
+            <div class="timeline-point-layer" :style="{ top: timelineEventTop + 'px', height: timelineEventHeight + 'px' }">
+              <div v-if="timelineEventItems.length === 0" class="timeline-empty-lane">暂无可定位事件。</div>
+              <button
+                v-for="(event, index) in timelineEventItems"
+                :key="event.id"
+                type="button"
+                class="timeline-point-event"
+                :style="getTimelineEventStyle(event, index)"
+                :title="`${event.label} · ${event.name}`"
+                :aria-label="`${event.label} ${event.name}`"
+                @click="selectEvent(event.source)"
+              >
+                <span class="event-dot"></span>
+                <span class="event-popover">
+                  <strong>{{ event.name }}</strong>
+                  <small>{{ event.label }} · {{ event.entities.slice(0, 2).join(' / ') || event.dateText }}</small>
+                </span>
+              </button>
+            </div>
+
+            <div class="timeline-lane-title" :style="{ top: timelineStageTop - 30 + 'px' }">实体阶段</div>
+            <div class="timeline-stage-layer" :style="{ top: timelineStageTop + 'px', height: timelineStageHeight + 'px' }">
+              <div v-if="timelineStageItems.length === 0" class="timeline-empty-lane">暂无可定位实体阶段。</div>
+              <div
+                v-for="(stage, index) in timelineStageItems"
+                :key="stage.id"
+                class="timeline-stage-chip"
+                :style="getTimelineStageStyle(stage, index)"
+                :title="`${stage.label} · ${stage.entityName} · ${stage.name}`"
+              >
+                <span class="stage-pulse"></span>
+                <span class="stage-name">{{ stage.entityName }} · {{ stage.name }}</span>
               </div>
             </div>
 
@@ -684,6 +795,38 @@
               <div class="anchor-label">锚定时间: {{ world.anchor_time }}</div>
             </div>
           </div>
+        </div>
+
+        <div class="timeline-context-grid">
+          <section class="timeline-context-panel">
+            <div class="context-panel-header">
+              <span>事件锚点</span>
+              <strong>{{ timelineDiagnostics.visibleEvents }}</strong>
+            </div>
+            <button
+              v-for="event in timelineEventItems.slice(0, 12)"
+              :key="`ctx-${event.id}`"
+              type="button"
+              class="context-event-row"
+              @click="selectEvent(event.source)"
+            >
+              <span class="context-year">{{ event.label }}</span>
+              <span class="context-title">{{ event.name }}</span>
+              <span class="context-meta">{{ event.entities.slice(0, 3).join(' / ') || event.dateText }}</span>
+            </button>
+          </section>
+
+          <section class="timeline-context-panel">
+            <div class="context-panel-header">
+              <span>实体阶段</span>
+              <strong>{{ timelineDiagnostics.visibleStages }}</strong>
+            </div>
+            <div v-for="stage in timelineStageItems.slice(0, 12)" :key="`ctx-${stage.id}`" class="context-stage-row">
+              <span class="context-year">{{ stage.label }}</span>
+              <span class="context-title">{{ stage.entityName }}</span>
+              <span class="context-meta">{{ stage.name }} · {{ stage.era }}</span>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -1036,8 +1179,54 @@
             </div>
             
             <div class="detail-body">
+              <div v-if="currentSettingStructuredSections.length > 0" class="setting-structured-grid">
+                <section
+                  v-for="section in currentSettingStructuredSections"
+                  :key="section.key"
+                  class="setting-structured-section"
+                  :class="{ 'is-wide': section.wide }"
+                >
+                  <div class="setting-structured-header">
+                    <h4 class="setting-structured-title">{{ section.title }}</h4>
+                    <span v-if="section.kind !== 'text'" class="setting-structured-count">{{ section.items.length }}</span>
+                  </div>
+
+                  <div v-if="section.kind === 'text'" class="setting-structured-text">{{ section.content }}</div>
+
+                  <div v-else-if="section.kind === 'facts'" class="setting-facts-grid">
+                    <div v-for="item in section.items" :key="`${section.key}-${item.label}`" class="setting-fact-item">
+                      <span class="setting-fact-label">{{ item.label }}</span>
+                      <span class="setting-fact-value">{{ item.value }}</span>
+                    </div>
+                  </div>
+
+                  <div v-else class="setting-card-list">
+                    <article v-for="item in section.items" :key="item.id || `${section.key}-${item.title}`" class="setting-structured-card">
+                      <div class="setting-card-header">
+                        <div>
+                          <h5 class="setting-card-title">{{ item.title }}</h5>
+                          <div v-if="item.subtitle" class="setting-card-subtitle">{{ item.subtitle }}</div>
+                        </div>
+                      </div>
+
+                      <p v-if="item.description" class="setting-card-description">{{ item.description }}</p>
+
+                      <div v-if="item.fields && item.fields.length > 0" class="setting-card-fields">
+                        <div v-for="field in item.fields" :key="`${item.id || item.title}-${field.label}`" class="setting-card-field">
+                          <span class="setting-card-field-label">{{ field.label }}</span>
+                          <span class="setting-card-field-value">{{ field.value }}</span>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+              </div>
+
               <div class="form-group">
-                <label class="form-label">详细内容</label>
+                <label class="form-label">{{ currentSettingDetailLabel }}</label>
+                <p v-if="currentSettingStructuredSections.length > 0" class="setting-detail-hint">
+                  上方分栏展示的是实体结构化内容；这里可补充额外说明、背景设定或人工修订文本。
+                </p>
                 <textarea 
                   v-model="currentSetting.detailContent" 
                   class="form-textarea detail-textarea" 
@@ -1162,6 +1351,28 @@ const normalizeEntityStage = (stage, index = 0, entityName = '') => {
   }
 }
 
+const normalizeEntityRelationship = (relationship) => {
+  if (!relationship || typeof relationship !== 'object') {
+    return null
+  }
+
+  const target = String(
+    relationship.target || relationship.entity || relationship.name || relationship['对象'] || relationship['目标'] || ''
+  ).trim()
+
+  if (!target) {
+    return null
+  }
+
+  return {
+    target,
+    type: String(relationship.type || relationship.relation || relationship.kind || relationship['关系类型'] || relationship['关系'] || '关联').trim() || '关联',
+    description: String(relationship.description || relationship.detail || relationship.summary || relationship['说明'] || '').trim(),
+    time_period: String(relationship.time_period || relationship.period || relationship['时期'] || relationship['时间'] || '').trim(),
+    source_event: String(relationship.source_event || relationship.event || relationship['触发事件'] || '').trim(),
+  }
+}
+
 const normalizeEntitiesForUi = (entities = []) => {
   if (!Array.isArray(entities)) {
     return []
@@ -1189,8 +1400,12 @@ const normalizeEntitiesForUi = (entities = []) => {
         id: entity.id || createLocalId('entity', index),
         name: String(entity.name || '').trim(),
         type: String(entity.type || '').trim(),
+        aliases: normalizeAliases(entity.aliases || entity.alias || rawAttributes.aliases || rawAttributes['别名']),
         attributes: rawAttributes,
         stages: normalizedStages,
+        relationships: (Array.isArray(entity.relationships) ? entity.relationships : Array.isArray(rawAttributes.relationships) ? rawAttributes.relationships : Array.isArray(rawAttributes['关系']) ? rawAttributes['关系'] : [])
+          .map(normalizeEntityRelationship)
+          .filter(Boolean),
         setting_item_id: String(entity.setting_item_id || entity.settingId || entity.linked_setting_id || '').trim(),
         evolution_refs: Array.isArray(entity.evolution_refs)
           ? entity.evolution_refs.map(ref => String(ref || '').trim()).filter(Boolean)
@@ -1202,10 +1417,57 @@ const normalizeEntitiesForUi = (entities = []) => {
     .filter(entity => entity.name)
 }
 
+const ENTITY_SPECIAL_ATTRIBUTE_KEYS = new Set(['简介', '实力变化', '性格变化', '关键转折'])
+
+const hasStructuredDisplayValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.some(item => hasStructuredDisplayValue(item))
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value).some(item => hasStructuredDisplayValue(item))
+  }
+
+  return Boolean(String(value ?? '').trim())
+}
+
+const formatStructuredText = (value, options = {}) => {
+  const { inline = false } = options
+
+  if (!hasStructuredDisplayValue(value)) {
+    return ''
+  }
+
+  if (Array.isArray(value)) {
+    const normalizedItems = value
+      .map(item => formatStructuredText(item, { inline: true }))
+      .filter(Boolean)
+
+    if (!normalizedItems.length) {
+      return ''
+    }
+
+    return inline ? normalizedItems.join('；') : normalizedItems.map(item => `- ${item}`).join('\n')
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value)
+      .filter(([, nestedValue]) => hasStructuredDisplayValue(nestedValue))
+      .map(([key, nestedValue]) => `${key}：${formatStructuredText(nestedValue, { inline: true })}`)
+      .filter(Boolean)
+
+    return inline ? entries.join('；') : entries.join('\n')
+  }
+
+  return String(value ?? '').trim()
+}
+
 const buildEntitySettingSummary = (entity) => {
-  const attributeLines = Object.entries(entity.attributes || {})
-    .filter(([, value]) => value != null && String(value).trim())
-    .map(([key, value]) => `${key}：${String(value).trim()}`)
+  const attributes = entity.attributes || {}
+  const introText = formatStructuredText(attributes['简介'])
+  const attributeLines = Object.entries(attributes)
+    .filter(([key, value]) => !ENTITY_SPECIAL_ATTRIBUTE_KEYS.has(key) && hasStructuredDisplayValue(value))
+    .map(([key, value]) => `${key}：${formatStructuredText(value, { inline: true })}`)
 
   const stageLines = (entity.stages || [])
     .map(stage => {
@@ -1214,9 +1476,9 @@ const buildEntitySettingSummary = (entity) => {
       if (stage.description) stageDetailParts.push(stage.description)
 
       const stageAttributePreview = Object.entries(stage.attributes || {})
-        .filter(([, value]) => value != null && String(value).trim())
+        .filter(([, value]) => hasStructuredDisplayValue(value))
         .slice(0, 2)
-        .map(([key, value]) => `${key}：${String(value).trim()}`)
+        .map(([key, value]) => `${key}：${formatStructuredText(value, { inline: true })}`)
         .join('；')
 
       if (stageAttributePreview) {
@@ -1228,11 +1490,238 @@ const buildEntitySettingSummary = (entity) => {
     })
     .filter(Boolean)
 
-  const lines = [...attributeLines, ...stageLines]
+  const relationshipLines = (entity.relationships || [])
+    .map(relationship => {
+      const target = String(relationship.target || '').trim()
+      const relationType = String(relationship.type || '').trim()
+      const description = String(relationship.description || '').trim()
+      if (!target) {
+        return ''
+      }
+
+      const summary = [target, relationType ? `（${relationType}）` : '', description ? `：${description}` : ''].join('')
+      return summary.trim()
+    })
+    .filter(Boolean)
+
+  const lines = [
+    introText,
+    relationshipLines.length ? `关系网络：\n${relationshipLines.map(line => `- ${line}`).join('\n')}` : '',
+    stageLines.length ? `成长阶段：\n${stageLines.map(line => `- ${line}`).join('\n')}` : '',
+    attributeLines.join('\n'),
+  ].filter(Boolean)
+
+  const previewText = introText.split('\n').find(Boolean) || relationshipLines[0] || stageLines[0] || attributeLines[0] || entity.type || '实体设定'
   return {
-    description: stageLines[0] || attributeLines[0] || entity.type || '实体设定',
+    description: previewText,
     detailContent: lines.join('\n') || entity.type || '实体设定',
   }
+}
+
+const buildStructuredFieldItems = (source, excludedKeys = []) => {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return []
+  }
+
+  const excluded = new Set(excludedKeys)
+  return Object.entries(source)
+    .filter(([key, value]) => !excluded.has(key) && hasStructuredDisplayValue(value))
+    .map(([label, value]) => ({
+      label,
+      value: formatStructuredText(value, { inline: true }),
+    }))
+    .filter(field => field.value)
+}
+
+const buildEntityDetailSections = (entity) => {
+  if (!entity || typeof entity !== 'object') {
+    return []
+  }
+
+  const attributes = entity.attributes || {}
+  const sections = []
+  const handledAttributeKeys = new Set(['简介', '实力变化', '性格变化', '关键转折'])
+
+  const introText = formatStructuredText(attributes['简介'])
+  if (introText) {
+    sections.push({
+      key: 'intro',
+      title: '核心简介',
+      kind: 'text',
+      wide: true,
+      content: introText,
+    })
+  }
+
+  const overviewItems = [
+    { label: '实体类型', value: String(entity.type || '未分类').trim() || '未分类' },
+  ]
+
+  const aliases = normalizeAliases(entity.aliases)
+  if (aliases.length > 0) {
+    overviewItems.push({ label: '别名', value: aliases.join('、') })
+  }
+
+  Object.entries(attributes)
+    .filter(([key, value]) => !handledAttributeKeys.has(key) && !Array.isArray(value) && !(value && typeof value === 'object') && hasStructuredDisplayValue(value))
+    .forEach(([label, value]) => {
+      overviewItems.push({ label, value: formatStructuredText(value, { inline: true }) })
+      handledAttributeKeys.add(label)
+    })
+
+  if (overviewItems.length > 0) {
+    sections.push({
+      key: 'overview',
+      title: '实体概览',
+      kind: 'facts',
+      items: overviewItems,
+    })
+  }
+
+  if (Array.isArray(entity.relationships) && entity.relationships.length > 0) {
+    sections.push({
+      key: 'relationships',
+      title: '关系网络',
+      kind: 'cards',
+      items: entity.relationships
+        .filter(relationship => relationship && typeof relationship === 'object')
+        .map((relationship, index) => ({
+          id: `relationship_${index}`,
+          title: String(relationship.target || '').trim() || `关系 ${index + 1}`,
+          subtitle: String(relationship.type || '').trim(),
+          description: String(relationship.description || '').trim(),
+          fields: buildStructuredFieldItems(relationship, ['target', 'type', 'description']),
+        }))
+        .filter(item => item.title || item.description || item.fields.length > 0),
+    })
+  }
+
+  if (Array.isArray(entity.stages) && entity.stages.length > 0) {
+    sections.push({
+      key: 'stages',
+      title: '成长阶段',
+      kind: 'cards',
+      wide: true,
+      items: entity.stages
+        .filter(stage => stage && typeof stage === 'object')
+        .map((stage, index) => ({
+          id: stage.id || `stage_${index}`,
+          title: String(stage.name || '').trim() || `阶段 ${index + 1}`,
+          subtitle: String(stage.era || '').trim(),
+          description: String(stage.description || '').trim(),
+          fields: buildStructuredFieldItems(stage.attributes || {}),
+        }))
+        .filter(item => item.title || item.description || item.fields.length > 0),
+    })
+  }
+
+  const specialArraySections = [
+    {
+      key: 'powerChanges',
+      attrKey: '实力变化',
+      title: '实力变化',
+      wide: true,
+      buildCard: (item, index) => ({
+        id: `power_${index}`,
+        title: [String(item['变化前'] || '').trim(), String(item['变化后'] || '').trim()].filter(Boolean).join(' -> ') || `实力变化 ${index + 1}`,
+        subtitle: String(item['时间节点'] || '').trim(),
+        description: String(item['描述'] || '').trim(),
+        fields: buildStructuredFieldItems(item, ['变化前', '变化后', '时间节点', '描述']),
+      }),
+    },
+    {
+      key: 'personalityChanges',
+      attrKey: '性格变化',
+      title: '性格变化',
+      wide: true,
+      buildCard: (item, index) => ({
+        id: `personality_${index}`,
+        title: [String(item['变化前'] || '').trim(), String(item['变化后'] || '').trim()].filter(Boolean).join(' -> ') || `性格变化 ${index + 1}`,
+        subtitle: String(item['时间节点'] || '').trim(),
+        description: String(item['描述'] || '').trim(),
+        fields: buildStructuredFieldItems(item, ['变化前', '变化后', '时间节点', '描述']),
+      }),
+    },
+    {
+      key: 'turningPoints',
+      attrKey: '关键转折',
+      title: '关键转折',
+      wide: true,
+      buildCard: (item, index) => ({
+        id: `turning_${index}`,
+        title: String(item['事件'] || item.name || '').trim() || `关键转折 ${index + 1}`,
+        subtitle: String(item['时间节点'] || '').trim(),
+        description: String(item['影响'] || item['描述'] || '').trim(),
+        fields: buildStructuredFieldItems(item, ['事件', '时间节点', '影响', '描述']),
+      }),
+    },
+  ]
+
+  specialArraySections.forEach((sectionConfig) => {
+    const sourceItems = Array.isArray(attributes[sectionConfig.attrKey]) ? attributes[sectionConfig.attrKey] : []
+    if (!sourceItems.length) {
+      return
+    }
+
+    sections.push({
+      key: sectionConfig.key,
+      title: sectionConfig.title,
+      kind: 'cards',
+      wide: sectionConfig.wide,
+      items: sourceItems
+        .filter(item => item && typeof item === 'object')
+        .map(sectionConfig.buildCard)
+        .filter(item => item.title || item.description || item.fields.length > 0),
+    })
+  })
+
+  Object.entries(attributes)
+    .filter(([key, value]) => !handledAttributeKeys.has(key) && (Array.isArray(value) || (value && typeof value === 'object')) && hasStructuredDisplayValue(value))
+    .forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        sections.push({
+          key: `extra_${key}`,
+          title: key,
+          kind: 'cards',
+          wide: value.length > 2,
+          items: value.map((item, index) => {
+            if (item && typeof item === 'object') {
+              return {
+                id: `${key}_${index}`,
+                title: String(item.name || item.title || item['名称'] || item['事件'] || '').trim() || `${key} ${index + 1}`,
+                subtitle: String(item['时间节点'] || item.time || item.date || item.type || '').trim(),
+                description: String(item.description || item['描述'] || item.detail || item['影响'] || '').trim(),
+                fields: buildStructuredFieldItems(item, ['name', 'title', '名称', '事件', '时间节点', 'time', 'date', 'type', 'description', '描述', 'detail', '影响']),
+              }
+            }
+
+            return {
+              id: `${key}_${index}`,
+              title: `${key} ${index + 1}`,
+              subtitle: '',
+              description: formatStructuredText(item),
+              fields: [],
+            }
+          }).filter(item => item.title || item.description || item.fields.length > 0),
+        })
+        return
+      }
+
+      sections.push({
+        key: `extra_${key}`,
+        title: key,
+        kind: 'facts',
+        wide: true,
+        items: buildStructuredFieldItems(value),
+      })
+    })
+
+  return sections.filter(section => {
+    if (section.kind === 'text') {
+      return Boolean(section.content)
+    }
+    return Array.isArray(section.items) && section.items.length > 0
+  })
 }
 
 const findSettingForEntityRecord = (settings = [], entity = {}) => {
@@ -1246,9 +1735,13 @@ const findSettingForEntityRecord = (settings = [], entity = {}) => {
   }) || null
 }
 
-const TIMELINE_BASE_WIDTH = 2400
-
-const TIMELINE_LANE_ROW_HEIGHT = 42
+const TIMELINE_BASE_WIDTH = 2600
+const TIMELINE_LANE_ROW_HEIGHT = 52
+const TIMELINE_EVENT_ROW_HEIGHT = 58
+const TIMELINE_STAGE_ROW_HEIGHT = 38
+const TIMELINE_EVENT_LIMIT = 96
+const TIMELINE_STAGE_LIMIT = 56
+const TIMELINE_ISSUE_LIMIT = 8
 
 const POLITICAL_ENTITY_KEYWORDS = [
   'organization', 'nation', 'state', 'kingdom', 'empire', 'dynasty', 'faction', 'government', 'alliance', 'church', 'tribe',
@@ -1259,27 +1752,90 @@ const POLITICAL_TIME_RANGE_KEYS = ['timerange', '存续时间', '存在时间', 
 const POLITICAL_START_KEYS = ['start', 'startyear', '开始时间', '起始时间', '成立时间', '建立时间', '建国时间', '创立时间', '即位时间']
 const POLITICAL_END_KEYS = ['end', 'endyear', '结束时间', '终止时间', '灭亡时间', '解散时间', '覆灭时间', '退位时间']
 
-const parseTimelineYear = (value) => {
+const normalizeTimelineText = (value) => String(value || '')
+  .replace(/[，,]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+
+const normalizeCalendarRatio = (value) => {
+  let text = String(value || '1').trim()
+  text = text.replace(/^×\s*/i, '').replace(/^x\s*/i, '').trim()
+  return `×${text || '1'}`
+}
+
+const extractTimelineYears = (value, options = {}) => {
+  const text = normalizeTimelineText(value)
+  if (!text) {
+    return []
+  }
+
+  if (/\d+\s*世纪/i.test(text) && !/\d{3,6}\s*年/.test(text)) {
+    return []
+  }
+
+  const anchorYear = Number.isFinite(options.anchorYear) ? options.anchorYear : null
+  const years = []
+  const seen = new Set()
+  const addYear = (year) => {
+    if (!Number.isFinite(year)) return
+    if (seen.has(year)) return
+    seen.add(year)
+    years.push(year)
+  }
+
+  if (/(元年|建城|建立|登基|称帝|开始|始于)/.test(text) && !/\d{3,6}\s*年(?!\s*前)/.test(text)) {
+    addYear(0)
+  }
+
+  const wanBefore = text.match(/(\d+(?:\.\d+)?)\s*万\s*年\s*前/)
+  if (wanBefore && anchorYear !== null) {
+    addYear(Math.round(anchorYear - Number.parseFloat(wanBefore[1]) * 10000))
+  }
+
+  const beforeMatches = Array.from(text.matchAll(/(\d{2,6})\s*年\s*前/g))
+  beforeMatches.forEach((match) => {
+    if (anchorYear !== null) {
+      addYear(anchorYear - Number.parseInt(match[1], 10))
+    }
+  })
+
+  const explicitMatches = Array.from(text.matchAll(/([-+]?\d{3,6})\s*年(?!\s*前)/g))
+  explicitMatches.forEach((match) => {
+    let year = Number.parseInt(match[1], 10)
+    if (Number.isNaN(year)) return
+    const prefix = text.slice(Math.max(0, match.index - 6), match.index)
+    if (!match[1].startsWith('-') && /(公元前|bc|bce)/i.test(prefix)) {
+      year = -Math.abs(year)
+    }
+    addYear(year)
+  })
+
+  const bareMatches = Array.from(text.matchAll(/[-+]?\d{3,6}/g))
+  bareMatches.forEach((match) => {
+    const index = match.index || 0
+    const after = text.slice(index + match[0].length, index + match[0].length + 2)
+    const before = text.slice(Math.max(0, index - 3), index)
+    if (/[月日天周章卷部]/.test(after)) return
+    if (/第\s*$/.test(before) && /纪/.test(after)) return
+    let year = Number.parseInt(match[0], 10)
+    if (Number.isNaN(year)) return
+    if (!match[0].startsWith('-') && /(公元前|bc|bce)/i.test(text.slice(Math.max(0, index - 8), index))) {
+      year = -Math.abs(year)
+    }
+    addYear(year)
+  })
+
+  return years
+}
+
+const parseTimelineYear = (value, options = {}) => {
   const text = String(value || '').trim()
   if (!text) {
     return null
   }
 
-  const match = text.match(/[-+]?\d+/)
-  if (!match) {
-    return null
-  }
-
-  let year = Number.parseInt(match[0], 10)
-  if (Number.isNaN(year)) {
-    return null
-  }
-
-  if (!match[0].startsWith('-') && /(公元前|前\s*\d|bc|bce)/i.test(text)) {
-    year = -Math.abs(year)
-  }
-
-  return year
+  const years = extractTimelineYears(text, options)
+  return years.length ? years[0] : null
 }
 
 const formatTimelineYear = (value) => {
@@ -1290,30 +1846,13 @@ const formatTimelineYear = (value) => {
   return value < 0 ? `前${Math.abs(value)}` : `${value}`
 }
 
-const parseTimelineRange = (value) => {
+const parseTimelineRange = (value, options = {}) => {
   const text = String(value || '').trim()
   if (!text) {
     return null
   }
 
-  const matches = Array.from(text.matchAll(/[-+]?\d+/g))
-  if (!matches.length) {
-    return null
-  }
-
-  const years = matches
-    .map((match, index) => {
-      const parsed = Number.parseInt(match[0], 10)
-      if (Number.isNaN(parsed)) {
-        return null
-      }
-      if (!match[0].startsWith('-') && /(公元前|bc|bce)/i.test(text)) {
-        return index === 0 ? -Math.abs(parsed) : parsed
-      }
-      return parsed
-    })
-    .filter(year => Number.isFinite(year))
-
+  const years = extractTimelineYears(text, options)
   if (!years.length) {
     return null
   }
@@ -1322,6 +1861,149 @@ const parseTimelineRange = (value) => {
     start: years[0],
     end: years.length > 1 ? years[1] : null,
     openEnded: /(至今|现在|当前|ongoing|present|无结束)/i.test(text) || years.length === 1,
+  }
+}
+
+const inferCalendarTimelineType = (calendar = {}) => {
+  const rawType = String(calendar.type || '').trim()
+  const name = String(calendar.name || '').trim()
+  const text = [name, calendar.timeRange, calendar.baseTime, calendar.description].map(item => String(item || '')).join(' ')
+
+  if (/纪年/.test(rawType) || /(王历|王国历|通用历|标准纪年|建城|年数|历法|历$|公历|纪年)/.test(text)) {
+    if (!/(第一纪|第二纪|第三纪|第四纪|第五纪|纪元|年代|时代)/.test(name)) {
+      return '纪年'
+    }
+  }
+
+  if (/(纪元|第一纪|第二纪|第三纪|第四纪|第五纪|年代|时代|大灾变|萌芽|初耀|双生|纷争|黑暗纪|灾难纪)/.test(text)) {
+    return '纪元'
+  }
+
+  return rawType.includes('纪年') ? '纪年' : '纪元'
+}
+
+const assessCalendarTimelineIssue = (calendar = {}, years = []) => {
+  const name = String(calendar.name || '').trim()
+  const text = [name, calendar.timeRange, calendar.baseTime, calendar.description, calendar.unit].map(item => String(item || '')).join(' ')
+
+  if (/^(未知|未明确|不明|无具体历法|未知历法)$/i.test(name)) {
+    return '名称无法指向稳定历法'
+  }
+
+  if (/(周一到周日|月亮弥撒|红月周期|每周|每月|满月|节日|弥撒)/.test(text)) {
+    return '更像周期或节日，不进入主时间轴'
+  }
+
+  if (!years.length) {
+    return '缺少可定位年份'
+  }
+
+  if (/(未知|未明确|不明|推测|可推断|未提及具体)/.test(text)) {
+    return '区间或来源低置信'
+  }
+
+  return ''
+}
+
+const buildCalendarTimelineItem = (calendar = {}, index = 0, anchorYear = null) => {
+  const parsedRange = parseTimelineRange(calendar.timeRange, { anchorYear })
+  const rangeYears = parsedRange ? [parsedRange.start, parsedRange.end].filter(Number.isFinite) : []
+  const baseYear = parseTimelineYear(calendar.baseTime, { anchorYear })
+  const years = [...extractTimelineYears(calendar.baseTime, { anchorYear }), ...rangeYears]
+  const issue = assessCalendarTimelineIssue(calendar, years)
+
+  if (issue === '更像周期或节日，不进入主时间轴' || !years.length) {
+    return null
+  }
+
+  const start = Number.isFinite(baseYear) ? baseYear : parsedRange?.start
+  if (!Number.isFinite(start)) {
+    return null
+  }
+
+  let end = Number.isFinite(parsedRange?.end) ? parsedRange.end : null
+  if (!Number.isFinite(end) && Number.isFinite(baseYear) && Number.isFinite(parsedRange?.start) && parsedRange.start !== baseYear) {
+    end = parsedRange.start
+  }
+  if (!Number.isFinite(end) && parsedRange?.openEnded && Number.isFinite(anchorYear) && anchorYear > start) {
+    end = anchorYear
+  }
+  if (!Number.isFinite(end)) {
+    end = start + 1
+  }
+  if (end < start) {
+    const swap = end
+    end = start
+    return {
+      id: calendar.id || `calendar_${index}`,
+      name: String(calendar.name || '未命名历法').trim(),
+      caption: `${inferCalendarTimelineType(calendar)} · ${calendar.timeRange || calendar.baseTime || '未定义区间'}`,
+      start: swap,
+      end,
+      kind: inferCalendarTimelineType(calendar) === '纪年' ? 'year' : 'era',
+      issue,
+      source: calendar,
+    }
+  }
+
+  return {
+    id: calendar.id || `calendar_${index}`,
+    name: String(calendar.name || '未命名历法').trim(),
+    caption: `${inferCalendarTimelineType(calendar)} · ${calendar.timeRange || calendar.baseTime || '未定义区间'}`,
+    start,
+    end,
+    kind: inferCalendarTimelineType(calendar) === '纪年' ? 'year' : 'era',
+    issue,
+    source: calendar,
+  }
+}
+
+const getTimelineEventDateText = (event = {}) => {
+  const estimated = String(event.estimated_date || '').trim()
+  const date = String(event.date || '').trim()
+  if (estimated && !/^(未知|unknown)$/i.test(estimated)) return estimated
+  return date
+}
+
+const buildTimelineEventItem = (event = {}, index = 0, anchorYear = null) => {
+  const dateText = getTimelineEventDateText(event)
+  const year = parseTimelineYear(dateText, { anchorYear })
+  if (!Number.isFinite(year)) {
+    return null
+  }
+
+  const entities = Array.isArray(event.entities) ? event.entities.map(item => String(item || '').trim()).filter(Boolean) : []
+  return {
+    id: event.id || `event_${index}_${String(event.name || '').slice(0, 12)}`,
+    name: String(event.name || '未命名事件').trim(),
+    year,
+    label: `${formatTimelineYear(year)}年`,
+    dateText,
+    description: String(event.description || '').trim(),
+    entities,
+    weight: entities.length + (String(event.date || '').trim() ? 3 : 0) + (String(event.description || '').length > 40 ? 1 : 0),
+    source: event,
+  }
+}
+
+const buildTimelineStageItem = (entity = {}, stage = {}, index = 0, anchorYear = null) => {
+  const era = String(stage.era || '').trim()
+  const year = parseTimelineYear(era, { anchorYear })
+  if (!Number.isFinite(year)) {
+    return null
+  }
+
+  return {
+    id: stage.id || `stage_${entity.id || entity.name || index}_${index}`,
+    entityName: String(entity.name || '未命名实体').trim(),
+    entityType: String(entity.type || '实体').trim(),
+    name: String(stage.name || '阶段').trim(),
+    year,
+    label: `${formatTimelineYear(year)}年`,
+    era,
+    description: String(stage.description || '').trim(),
+    weight: String(stage.description || '').length + (entity.type === '人物' ? 12 : 0),
+    source: { entity, stage },
   }
 }
 
@@ -1480,18 +2162,22 @@ const normalizeCalendarsForUi = (calendars = []) => calendars
     const endYear = String(calendar.endYear || '').trim()
     const rawRange = String(calendar.timeRange || '').trim()
     const timeRange = rawRange || (startYear ? `${startYear} ~ ${endYear || '无'}` : '')
-
-    return {
+    const normalizedCalendar = {
       ...calendar,
       id: calendar.id || createLocalId('calendar', index),
       name: String(calendar.name || '').trim(),
-      type: String(calendar.type || '纪元').includes('纪年') ? '纪年' : '纪元',
+      rawType: String(calendar.type || '').trim(),
       baseTime: startYear,
       timeRange,
       unit: String(calendar.unit || '年').trim() || '年',
-      ratio: String(calendar.ratio || '×1').startsWith('×') ? String(calendar.ratio || '×1') : `×${String(calendar.ratio || '1')}`,
+      ratio: normalizeCalendarRatio(calendar.ratio),
       calendarType: String(calendar.calendarType || '未开启').trim() || '未开启',
       description: String(calendar.description || '').trim(),
+    }
+
+    return {
+      ...normalizedCalendar,
+      type: inferCalendarTimelineType(normalizedCalendar),
     }
   })
   .filter(calendar => calendar.name)
@@ -1510,6 +2196,334 @@ const mergeMultilineText = (...values) => {
       })
   })
   return lines.join('\n')
+}
+
+const mergeTextValue = (currentValue, incomingValue) => {
+  const currentText = String(currentValue || '').trim()
+  const incomingText = String(incomingValue || '').trim()
+
+  if (!incomingText) {
+    return currentText
+  }
+
+  if (!currentText) {
+    return incomingText
+  }
+
+  if (currentText === incomingText) {
+    return currentText
+  }
+
+  if (currentText.includes(incomingText)) {
+    return currentText
+  }
+
+  if (incomingText.includes(currentText)) {
+    return incomingText
+  }
+
+  return mergeMultilineText(currentText, incomingText)
+}
+
+const preferIncomingText = (currentValue, incomingValue) => {
+  const currentText = String(currentValue || '').trim()
+  const incomingText = String(incomingValue || '').trim()
+
+  if (!incomingText) {
+    return currentText
+  }
+
+  if (!currentText) {
+    return incomingText
+  }
+
+  const placeholderPattern = /^(未命名|未定义|未知|暂无|待定|无|none|null|unknown)$/i
+  if (placeholderPattern.test(currentText)) {
+    return incomingText
+  }
+
+  return currentText
+}
+
+const isMeaningfulEventTime = (value) => {
+  const text = String(value || '').trim().toLowerCase()
+  return Boolean(text) && !['unknown', '未知', '未定义', 'none', 'null'].includes(text)
+}
+
+const mergeArrayValues = (currentValues = [], incomingValues = []) => {
+  const merged = []
+  const seen = new Set()
+
+  ;[...currentValues, ...incomingValues].forEach((value) => {
+    if (value == null) {
+      return
+    }
+    const key = typeof value === 'object' ? JSON.stringify(value) : String(value)
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    merged.push(value)
+  })
+
+  return merged
+}
+
+const mergePlainObjectValues = (currentValue = {}, incomingValue = {}) => {
+  if (!currentValue || typeof currentValue !== 'object' || Array.isArray(currentValue)) {
+    return incomingValue && typeof incomingValue === 'object' && !Array.isArray(incomingValue) ? { ...incomingValue } : {}
+  }
+
+  if (!incomingValue || typeof incomingValue !== 'object' || Array.isArray(incomingValue)) {
+    return { ...currentValue }
+  }
+
+  const merged = { ...currentValue }
+  Object.entries(incomingValue).forEach(([key, value]) => {
+    const existingValue = merged[key]
+
+    if (Array.isArray(existingValue) && Array.isArray(value)) {
+      merged[key] = mergeArrayValues(existingValue, value)
+      return
+    }
+
+    if (
+      existingValue && typeof existingValue === 'object' && !Array.isArray(existingValue)
+      && value && typeof value === 'object' && !Array.isArray(value)
+    ) {
+      merged[key] = mergePlainObjectValues(existingValue, value)
+      return
+    }
+
+    if (value == null || String(value).trim() === '') {
+      return
+    }
+
+    if (existingValue == null || String(existingValue).trim() === '') {
+      merged[key] = value
+      return
+    }
+
+    merged[key] = mergeTextValue(existingValue, value)
+  })
+
+  return merged
+}
+
+const mergeStageRecords = (currentStages = [], incomingStages = []) => {
+  const mergedByKey = new Map()
+
+  ;[...currentStages, ...incomingStages].forEach((stage, index) => {
+    if (!stage || typeof stage !== 'object' || !String(stage.name || '').trim()) {
+      return
+    }
+
+    const nameKey = String(stage.name || '').trim().toLowerCase()
+    const eraKey = String(stage.era || '').trim().toLowerCase()
+    const key = `${nameKey}|${eraKey}`
+    const existing = mergedByKey.get(key)
+
+    if (!existing) {
+      mergedByKey.set(key, {
+        ...stage,
+        id: stage.id || createLocalId('stage', index),
+        name: String(stage.name || '').trim(),
+        era: String(stage.era || '').trim(),
+        description: String(stage.description || '').trim(),
+        attributes: mergePlainObjectValues({}, stage.attributes),
+        setting_item_id: String(stage.setting_item_id || '').trim(),
+        source: mergePlainObjectValues({}, stage.source),
+      })
+      return
+    }
+
+    mergedByKey.set(key, {
+      ...existing,
+      ...stage,
+      id: existing.id || stage.id || createLocalId('stage', index),
+      name: preferIncomingText(existing.name, stage.name),
+      era: preferIncomingText(existing.era, stage.era),
+      description: mergeTextValue(existing.description, stage.description),
+      attributes: mergePlainObjectValues(existing.attributes, stage.attributes),
+      setting_item_id: String(existing.setting_item_id || stage.setting_item_id || '').trim(),
+      source: mergePlainObjectValues(existing.source, stage.source),
+    })
+  })
+
+  return Array.from(mergedByKey.values())
+}
+
+const mergeEntityRecords = (currentEntities = [], incomingEntities = []) => {
+  const mergedByKey = new Map()
+
+  const getEntityKeys = (entity) => {
+    const idKey = String(entity.id || '').trim()
+    const nameKey = String(entity.name || '').trim().toLowerCase()
+    const typeKey = String(entity.type || '').trim().toLowerCase()
+    const keys = []
+    if (idKey) {
+      keys.push(`id:${idKey}`)
+    }
+    if (nameKey) {
+      keys.push(`name:${nameKey}|type:${typeKey}`)
+      keys.push(`name:${nameKey}`)
+    }
+    normalizeAliases(entity.aliases).forEach((alias) => {
+      const aliasKey = String(alias || '').trim().toLowerCase()
+      if (aliasKey) {
+        keys.push(`alias:${aliasKey}|type:${typeKey}`)
+        keys.push(`alias:${aliasKey}`)
+      }
+    })
+    return keys
+  }
+
+  const putEntity = (entity, index) => {
+    if (!entity || typeof entity !== 'object' || !String(entity.name || '').trim()) {
+      return
+    }
+
+    const normalizedEntity = normalizeEntitiesForUi([entity])[0]
+    if (!normalizedEntity) {
+      return
+    }
+
+    const keys = getEntityKeys(normalizedEntity)
+    const existingKey = keys.find(key => mergedByKey.has(key))
+    const existing = existingKey ? mergedByKey.get(existingKey) : null
+
+    if (!existing) {
+      const createdEntity = {
+        ...normalizedEntity,
+        id: normalizedEntity.id || createLocalId('entity', index),
+        name: String(normalizedEntity.name || '').trim(),
+        type: String(normalizedEntity.type || '').trim(),
+        aliases: normalizeAliases(normalizedEntity.aliases),
+        attributes: mergePlainObjectValues({}, normalizedEntity.attributes),
+        stages: mergeStageRecords([], normalizedEntity.stages),
+        relationships: mergeArrayValues([], normalizedEntity.relationships),
+        evolution_refs: mergeArrayValues([], normalizedEntity.evolution_refs),
+        setting_item_id: String(normalizedEntity.setting_item_id || '').trim(),
+      }
+
+      keys.forEach(key => mergedByKey.set(key, createdEntity))
+      return
+    }
+
+    const mergedEntity = {
+      ...existing,
+      ...normalizedEntity,
+      id: existing.id || normalizedEntity.id || createLocalId('entity', index),
+      name: preferIncomingText(existing.name, normalizedEntity.name),
+      type: preferIncomingText(existing.type, normalizedEntity.type),
+      aliases: mergeArrayValues(normalizeAliases(existing.aliases), normalizeAliases(normalizedEntity.aliases)),
+      attributes: mergePlainObjectValues(existing.attributes, normalizedEntity.attributes),
+      stages: mergeStageRecords(existing.stages, normalizedEntity.stages),
+      relationships: mergeArrayValues(existing.relationships, normalizedEntity.relationships),
+      evolution_refs: mergeArrayValues(existing.evolution_refs, normalizedEntity.evolution_refs),
+      setting_item_id: String(existing.setting_item_id || normalizedEntity.setting_item_id || '').trim(),
+    }
+
+    keys.forEach(key => mergedByKey.set(key, mergedEntity))
+  }
+
+  currentEntities.forEach(putEntity)
+  incomingEntities.forEach((entity, index) => putEntity(entity, currentEntities.length + index))
+
+  const uniqueEntities = []
+  const seenIds = new Set()
+  mergedByKey.forEach((entity) => {
+    const idKey = String(entity.id || entity.name || '').trim().toLowerCase()
+    if (!idKey || seenIds.has(idKey)) {
+      return
+    }
+    seenIds.add(idKey)
+    uniqueEntities.push(entity)
+  })
+
+  return normalizeEntitiesForUi(uniqueEntities)
+}
+
+const mergeEventRecords = (currentEvents = [], incomingEvents = []) => {
+  const mergedByKey = new Map()
+
+  const getEventKeys = (event) => {
+    const idKey = String(event.id || '').trim()
+    const nameKey = String(event.name || '').trim().toLowerCase()
+    const dateKey = String(event.date || '').trim().toLowerCase()
+    const keys = []
+    if (idKey) {
+      keys.push(`id:${idKey}`)
+    }
+    if (nameKey) {
+      keys.push(`name:${nameKey}|date:${dateKey}`)
+      keys.push(`name:${nameKey}`)
+    }
+    return keys
+  }
+
+  const putEvent = (event, index) => {
+    if (!event || typeof event !== 'object' || !String(event.name || '').trim()) {
+      return
+    }
+
+    const normalizedEvent = {
+      ...event,
+      id: event.id || createLocalId('event', index),
+      name: String(event.name || '').trim(),
+      description: String(event.description || '').trim(),
+      date: String(event.date || '').trim(),
+      entities: Array.isArray(event.entities) ? event.entities.map(name => String(name || '').trim()).filter(Boolean) : [],
+    }
+
+    const keys = getEventKeys(normalizedEvent)
+    const existingKey = keys.find(key => mergedByKey.has(key))
+    const existing = existingKey ? mergedByKey.get(existingKey) : null
+
+    if (!existing) {
+      const createdEvent = {
+        ...normalizedEvent,
+        entities: mergeArrayValues([], normalizedEvent.entities),
+      }
+
+      keys.forEach(key => mergedByKey.set(key, createdEvent))
+      return
+    }
+
+    const mergedEvent = {
+      ...existing,
+      ...normalizedEvent,
+      id: existing.id || normalizedEvent.id || createLocalId('event', index),
+      name: preferIncomingText(existing.name, normalizedEvent.name),
+      description: mergeTextValue(existing.description, normalizedEvent.description),
+      date: preferIncomingText(existing.date, normalizedEvent.date),
+      time_type: isMeaningfulEventTime(existing.time_type) && !isMeaningfulEventTime(normalizedEvent.time_type)
+        ? existing.time_type
+        : (normalizedEvent.time_type || existing.time_type || 'unknown'),
+      estimated_date: isMeaningfulEventTime(existing.estimated_date) && !isMeaningfulEventTime(normalizedEvent.estimated_date)
+        ? existing.estimated_date
+        : (normalizedEvent.estimated_date || existing.estimated_date || '未知'),
+      entities: mergeArrayValues(existing.entities, normalizedEvent.entities),
+    }
+
+    keys.forEach(key => mergedByKey.set(key, mergedEvent))
+  }
+
+  currentEvents.forEach(putEvent)
+  incomingEvents.forEach((event, index) => putEvent(event, currentEvents.length + index))
+
+  const uniqueEvents = []
+  const seenIds = new Set()
+  mergedByKey.forEach((event) => {
+    const idKey = String(event.id || event.name || '').trim().toLowerCase()
+    if (!idKey || seenIds.has(idKey)) {
+      return
+    }
+    seenIds.add(idKey)
+    uniqueEvents.push(event)
+  })
+
+  return uniqueEvents
 }
 
 // 实体类型 → 设定分类映射
@@ -1542,7 +2556,7 @@ const entitiesToSettingsItems = (entities) => {
         settingType: 'setting',
         category,
         description: summary.description || entityType,
-        aliases: [],
+        aliases: normalizeAliases(entity.aliases),
         detailContent: summary.detailContent || summary.description || entityType,
         linkedEntityId: entity.id,
         sourceType: 'entity',
@@ -1779,6 +2793,8 @@ export default {
       showEntitiesExpanded: true,
       showEventsExpanded: true,
       expandedBios: {},
+      entityItems: [],
+      eventItems: [],
       disabledEntityIds: new Set(),
       disabledEventIds: new Set(),
       showAddEntityDialog: false,
@@ -1830,47 +2846,148 @@ export default {
     }
   },
   computed: {
+    // ====== 实体/事件 — 数据缓存 + v-memo 避免重复渲染 ======
     enabledEntityCount() {
-      return this.entities.filter(e => this.isEntityEnabled(e)).length
+      let count = 0
+      for (const e of this.entities) {
+        if (!this.disabledEntityIds.has(e.id || e.name)) count++
+      }
+      return count
     },
     enabledEventCount() {
-      return this.events.filter(e => this.isEventEnabled(e)).length
+      let count = 0
+      for (const ev of this.events) {
+        if (!this.disabledEventIds.has(ev.id || ev.name)) count++
+      }
+      return count
     },
     timelineCanvasStyle() {
       return {
-        width: `${Math.max(1000, TIMELINE_BASE_WIDTH * this.zoomLevel)}px`,
+        width: `${Math.max(1320, TIMELINE_BASE_WIDTH * this.zoomLevel)}px`,
         minHeight: this.timelineHeight,
       }
     },
     calendarSummaries() {
       return [...this.calendars].sort((a, b) => {
-        const aStart = parseTimelineYear(a.baseTime || a.timeRange?.split(' ~ ')[0]) ?? 0
-        const bStart = parseTimelineYear(b.baseTime || b.timeRange?.split(' ~ ')[0]) ?? 0
+        const anchorYear = parseTimelineYear(this.world.anchor_time)
+        const aStart = parseTimelineYear(a.baseTime || a.timeRange?.split(' ~ ')[0], { anchorYear }) ?? 0
+        const bStart = parseTimelineYear(b.baseTime || b.timeRange?.split(' ~ ')[0], { anchorYear }) ?? 0
         return aStart - bStart
       })
     },
+    timelineEraSummaries() {
+      return this.calendarSummaries
+        .filter(calendar => inferCalendarTimelineType(calendar) === '纪元')
+        .slice(0, 8)
+    },
+    timelineYearSummaries() {
+      return this.calendarSummaries
+        .filter(calendar => inferCalendarTimelineType(calendar) === '纪年')
+        .slice(0, 8)
+    },
     calendarTimelineItems() {
+      const anchorYear = parseTimelineYear(this.world.anchor_time)
       return this.calendars
-        .map((calendar, index) => {
-          const range = parseTimelineRange(calendar.timeRange) || {}
-          const start = parseTimelineYear(calendar.baseTime) ?? range.start
-          if (!Number.isFinite(start)) {
-            return null
-          }
-
-          return {
-            id: calendar.id || `calendar_${index}`,
-            name: calendar.name,
-            caption: `${calendar.type || '历法'} · ${calendar.timeRange || '未定义区间'}`,
-            start,
-            end: Number.isFinite(range.end) ? range.end : Infinity,
-            source: calendar,
-          }
-        })
+        .map((calendar, index) => buildCalendarTimelineItem(calendar, index, anchorYear))
         .filter(Boolean)
+        .sort((a, b) => a.start - b.start || a.end - b.end)
+        .slice(0, 48)
     },
     calendarTimelineLayout() {
       return this.calculateSpanLayout(this.calendarTimelineItems)
+    },
+    timelineEventAnchors() {
+      const anchorYear = parseTimelineYear(this.world.anchor_time)
+      return (this.events || [])
+        .map((event, index) => buildTimelineEventItem(event, index, anchorYear))
+        .filter(Boolean)
+    },
+    timelineEventItems() {
+      const groupedByYear = new Map()
+      this.timelineEventAnchors.forEach(event => {
+        const bucket = groupedByYear.get(event.year) || []
+        bucket.push(event)
+        groupedByYear.set(event.year, bucket)
+      })
+
+      const selected = []
+      Array.from(groupedByYear.keys()).sort((a, b) => a - b).forEach(year => {
+        const events = groupedByYear.get(year)
+          .sort((a, b) => b.weight - a.weight || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+          .slice(0, 8)
+        selected.push(...events)
+      })
+
+      return selected
+        .sort((a, b) => a.year - b.year || b.weight - a.weight)
+        .slice(0, TIMELINE_EVENT_LIMIT)
+    },
+    timelineEventLayout() {
+      return this.calculatePointLayout(this.timelineEventItems, 5, 4)
+    },
+    timelineStageAnchors() {
+      const anchorYear = parseTimelineYear(this.world.anchor_time)
+      const stages = []
+      ;(this.entities || []).forEach((entity) => {
+        ;(entity.stages || []).forEach((stage, index) => {
+          const item = buildTimelineStageItem(entity, stage, index, anchorYear)
+          if (item) stages.push(item)
+        })
+      })
+      return stages
+    },
+    timelineStageItems() {
+      return [...this.timelineStageAnchors]
+        .sort((a, b) => a.year - b.year || b.weight - a.weight)
+        .slice(0, TIMELINE_STAGE_LIMIT)
+    },
+    timelineStageLayout() {
+      return this.calculatePointLayout(this.timelineStageItems, 6, 3)
+    },
+    timelineIssueCalendars() {
+      const anchorYear = parseTimelineYear(this.world.anchor_time)
+      return this.calendars
+        .map((calendar, index) => {
+          const years = [
+            ...extractTimelineYears(calendar.baseTime, { anchorYear }),
+            ...extractTimelineYears(calendar.timeRange, { anchorYear }),
+          ]
+          const issue = assessCalendarTimelineIssue(calendar, years)
+          return issue ? {
+            id: calendar.id || `issue_${index}`,
+            name: calendar.name || '未命名历法',
+            issue,
+          } : null
+        })
+        .filter(Boolean)
+        .slice(0, TIMELINE_ISSUE_LIMIT)
+    },
+    timelineDiagnostics() {
+      return {
+        totalCalendars: this.calendars.length,
+        usableCalendars: this.calendarTimelineItems.length,
+        eventAnchors: this.timelineEventAnchors.length,
+        visibleEvents: this.timelineEventItems.length,
+        stageAnchors: this.timelineStageAnchors.length,
+        visibleStages: this.timelineStageItems.length,
+        noisyCalendars: this.timelineIssueCalendars.length,
+      }
+    },
+    timelinePrimaryLabel() {
+      const primary = this.calendarTimelineItems.find(item => item.kind === 'era') || this.calendarTimelineItems[0]
+      if (primary) return primary.name
+      return this.world.anchor_time || '未锚定'
+    },
+    timelineTicks() {
+      const { min, max } = this.getTimeRange()
+      const totalRange = Math.max(max - min, 1)
+      return Array.from({ length: 6 }).map((_, index) => {
+        const year = Math.round(min + (totalRange * index) / 5)
+        return {
+          label: `${formatTimelineYear(year)}年`,
+          position: ((year - min) / totalRange) * 100,
+        }
+      })
     },
     timelineRangeLabels() {
       const { min, max } = this.getTimeRange()
@@ -1880,10 +2997,22 @@ export default {
       }
     },
     timelineCalendarTop() {
-      return 108
+      return 126
     },
     timelineCalendarHeight() {
-      return Math.max(this.getLayoutRowCount(this.calendarTimelineLayout), 1) * TIMELINE_LANE_ROW_HEIGHT
+      return Math.max(this.getLayoutRowCount(this.calendarTimelineLayout), 1) * TIMELINE_LANE_ROW_HEIGHT + 8
+    },
+    timelineEventTop() {
+      return this.timelineCalendarTop + this.timelineCalendarHeight + 72
+    },
+    timelineEventHeight() {
+      return Math.max(this.getLayoutRowCount(this.timelineEventLayout), 1) * TIMELINE_EVENT_ROW_HEIGHT + 16
+    },
+    timelineStageTop() {
+      return this.timelineEventTop + this.timelineEventHeight + 70
+    },
+    timelineStageHeight() {
+      return Math.max(this.getLayoutRowCount(this.timelineStageLayout), 1) * TIMELINE_STAGE_ROW_HEIGHT + 16
     },
     filteredSettings() {
       return this.settings.filter(setting => setting.category === this.activeCategory)
@@ -1899,6 +3028,37 @@ export default {
         if (this.selectedCategoryFilter !== 'all' && setting.category !== this.selectedCategoryFilter) return false
         return true
       })
+    },
+    currentSettingLinkedEntity() {
+      if (!this.currentSetting) {
+        return null
+      }
+
+      const linkedEntityId = String(this.currentSetting.linkedEntityId || '').trim()
+      const currentSettingName = String(this.currentSetting.name || '').trim()
+
+      return this.entities.find((entity) => {
+        if (!entity || typeof entity !== 'object') {
+          return false
+        }
+
+        const entityId = String(entity.id || '').trim()
+        if (linkedEntityId && entityId === linkedEntityId) {
+          return true
+        }
+
+        return currentSettingName && String(entity.name || '').trim() === currentSettingName
+      }) || null
+    },
+    currentSettingStructuredSections() {
+      if (!this.currentSettingLinkedEntity) {
+        return []
+      }
+
+      return buildEntityDetailSections(this.currentSettingLinkedEntity)
+    },
+    currentSettingDetailLabel() {
+      return this.currentSettingLinkedEntity ? '设定补充说明' : '详细内容'
     },
     hasRunnableProject() {
       return ['ontology_generated', 'graph_building', 'graph_completed'].includes(this.linkedProjectStatus)
@@ -1926,11 +3086,17 @@ export default {
     },
     // 计算时间线容器的高度，确保容纳语义时间带与事件层
     timelineHeight() {
-      const totalHeight = this.timelineCalendarTop + this.timelineCalendarHeight + 72
-      return Math.max(totalHeight, 320) + 'px'
+      const totalHeight = this.timelineStageTop + this.timelineStageHeight + 86
+      return Math.max(totalHeight, 520) + 'px'
     }
   },
   watch: {
+    entities: {
+      handler() { this._chunkBuildEntityItems() },
+    },
+    events: {
+      handler() { this._chunkBuildEventItems() },
+    },
     activeTab(newTab) {
       if (newTab === 'timeline') {
         this.$nextTick(() => {
@@ -1938,9 +3104,108 @@ export default {
           this.updateTimelineZoom()
         })
       }
+      if (newTab === 'entities') {
+        this.entityItems = []
+        this.eventItems = []
+        this.$nextTick(() => {
+          this._chunkBuildEntityItems()
+          this._chunkBuildEventItems()
+        })
+      }
     }
   },
   methods: {
+    _chunkBuildEntityItems() {
+      // 非阻塞分帧构建，每帧处理 12 个实体
+      const entities = this.entities
+      if (!entities.length) return
+
+      // 一次性构建 entity→setting 映射（避免 computed 重复计算）
+      const settingMap = {}
+      const s = this.settings || []
+      for (const entity of entities) {
+        settingMap[entity.id || entity.name] = findSettingForEntityRecord(s, entity)
+      }
+
+      const CHUNK = 12
+      let cursor = 0
+      const result = []
+
+      const processChunk = () => {
+        const end = Math.min(cursor + CHUNK, entities.length)
+        for (let i = cursor; i < end; i++) {
+          const entity = entities[i]
+          const attrs = entity.attributes || {}
+          const id = entity.id || entity.name
+          const simpleAttrs = {}
+          const skip = ['简介', '实力变化', '性格变化', '关键转折', '阶段']
+          for (const [k, v] of Object.entries(attrs)) {
+            if (skip.includes(k)) continue
+            if (Array.isArray(v)) continue
+            if (typeof v === 'object' && v !== null) {
+              simpleAttrs[k] = JSON.stringify(v, null, 1).slice(0, 200)
+            } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+              simpleAttrs[k] = v
+            }
+          }
+          const bio = attrs['简介'] || ''
+          result.push({
+            entity, id,
+            simpleAttrs, simpleKeys: Object.keys(simpleAttrs),
+            bio, hasBio: !!bio,
+            bioExpanded: !!this.expandedBios[id],
+            bioPreview: bio.slice(0, 120),
+            powerChanges: Array.isArray(attrs['实力变化']) ? attrs['实力变化'] : [],
+            personalityChanges: Array.isArray(attrs['性格变化']) ? attrs['性格变化'] : [],
+            turningPoints: Array.isArray(attrs['关键转折']) ? attrs['关键转折'] : [],
+            stages: Array.isArray(entity.stages) ? entity.stages : [],
+            hasStages: (Array.isArray(entity.stages) ? entity.stages : []).length > 0,
+            hasSetting: !!settingMap[id],
+            enabled: !this.disabledEntityIds.has(id),
+          })
+        }
+        cursor = end
+        if (cursor < entities.length) {
+          requestAnimationFrame(processChunk)
+        } else {
+          this.entityItems = result  // 全部完成，一次性提交，无闪烁
+        }
+      }
+      requestAnimationFrame(processChunk)
+    },
+    _chunkBuildEventItems() {
+      const events = this.events
+      if (!events.length) return
+      const CHUNK = 20
+      let cursor = 0
+      const result = []
+
+      const processChunk = () => {
+        const end = Math.min(cursor + CHUNK, events.length)
+        for (let i = cursor; i < end; i++) {
+          const ev = events[i]
+          result.push({
+            event: ev,
+            id: ev.id || ev.name,
+            enabled: !this.disabledEventIds.has(ev.id || ev.name),
+          })
+        }
+        cursor = end
+        if (cursor < events.length) {
+          requestAnimationFrame(processChunk)
+        } else {
+          this.eventItems = result
+        }
+      }
+      requestAnimationFrame(processChunk)
+    },
+    _rebuildEntityItems() {
+      this._chunkBuildEntityItems()
+    },
+    _rebuildEventItems() {
+      this._chunkBuildEventItems()
+    },
+
     syncEntitySettingLinks() {
       const synced = syncEntitiesWithSettings(this.entities, this.settings)
       this.entities = synced.entities
@@ -2245,8 +3510,10 @@ export default {
       } else {
         this.disabledEntityIds.add(id)
       }
-      // Trigger reactivity for Set
       this.disabledEntityIds = new Set(this.disabledEntityIds)
+      // Update cached items directly
+      const item = this.entityItems.find(d => d.id === id)
+      if (item) item.enabled = !this.disabledEntityIds.has(id)
     },
     isEventEnabled(event) {
       const id = event.id || event.name
@@ -2260,6 +3527,8 @@ export default {
         this.disabledEventIds.add(id)
       }
       this.disabledEventIds = new Set(this.disabledEventIds)
+      const item = this.eventItems.find(d => d.id === id)
+      if (item) item.enabled = !this.disabledEventIds.has(id)
     },
     // 实体属性渲染辅助方法
     isSimpleValue(val) {
@@ -2300,6 +3569,8 @@ export default {
     toggleBioExpanded(entity) {
       const id = this.getEntityCardId(entity)
       this.$set(this.expandedBios, id, !this.expandedBios[id])
+      const item = this.entityItems.find(d => d.id === id)
+      if (item) item.bioExpanded = !!this.expandedBios[id]
     },
     async deleteWorld() {
       if (!this.worldId) return
@@ -2316,6 +3587,26 @@ export default {
         this.isDeleting = false
       }
     },
+    async ensureWorldId() {
+      // 轻量确保 worldId 存在 — 仅 create + update，不加载 project/evolution
+      if (this.worldId) return true
+      try {
+        const payload = this.buildWorldPayload()
+        const createResponse = await worldApi.createWorld({
+          ...this.world,
+          settings: payload.settings
+        })
+        this.worldId = createResponse.world_id
+        this.syncRouteWorldId()
+        await worldApi.updateWorld(this.worldId, payload)
+        this.saveStatus = '已保存'
+        return true
+      } catch (e) {
+        console.warn('ensureWorldId 失败，RAG 索引将被跳过:', e)
+        return false
+      }
+    },
+
     async saveWorld(options = {}) {
       const { silent = false, successMessage } = options
       this.isSaving = true
@@ -2394,7 +3685,13 @@ export default {
       this.extractedData = null
       this.extractProgress = { stage: 'starting', progress: 0, message: '正在提交提取任务...' }
       try {
-        // 1. 提交提取任务
+        // 如果没有 worldId，先轻量创建以便 RAG 自动索引
+        const hasWorldId = await this.ensureWorldId()
+        if (!hasWorldId && !this.worldId) {
+          console.warn('世界观创建失败，提取将跳过 RAG 索引')
+        }
+
+        // 1. 提交提取任务（附带 worldId 用于自动 RAG 索引）
         let initResponse
         if (hasFiles) {
           const formData = new FormData()
@@ -2404,9 +3701,9 @@ export default {
           if (hasText) {
             formData.append('text', this.extractText)
           }
-          initResponse = await worldApi.extractWorldFromFile(formData)
+          initResponse = await worldApi.extractWorldFromFile(formData, this.worldId)
         } else {
-          initResponse = await worldApi.extractWorld(this.extractText)
+          initResponse = await worldApi.extractWorld(this.extractText, this.worldId)
         }
 
         const taskId = initResponse.task_id
@@ -2593,35 +3890,29 @@ export default {
     async applyExtractedData() {
       if (this.extractedData) {
         // 将提取的数据应用到世界观
-        if (this.extractedData.world_info) {
-          if (this.extractedData.world_info.name) {
-            this.world.name = this.extractedData.world_info.name
-          }
-          if (this.extractedData.world_info.description) {
-            this.world.description = this.extractedData.world_info.description
-          }
-          if (this.extractedData.world_info.era) {
-            this.world.era = this.extractedData.world_info.era
-          }
-          if (this.extractedData.world_info.anchor_time) {
-            this.world.anchor_time = this.extractedData.world_info.anchor_time
-          }
+        const extractedWorldInfo = this.extractedData.world_info || {}
+        const extractedWritingStyle = this.extractedData.writing_style || extractedWorldInfo.writing_style || ''
+        const extractedReferenceText = this.extractedData.reference_text || extractedWorldInfo.reference_text || ''
+
+        this.world = {
+          ...this.world,
+          name: preferIncomingText(this.world.name, extractedWorldInfo.name),
+          description: mergeTextValue(this.world.description, extractedWorldInfo.description),
+          era: preferIncomingText(this.world.era, extractedWorldInfo.era),
+          anchor_time: preferIncomingText(this.world.anchor_time, extractedWorldInfo.anchor_time),
+          writing_style: mergeTextValue(this.world.writing_style, extractedWritingStyle),
+          reference_text: mergeTextValue(this.world.reference_text, extractedReferenceText),
         }
-        if (this.extractedData.writing_style) {
-          this.world.writing_style = this.extractedData.writing_style
-        }
-        if (this.extractedData.reference_text) {
-          this.world.reference_text = this.extractedData.reference_text
-        }
+
         if (this.extractedData.entities) {
-          this.entities = normalizeEntitiesForUi([...this.entities, ...this.extractedData.entities])
+          this.entities = mergeEntityRecords(this.entities, this.extractedData.entities)
           const entitySettings = entitiesToSettingsItems(this.entities)
           if (entitySettings.length > 0) {
             this.settings = mergeSettingsByKey(this.settings, entitySettings)
           }
         }
         if (this.extractedData.events) {
-          this.events = [...this.events, ...this.extractedData.events]
+          this.events = mergeEventRecords(this.events, this.extractedData.events)
         }
         if (this.extractedData.settings) {
           const normalizedSettings = normalizeExtractedSettings(this.extractedData.settings)
@@ -3013,6 +4304,28 @@ export default {
       return layout
     },
 
+    calculatePointLayout(items, proximity = 4, maxRows = 4) {
+      const layout = new Map()
+      const rowPositions = Array.from({ length: maxRows }, () => -Infinity)
+      const { min: minTime, max: maxTime } = this.getTimeRange()
+      const totalRange = Math.max(maxTime - minTime, 1)
+
+      ;[...items]
+        .sort((a, b) => (a.year || 0) - (b.year || 0))
+        .forEach(item => {
+          const year = Number.isFinite(item.year) ? item.year : minTime
+          const position = ((year - minTime) / totalRange) * 100
+          let row = rowPositions.findIndex(lastPosition => Math.abs(position - lastPosition) >= proximity)
+          if (row < 0) {
+            row = rowPositions.indexOf(Math.min(...rowPositions))
+          }
+          rowPositions[row] = position
+          layout.set(item.id, { row, position, year })
+        })
+
+      return layout
+    },
+
     getLayoutRowCount(layout) {
       if (!layout || layout.size === 0) {
         return 0
@@ -3053,6 +4366,7 @@ export default {
         left: `${left}%`,
         width: `${Math.min(width, 100 - left)}%`,
         top: `${top}px`,
+        height: '38px',
         background,
         borderColor,
         color: textColor,
@@ -3061,6 +4375,34 @@ export default {
 
     getCalendarBandStyle(calendar, index) {
       return this.getTimelineBandStyle(calendar, this.calendarTimelineLayout, index, this.timelineCalendarTop, 'epoch')
+    },
+
+    getTimelineEventStyle(event, index) {
+      const layoutInfo = this.timelineEventLayout.get(event.id)
+      if (!layoutInfo) {
+        return {}
+      }
+
+      return {
+        position: 'absolute',
+        left: `${Math.max(1, Math.min(99, layoutInfo.position))}%`,
+        top: `${layoutInfo.row * TIMELINE_EVENT_ROW_HEIGHT}px`,
+        '--event-accent-index': index % 4,
+      }
+    },
+
+    getTimelineStageStyle(stage, index) {
+      const layoutInfo = this.timelineStageLayout.get(stage.id)
+      if (!layoutInfo) {
+        return {}
+      }
+
+      return {
+        position: 'absolute',
+        left: `${Math.max(1, Math.min(99, layoutInfo.position))}%`,
+        top: `${layoutInfo.row * TIMELINE_STAGE_ROW_HEIGHT}px`,
+        '--stage-accent-index': index % 4,
+      }
     },
     
     // 获取所有纪年的时间范围
@@ -3077,16 +4419,19 @@ export default {
         maxTime = Math.max(maxTime, year)
       }
 
-      this.calendars.forEach(calendar => {
-        const timeRange = calendar.timeRange.split(' ~ ')
-        const start = parseTimelineYear(timeRange[0])
-        const end = timeRange[1] === '无' ? null : parseTimelineYear(timeRange[1])
+      const anchorYear = parseTimelineYear(this.world.anchor_time)
+
+      this.calendarTimelineItems.forEach(calendar => {
+        const start = calendar.start
+        const end = calendar.end
 
         registerYear(start)
         registerYear(end)
       })
 
-      registerYear(parseTimelineYear(this.world.anchor_time))
+      this.timelineEventItems.forEach(event => registerYear(event.year))
+      this.timelineStageItems.forEach(stage => registerYear(stage.year))
+      registerYear(anchorYear)
 
       if (!Number.isFinite(minTime) || !Number.isFinite(maxTime)) {
         return { min: -10000, max: 26000 }
@@ -4179,6 +5524,594 @@ export default {
   }
 }
 
+/* Timeline redesign: dark atlas surface */
+.timeline-section {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02)),
+    var(--wf-bg-surface);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  overflow: hidden;
+}
+
+.timeline-section .timeline-header {
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+
+.timeline-eyebrow {
+  display: inline-block;
+  margin-bottom: 4px;
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0;
+}
+
+.timeline-section .header-info .header-title {
+  margin: 0;
+  font-size: 1.8rem;
+  line-height: 1.05;
+  color: var(--wf-text-primary);
+}
+
+.timeline-section .header-info .header-description {
+  margin-top: 10px;
+  color: var(--wf-text-secondary);
+  max-width: 720px;
+}
+
+.timeline-section .zoom-controls {
+  height: 40px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid var(--wf-border-light);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+
+.timeline-section .zoom-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--wf-text-primary);
+}
+
+.timeline-section .zoom-level {
+  color: var(--wf-text-secondary);
+  font-family: var(--font-mono);
+}
+
+.timeline-status-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.35fr) repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.timeline-status-card {
+  min-height: 86px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--wf-border);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.timeline-status-card.is-primary {
+  background: linear-gradient(135deg, rgba(255, 255, 175, 0.12), rgba(255, 255, 255, 0.035));
+  border-color: rgba(255, 255, 175, 0.28);
+}
+
+.status-label {
+  color: var(--wf-text-muted);
+  font-size: 0.75rem;
+}
+
+.timeline-status-card strong {
+  margin-top: 4px;
+  color: var(--wf-text-primary);
+  font-size: 1.12rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-status-card small {
+  color: var(--wf-text-secondary);
+  font-size: 0.76rem;
+}
+
+.timeline-insights {
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: 14px;
+}
+
+.timeline-insight-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+
+.insight-kicker {
+  color: var(--wf-accent);
+  letter-spacing: 0;
+}
+
+.insight-count {
+  color: var(--wf-text-secondary);
+}
+
+.chronology-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.chronology-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chronology-column-title {
+  color: var(--wf-text-muted);
+  font-size: 0.78rem;
+}
+
+.calendar-summary-row {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--wf-border);
+  color: var(--wf-text-primary);
+  text-align: left;
+}
+
+.calendar-summary-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 175, 0.32);
+}
+
+.calendar-summary-row .summary-name,
+.calendar-summary-row .summary-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-summary-row .summary-name {
+  font-size: 0.9rem;
+  color: var(--wf-text-primary);
+}
+
+.calendar-summary-row .summary-meta {
+  font-size: 0.78rem;
+  color: var(--wf-text-secondary);
+}
+
+.timeline-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timeline-issue-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 71, 87, 0.06);
+  border: 1px solid rgba(255, 71, 87, 0.14);
+}
+
+.issue-name,
+.issue-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.issue-name {
+  color: var(--wf-text-primary);
+}
+
+.issue-reason {
+  color: var(--wf-text-secondary);
+}
+
+.timeline-container {
+  min-width: 0;
+  min-height: 520px;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  background: #0b0b0d;
+  border: 1px solid var(--wf-border-light);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  overflow: auto;
+}
+
+.timeline-canvas {
+  min-height: 520px;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px) 0 0 / 160px 100%,
+    linear-gradient(180deg, rgba(255,255,255,0.035) 1px, transparent 1px) 0 0 / 100% 52px,
+    radial-gradient(circle at 20% 0%, rgba(255,255,175,0.06), transparent 28%),
+    #0b0b0d;
+}
+
+.timeline-title {
+  top: 20px;
+  left: 24px;
+  transform: none;
+  color: var(--wf-text-secondary);
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.timeline-axis {
+  top: 78px;
+  left: 24px;
+  right: 24px;
+  width: auto;
+}
+
+.timeline-line {
+  height: 2px;
+  background: linear-gradient(90deg, rgba(255,255,175,0.18), var(--wf-accent), rgba(255,255,175,0.18));
+  box-shadow: 0 0 18px rgba(255, 255, 175, 0.14);
+}
+
+.timeline-tick {
+  position: absolute;
+  top: -8px;
+  transform: translateX(-50%);
+  color: var(--wf-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline-tick::before {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 16px;
+  margin: 0 auto 12px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.timeline-axis-range {
+  margin-top: 30px;
+}
+
+.axis-range-label {
+  color: var(--wf-text-muted);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.timeline-lane-title {
+  left: 24px;
+  color: var(--wf-text-secondary);
+  font-size: 0.75rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.timeline-band-layer,
+.timeline-point-layer,
+.timeline-stage-layer {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+}
+
+.timeline-empty-lane {
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--wf-border-light);
+  color: var(--wf-text-muted);
+}
+
+.timeline-band {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 160px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  color: var(--wf-text-primary) !important;
+  background: rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.timeline-band.is-year {
+  border-style: dashed;
+}
+
+.timeline-band.is-low-confidence {
+  opacity: 0.58;
+}
+
+.band-name,
+.band-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.band-name {
+  font-size: 0.82rem;
+}
+
+.band-caption {
+  font-size: 0.7rem;
+  color: var(--wf-text-secondary);
+}
+
+.timeline-point-event {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+
+.timeline-point-event:hover {
+  transform: translateX(-50%) translateY(-2px);
+  z-index: 18;
+}
+
+.event-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 3px;
+  border-radius: 999px;
+  background: var(--wf-accent);
+  border: 2px solid #0b0b0d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 175, 0.45), 0 0 18px rgba(255, 255, 175, 0.22);
+}
+
+.event-popover {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  min-width: 210px;
+  max-width: 270px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(17, 17, 19, 0.96);
+  border: 1px solid var(--wf-border-light);
+  box-shadow: var(--shadow-lg);
+  color: var(--wf-text-primary);
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 6px);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.timeline-point-event:hover .event-popover {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.event-popover strong,
+.event-popover small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-popover strong {
+  font-size: 0.86rem;
+}
+
+.event-popover small {
+  margin-top: 3px;
+  color: var(--wf-text-secondary);
+  font-size: 0.72rem;
+}
+
+.timeline-stage-chip {
+  height: 26px;
+  max-width: 190px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--wf-border);
+  color: var(--wf-text-secondary);
+  transform: translateX(-50%);
+  overflow: hidden;
+  z-index: 5;
+}
+
+.timeline-stage-chip:hover {
+  color: var(--wf-text-primary);
+  border-color: rgba(255, 255, 175, 0.26);
+  background: rgba(255, 255, 255, 0.07);
+  z-index: 12;
+}
+
+.stage-pulse {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #7dd3fc;
+  box-shadow: 0 0 12px rgba(125, 211, 252, 0.34);
+}
+
+.stage-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+}
+
+.anchor-time-marker {
+  top: 18px;
+  bottom: 18px;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(255,71,87,0), var(--wf-danger), rgba(255,71,87,0));
+  box-shadow: 0 0 18px rgba(255, 71, 87, 0.26);
+  animation: none;
+}
+
+.anchor-label {
+  top: 0;
+  left: 10px;
+  right: auto;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: rgba(255, 71, 87, 0.18);
+  border: 1px solid rgba(255, 71, 87, 0.42);
+  color: #ffd8dd;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  transform: none;
+}
+
+.anchor-label::after {
+  display: none;
+}
+
+.timeline-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.timeline-context-panel {
+  min-width: 0;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--wf-border);
+}
+
+.context-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  color: var(--wf-text-secondary);
+}
+
+.context-panel-header strong {
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+}
+
+.context-event-row,
+.context-stage-row {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 78px minmax(0, 0.75fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--wf-text-primary);
+  text-align: left;
+}
+
+.context-event-row:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: var(--wf-border-light);
+}
+
+.context-year {
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+.context-title,
+.context-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-title {
+  color: var(--wf-text-primary);
+  font-size: 0.86rem;
+}
+
+.context-meta {
+  color: var(--wf-text-secondary);
+  font-size: 0.76rem;
+}
+
+@media (max-width: 980px) {
+  .timeline-status-grid,
+  .timeline-insights,
+  .timeline-context-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chronology-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .timeline-section {
+    padding: 18px;
+  }
+
+  .timeline-section .timeline-header {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .calendar-summary-row,
+  .context-event-row,
+  .context-stage-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* =========== Dialog & Modals =========== */
 .dialog { 
   position: fixed; 
@@ -4226,6 +6159,150 @@ export default {
 .dialog-body.split-layout { display: flex; gap: var(--spacing-xl); padding: 0; }
 .detail-sidebar { width: 280px; padding: var(--spacing-lg); border-right: 1px solid var(--neutral-gray-200); background: var(--neutral-gray-50); }
 .detail-body { flex: 1; padding: var(--spacing-lg); }
+
+.setting-structured-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.setting-structured-section {
+  border: 1px solid var(--neutral-gray-200);
+  border-radius: var(--radius-md);
+  background: var(--neutral-gray-50);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.setting-structured-section.is-wide {
+  grid-column: 1 / -1;
+}
+
+.setting-structured-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.setting-structured-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--wf-text-primary);
+}
+
+.setting-structured-count {
+  min-width: 28px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.12);
+  color: var(--primary-blue);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.setting-structured-text {
+  white-space: pre-line;
+  line-height: 1.7;
+  color: var(--wf-text-secondary);
+}
+
+.setting-facts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.setting-fact-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--wf-bg-card);
+  border: 1px solid var(--neutral-gray-200);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setting-fact-label {
+  font-size: 0.78rem;
+  color: var(--wf-text-muted);
+}
+
+.setting-fact-value {
+  color: var(--wf-text-primary);
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.setting-card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.setting-structured-card {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--wf-bg-card);
+  border: 1px solid var(--neutral-gray-200);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.setting-card-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--wf-text-primary);
+}
+
+.setting-card-subtitle {
+  font-size: 0.8rem;
+  color: var(--primary-blue);
+  margin-top: 2px;
+}
+
+.setting-card-description {
+  margin: 0;
+  color: var(--wf-text-secondary);
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.setting-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.setting-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-card-field-label {
+  font-size: 0.76rem;
+  color: var(--wf-text-muted);
+}
+
+.setting-card-field-value {
+  color: var(--wf-text-primary);
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.setting-detail-hint {
+  margin: 0 0 var(--spacing-sm);
+  font-size: 0.84rem;
+  color: var(--wf-text-muted);
+}
 
 .dialog-footer { 
   padding: var(--spacing-md) var(--spacing-lg); 
@@ -4417,6 +6494,8 @@ export default {
   gap: var(--spacing-md);
 }
 .entity-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
   background: var(--wf-bg-card);
   border: 1px solid var(--wf-border);
   border-radius: var(--radius-md);
@@ -4454,6 +6533,31 @@ export default {
   box-shadow: var(--shadow-md);
   border-color: var(--primary-blue-light);
 }
+
+/* Skeleton loading */
+.entity-card-skeleton,
+.event-card-skeleton {
+  min-height: 120px;
+  pointer-events: none;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+.skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  margin-bottom: 8px;
+}
+.skeleton-name { width: 60%; height: 16px; }
+.skeleton-type { width: 35%; }
+.skeleton-date { width: 40%; height: 12px; }
+.skeleton-tag { display: inline-block; height: 20px; border-radius: 10px; margin-right: 8px; }
+.w-60 { width: 60px; }
+.w-40 { width: 40px; }
+
 .entity-card-header {
   display: flex;
   justify-content: flex-start;
@@ -4489,6 +6593,17 @@ export default {
   border-color: rgba(2, 132, 199, 0.25);
   color: #38bdf8;
 }
+
+/* 加载更多按钮 */
+.entity-load-more {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: var(--spacing-md);
+}
+.entity-load-more .btn {
+  min-width: 240px;
+}
+
 /* Toggle Switch */
 .toggle-switch {
   position: relative;
@@ -4731,6 +6846,8 @@ export default {
 .attr-value { color: var(--wf-text-muted); }
 
 .event-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
   background: var(--wf-bg-card);
   border: 1px solid var(--wf-border);
   border-left: 3px solid var(--primary-blue-light, #38bdf8);
@@ -4906,6 +7023,18 @@ export default {
 .extract-preview { background: var(--wf-bg-card); border: 1px solid var(--wf-border); border-radius: var(--radius-md); padding: var(--spacing-lg); margin-top: var(--spacing-md); box-shadow: none; }
 .preview-header { margin-bottom: var(--spacing-sm); border-bottom: 1px solid var(--neutral-gray-100); padding-bottom: var(--spacing-sm); }
 .preview-title { font-size: 1rem; font-weight: 600; color: var(--wf-text-secondary); }
+.rag-index-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  color: var(--wf-success);
+  background: rgba(0, 212, 170, 0.1);
+  border: 1px solid rgba(0, 212, 170, 0.25);
+  margin-left: var(--spacing-sm);
+}
 
 .preview-code { 
   background: var(--neutral-gray-900); 

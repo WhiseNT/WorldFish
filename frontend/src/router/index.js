@@ -24,6 +24,11 @@ const routes = [
     component: () => import('../views/SimulationEvolution.vue'),
     props: true,
   },
+  {
+    path: '/rag',
+    name: 'RagView',
+    component: () => import('../views/RagView.vue'),
+  },
 ]
 
 const router = createRouter({

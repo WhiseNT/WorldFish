@@ -4,6 +4,16 @@
       <span class="panel-title">{{ $t('graph.panelTitle') }}</span>
       <!-- 顶部工具栏 (Internal Top Right) -->
       <div class="header-tools">
+        <div class="search-box">
+          <input 
+            type="text" 
+            v-model="searchQuery" 
+            @keyup.enter="handleSearch"
+            :placeholder="$t('graph.searchEntity', 'Search entities...')" 
+            class="search-input"
+          />
+          <button class="search-btn" @click="handleSearch">🔍</button>
+        </div>
         <button class="tool-btn" @click="$emit('refresh')" :disabled="loading" :title="$t('graph.refreshGraph')">
           <span class="icon-refresh" :class="{ 'spinning': loading }">↻</span>
           <span class="btn-text">Refresh</span>
@@ -75,8 +85,11 @@
             
             <!-- Properties -->
             <div class="detail-section" v-if="selectedItem.data.attributes && Object.keys(selectedItem.data.attributes).length > 0">
-              <div class="section-title">Properties:</div>
-              <div class="properties-list">
+              <div class="section-title" @click="toggleSection('properties')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                <span>Properties:</span>
+                <span class="toggle-icon">{{ collapsedSections.properties ? '+' : '−' }}</span>
+              </div>
+              <div class="properties-list" v-show="!collapsedSections.properties">
                 <div v-for="(value, key) in selectedItem.data.attributes" :key="key" class="property-item">
                   <span class="property-key">{{ key }}:</span>
                   <span class="property-value">{{ value || 'None' }}</span>
@@ -86,14 +99,20 @@
             
             <!-- Summary -->
             <div class="detail-section" v-if="selectedItem.data.summary">
-              <div class="section-title">Summary:</div>
-              <div class="summary-text">{{ selectedItem.data.summary }}</div>
+              <div class="section-title" @click="toggleSection('summary')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                <span>Summary:</span>
+                <span class="toggle-icon">{{ collapsedSections.summary ? '+' : '−' }}</span>
+              </div>
+              <div class="summary-text" v-show="!collapsedSections.summary">{{ selectedItem.data.summary }}</div>
             </div>
             
             <!-- Labels -->
             <div class="detail-section" v-if="selectedItem.data.labels && selectedItem.data.labels.length > 0">
-              <div class="section-title">Labels:</div>
-              <div class="labels-list">
+              <div class="section-title" @click="toggleSection('labels')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                <span>Labels:</span>
+                <span class="toggle-icon">{{ collapsedSections.labels ? '+' : '−' }}</span>
+              </div>
+              <div class="labels-list" v-show="!collapsedSections.labels">
                 <span v-for="label in selectedItem.data.labels" :key="label" class="label-tag">
                   {{ label }}
                 </span>
@@ -186,8 +205,11 @@
               
               <!-- Episodes -->
               <div class="detail-section" v-if="selectedItem.data.episodes && selectedItem.data.episodes.length > 0">
-                <div class="section-title">Episodes:</div>
-                <div class="episodes-list">
+                <div class="section-title" @click="toggleSection('episodes')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                  <span>Episodes:</span>
+                  <span class="toggle-icon">{{ collapsedSections.episodes ? '+' : '−' }}</span>
+                </div>
+                <div class="episodes-list" v-show="!collapsedSections.episodes">
                   <span v-for="ep in selectedItem.data.episodes" :key="ep" class="episode-tag">
                     {{ ep }}
                   </span>
@@ -263,6 +285,18 @@ const expandedSelfLoops = ref(new Set()) // 展开的自环项
 const showSimulationFinishedHint = ref(false) // 模拟结束后的提示
 const wasSimulating = ref(false) // 追踪之前是否在模拟中
 
+// 节点详情部分的折叠状态
+const collapsedSections = ref({
+  properties: false,
+  summary: false,
+  labels: false,
+  episodes: false
+})
+
+const toggleSection = (section) => {
+  collapsedSections.value[section] = !collapsedSections.value[section]
+}
+
 // 关闭模拟结束提示
 const dismissFinishedHint = () => {
   showSimulationFinishedHint.value = false
@@ -286,6 +320,47 @@ const toggleSelfLoop = (id) => {
     newSet.add(id)
   }
   expandedSelfLoops.value = newSet
+}
+
+// 搜索相关状态和方法
+const searchQuery = ref('')
+let currentZoom = null
+let currentSvgSelection = null
+let d3Nodes = null
+
+const handleSearch = () => {
+  if (!searchQuery.value.trim() || !d3Nodes || !currentSvgSelection || !currentZoom) return
+  
+  const query = searchQuery.value.toLowerCase()
+  let targetNodeData = null
+  let targetElement = null
+  
+  d3Nodes.each(function(d) {
+    // 按名称或 labels 简单匹配
+    if ((d.name && d.name.toLowerCase().includes(query)) && !targetNodeData) {
+      targetNodeData = d
+      targetElement = this
+    }
+  })
+  
+  if (targetNodeData && targetElement) {
+    const container = graphContainer.value
+    const width = container.clientWidth
+    const height = container.clientHeight
+    
+    // 触发点击选中效果
+    d3.select(targetElement).dispatch('click')
+    
+    // 移动视图居中
+    const scale = 1.5 // 放大视角
+    const x = width / 2 - targetNodeData.x * scale
+    const y = height / 2 - targetNodeData.y * scale
+    
+    currentSvgSelection.transition().duration(750).call(
+      currentZoom.transform, 
+      d3.zoomIdentity.translate(x, y).scale(scale)
+    )
+  }
 }
 
 // 计算实体类型用于图例
@@ -496,9 +571,12 @@ const renderGraph = () => {
   const g = svg.append('g')
   
   // Zoom
-  svg.call(d3.zoom().extent([[0, 0], [width, height]]).scaleExtent([0.1, 4]).on('zoom', (event) => {
+  currentZoom = d3.zoom().extent([[0, 0], [width, height]]).scaleExtent([0.1, 4]).on('zoom', (event) => {
     g.attr('transform', event.transform)
-  }))
+  })
+  
+  currentSvgSelection = svg
+  svg.call(currentZoom)
 
   // Links - 使用 path 支持曲线
   const linkGroup = g.append('g').attr('class', 'links')
@@ -732,6 +810,8 @@ const renderGraph = () => {
       }
     })
 
+  d3Nodes = node
+
   // Node Labels
   const nodeLabels = nodeGroup.selectAll('text')
     .data(nodes)
@@ -792,7 +872,7 @@ const renderGraph = () => {
 
 watch(() => props.graphData, () => {
   nextTick(renderGraph)
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 // 监听边标签显示开关
 watch(showEdgeLabels, (newVal) => {
@@ -810,6 +890,9 @@ const handleResize = () => {
 
 onMounted(() => {
   window.addEventListener('resize', handleResize)
+  if (props.graphData) {
+    nextTick(renderGraph)
+  }
 })
 
 onUnmounted(() => {
@@ -857,6 +940,49 @@ onUnmounted(() => {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--wf-border);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  height: 32px;
+}
+
+.search-input {
+  background: transparent;
+  border: none;
+  color: var(--wf-text-primary);
+  padding: 0 10px;
+  width: 150px;
+  height: 100%;
+  font-size: 13px;
+  outline: none;
+  transition: width 0.3s;
+}
+
+.search-input:focus {
+  width: 200px;
+}
+
+.search-btn {
+  background: transparent;
+  border: none;
+  color: var(--wf-text-secondary);
+  padding: 0 10px;
+  cursor: pointer;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-btn:hover {
+  color: var(--wf-text-primary);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .tool-btn {

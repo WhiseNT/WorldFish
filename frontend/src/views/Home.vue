@@ -9,10 +9,10 @@
         </div>
         <h1 class="hero-title">
           <span class="title-brand">WORLDFISH</span>
-          <span class="title-sub">构建 · 推演 · 进化</span>
+          <span class="title-sub">创世鱼缸</span>
         </h1>
         <p class="hero-desc">
-          为文艺作品创作者打造的世界观管理平台。输入设定文本，AI 自动提取角色、组织、地点、事件与历法体系，然后基于你的推演需求驱动世界进化。
+          创造属于你的世界，并让它不断进化。
         </p>
         <div class="hero-actions">
           <router-link to="/world-builder" class="btn btn-primary hero-btn-primary">
@@ -27,6 +27,7 @@
         <div class="visual-orb"></div>
         <div class="visual-ring"></div>
         <div class="visual-ring ring-2"></div>
+        <img src="/worldfish_logo.svg" alt="WORLDFISH" class="visual-logo" />
       </div>
     </section>
 
@@ -81,6 +82,9 @@
           <div class="world-card-actions">
             <router-link :to="'/world-builder?worldId=' + world.id" class="btn btn-accent btn-sm">
               编辑
+            </router-link>
+            <router-link :to="'/rag?worldId=' + world.id" class="btn btn-accent btn-sm">
+              知识库
             </router-link>
             <router-link :to="'/simulation/new?worldId=' + world.id" class="btn btn-primary btn-sm">
               开始推演 →
@@ -253,6 +257,17 @@ onMounted(fetchWorlds)
   animation-direction: reverse;
   animation-duration: 30s;
   opacity: 0.5;
+}
+
+.visual-logo {
+  position: absolute;
+  height: 200px;
+  width: auto;
+  z-index: 2;
+  /* 将 SVG 转为纯白色 */
+  filter: brightness(0) invert(1);
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Section */

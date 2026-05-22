@@ -69,8 +69,10 @@ class Entity:
         world_id: str,
         name: str,
         type: str,
+        aliases: Optional[List[str]] = None,
         attributes: Optional[Dict[str, Any]] = None,
         stages: Optional[List[Dict[str, Any]]] = None,
+        relationships: Optional[List[Dict[str, Any]]] = None,
         setting_item_id: str = "",
         evolution_refs: Optional[List[str]] = None,
         created_at: Optional[str] = None,
@@ -79,8 +81,10 @@ class Entity:
         self.world_id = world_id
         self.name = name
         self.type = type
+        self.aliases = [str(alias).strip() for alias in (aliases or []) if str(alias).strip()]
         self.attributes = attributes or {}
         self.stages = stages or []
+        self.relationships = [dict(item) for item in (relationships or []) if isinstance(item, dict)]
         self.setting_item_id = setting_item_id or ""
         self.evolution_refs = [str(ref).strip() for ref in (evolution_refs or []) if str(ref).strip()]
         self.created_at = created_at or datetime.now().isoformat()
@@ -91,8 +95,10 @@ class Entity:
         world_id: str,
         name: str,
         type: str,
+        aliases: Optional[List[str]] = None,
         attributes: Optional[Dict[str, Any]] = None,
         stages: Optional[List[Dict[str, Any]]] = None,
+        relationships: Optional[List[Dict[str, Any]]] = None,
         setting_item_id: str = "",
         evolution_refs: Optional[List[str]] = None,
     ) -> "Entity":
@@ -101,8 +107,10 @@ class Entity:
             world_id=world_id,
             name=name,
             type=type,
+            aliases=aliases,
             attributes=attributes,
             stages=stages,
+            relationships=relationships,
             setting_item_id=setting_item_id,
             evolution_refs=evolution_refs,
         )
@@ -114,14 +122,21 @@ class Entity:
         stages = _extract_entity_stages(data, attributes, data.get("name", ""))
         attributes.pop("阶段", None)
         attributes.pop("stages", None)
+        aliases = [str(alias).strip() for alias in (data.get("aliases") or data.get("alias") or []) if str(alias).strip()]
+        raw_relationships = data.get("relationships") or data.get("relations") or attributes.get("relationships") or attributes.get("关系") or []
+        relationships = [dict(item) for item in raw_relationships if isinstance(item, dict)] if isinstance(raw_relationships, list) else []
+        attributes.pop("relationships", None)
+        attributes.pop("关系", None)
 
         return cls(
             id=data.get("id") or f"ent_{uuid.uuid4().hex[:12]}",
             world_id=data.get("world_id") or world_id or "",
             name=data.get("name", ""),
             type=data.get("type", ""),
+            aliases=aliases,
             attributes=attributes,
             stages=stages,
+            relationships=relationships,
             setting_item_id=str(
                 data.get("setting_item_id")
                 or data.get("settingId")
@@ -138,8 +153,10 @@ class Entity:
             "world_id": self.world_id,
             "name": self.name,
             "type": self.type,
+            "aliases": self.aliases,
             "attributes": self.attributes,
             "stages": self.stages,
+            "relationships": self.relationships,
             "setting_item_id": self.setting_item_id,
             "evolution_refs": self.evolution_refs,
             "created_at": self.created_at,
@@ -156,6 +173,8 @@ class Event:
         name: str,
         description: str,
         date: str,
+        time_type: str = "unknown",
+        estimated_date: str = "未知",
         entities: Optional[List[str]] = None,
         created_at: Optional[str] = None,
     ):
@@ -164,6 +183,8 @@ class Event:
         self.name = name
         self.description = description
         self.date = date
+        self.time_type = time_type or "unknown"
+        self.estimated_date = estimated_date or "未知"
         self.entities = entities or []
         self.created_at = created_at or datetime.now().isoformat()
 
@@ -174,6 +195,8 @@ class Event:
         name: str,
         description: str,
         date: str,
+        time_type: str = "unknown",
+        estimated_date: str = "未知",
         entities: Optional[List[str]] = None,
     ) -> "Event":
         return cls(
@@ -182,6 +205,8 @@ class Event:
             name=name,
             description=description,
             date=date,
+            time_type=time_type,
+            estimated_date=estimated_date,
             entities=entities,
         )
 
@@ -193,6 +218,8 @@ class Event:
             name=data.get("name", ""),
             description=data.get("description", ""),
             date=data.get("date", ""),
+            time_type=data.get("time_type", "unknown"),
+            estimated_date=data.get("estimated_date", "未知"),
             entities=data.get("entities") or [],
             created_at=data.get("created_at"),
         )
@@ -204,6 +231,8 @@ class Event:
             "name": self.name,
             "description": self.description,
             "date": self.date,
+            "time_type": self.time_type,
+            "estimated_date": self.estimated_date,
             "entities": self.entities,
             "created_at": self.created_at,
         }

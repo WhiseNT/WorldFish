@@ -1,0 +1,9 @@
+请验证以下世界观提取数据的质量：
+{summary}
+
+检查：
+1. 实体是否有明显遗漏的类型？
+2. 事件是否过于简略？
+3. 如有明显遗漏请列出应补充的内容。
+
+返回 JSON：{{"quality": "good/needs_improvement", "suggestions": "修正建议", "supplement": {{"entities": [], "events": []}}}}

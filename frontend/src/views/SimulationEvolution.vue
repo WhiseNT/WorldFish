@@ -31,11 +31,86 @@
           @toggle-maximize="toggleGraphMax"
           @entity-click="onEntityClick"
         />
-        <div v-else class="graph-placeholder">图谱加载中...</div>
+        <div v-else class="graph-placeholder">{{ graphLoading ? '图谱加载中...' : graphMessage }}</div>
       </div>
 
       <!-- 右：推演轮次 -->
       <div class="evo-right">
+        <div class="evo-meta card">
+          <div class="evo-meta-grid">
+            <div class="meta-block is-wide">
+              <span class="meta-label">推演场景</span>
+              <p class="meta-value">{{ evolutionScenario || '未提供推演场景。' }}</p>
+            </div>
+            <div class="meta-block">
+              <span class="meta-label">当前状态</span>
+              <p class="meta-value">{{ statusText }}</p>
+            </div>
+            <div class="meta-block">
+              <span class="meta-label">时间锚点</span>
+              <p class="meta-value">{{ resolvedAnchorText }}</p>
+            </div>
+            <div class="meta-block">
+              <span class="meta-label">关注领域</span>
+              <p class="meta-value">{{ focusAreaText }}</p>
+            </div>
+            <div class="meta-block">
+              <span class="meta-label">创意温度</span>
+              <p class="meta-value">{{ evolutionTemperatureText }}</p>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="status === 'planning' || status === 'consolidating'" class="inline-status card">
+          <div class="loading-spinner"></div>
+          <div>
+            <h4>{{ status === 'planning' ? '正在规划推演阶段' : '正在整合推演结果' }}</h4>
+            <p>{{ status === 'planning' ? '正在根据你给定的时间/事件锚点拆分阶段。' : '正在汇总关键主题、时间线与最终状态。' }}</p>
+          </div>
+        </div>
+
+        <div v-if="consolidationSummary" class="result-summary card">
+          <div class="result-summary-header">
+            <h3>推演结果</h3>
+            <span class="tag tag-accent">总结</span>
+          </div>
+          <p class="result-summary-text">{{ consolidationSummary.summary }}</p>
+
+          <div v-if="consolidationSummary.key_themes?.length" class="result-chip-list">
+            <span v-for="theme in consolidationSummary.key_themes" :key="theme" class="tag tag-primary">{{ theme }}</span>
+          </div>
+
+          <div v-if="consolidationSummary.inconsistencies?.length" class="result-section">
+            <h4>一致性提示</h4>
+            <ul class="result-list">
+              <li v-for="item in consolidationSummary.inconsistencies" :key="item">{{ item }}</li>
+            </ul>
+          </div>
+
+          <div v-if="consolidationSummary.timeline?.length" class="result-section">
+            <h4>推演时间线</h4>
+            <div class="result-timeline">
+              <div v-for="(item, index) in consolidationSummary.timeline" :key="`${index}-${item.time || item.event}`" class="timeline-item">
+                <span class="timeline-time">{{ item.time || '未知时间' }}</span>
+                <span class="timeline-event">{{ item.event || '未命名事件' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="consolidationSummary.final_entity_states?.length" class="result-section">
+            <h4>最终角色状态</h4>
+            <div class="final-state-list">
+              <article v-for="item in consolidationSummary.final_entity_states" :key="item.name" class="final-state-card">
+                <div class="final-state-main">
+                  <h5>{{ item.name }}</h5>
+                  <p>{{ item.final_status }}</p>
+                </div>
+                <button class="btn btn-secondary btn-xs" @click="openEvolutionEntityChat(item.name)">对话</button>
+              </article>
+            </div>
+          </div>
+        </div>
+
         <div v-if="status === 'running'" class="progress-section">
           <div class="progress-info">
             <span>第 {{ currentRound }} / {{ totalRounds }} 轮</span>
@@ -137,15 +212,20 @@
           <h2>与 {{ chatEntity.name }} 对话</h2>
           <button class="close-btn" @click="chatEntity = null">&times;</button>
         </div>
-        <!-- 阶段选择 -->
-        <div v-if="chatStages.length > 0" class="stage-selector">
-          <label class="stage-label">角色阶段：</label>
-          <select v-model="selectedStage" class="form-input stage-select">
-            <option value="">默认（当前状态）</option>
-            <option v-for="s in chatStages" :key="s['名称'] || s.name" :value="s['名称'] || s.name">
-              {{ s['名称'] || s.name }}{{ (s['时期'] || s.era) ? ' (' + (s['时期'] || s.era) + ')' : '' }}
-            </option>
-          </select>
+        <div class="chat-profile-card">
+          <div class="chat-profile-header" @click="chatProfileCollapsed = !chatProfileCollapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 0.9rem; font-weight: 500; color: var(--wf-text-primary);">人物小传</span>
+            <span style="font-size: 0.8rem; color: var(--wf-text-muted);">{{ chatProfileCollapsed ? '展开 ▾' : '折叠 ▴' }}</span>
+          </div>
+          <div v-show="!chatProfileCollapsed">
+            <div v-if="chatProfileLoading" class="chat-profile-loading">正在生成当前角色小传...</div>
+            <div v-if="chatProfileNotice" class="chat-profile-notice">{{ chatProfileNotice }}</div>
+            <div class="chat-profile-meta">
+              <span v-if="chatCurrentTime" class="tag tag-accent">{{ chatCurrentTime }}</span>
+              <span v-if="chatCurrentStatus" class="tag tag-primary">{{ chatCurrentStatus }}</span>
+            </div>
+            <p class="chat-profile-text">{{ chatBrief || '暂无角色小传。' }}</p>
+          </div>
         </div>
         <div class="chat-messages">
           <div v-for="(msg, i) in chatMessages" :key="i" :class="['chat-msg', msg.role]">{{ msg.content }}</div>
@@ -161,7 +241,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StepIndicator from '../components/StepIndicator.vue'
 import GraphPanel from '../components/GraphPanel.vue'
@@ -180,34 +260,268 @@ const currentRound = ref(0)
 const totalRounds = ref(5)
 const evoType = ref('forward')
 const parentEvoId = ref('')
+const evolutionScenario = ref('')
+const evolutionConfig = ref({})
+const consolidationSummary = ref(null)
 let pollTimer = null
 
 const graphData = ref(null)
+const graphLoading = ref(false)
+const graphMessage = ref('暂无可用图谱数据。')
 const showApplyDialog = ref(false)
+
+const statusText = computed(() => ({
+  planning: '正在规划',
+  running: '正在推演',
+  consolidating: '正在整合结果',
+  completed: '已完成',
+  failed: '推演失败',
+})[status.value] || status.value || '未知状态')
+
+const resolvedAnchorText = computed(() => {
+  const anchor = evolutionConfig.value?.resolved_anchor || {}
+  if (anchor.label) {
+    return anchor.label
+  }
+  if (anchor.event_name) {
+    return anchor.event_name
+  }
+  if (evolutionConfig.value?.time_span_start) {
+    return evolutionConfig.value.time_span_start
+  }
+  return '未设置'
+})
+
+const focusAreaText = computed(() => {
+  const items = Array.isArray(evolutionConfig.value?.focus_areas) ? evolutionConfig.value.focus_areas.filter(Boolean) : []
+  return items.length ? items.join('、') : '未限定'
+})
+
+const evolutionTemperatureText = computed(() => {
+  const value = evolutionConfig.value?.temperature
+  return value === undefined || value === null || value === '' ? '默认' : String(value)
+})
+
+const normalizeGraphKey = (value = '') => String(value || '').trim().toLowerCase().replace(/[\s\-—_·•・()（）\[\]{}《》<>“”"'`]+/g, '')
+
+const hasRenderableValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.some(item => hasRenderableValue(item))
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).some(item => hasRenderableValue(item))
+  }
+  return Boolean(String(value ?? '').trim())
+}
+
+const formatGraphValue = (value) => {
+  if (!hasRenderableValue(value)) {
+    return ''
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => formatGraphValue(item)).filter(Boolean).join('；')
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([, nestedValue]) => hasRenderableValue(nestedValue))
+      .map(([key, nestedValue]) => `${key}: ${formatGraphValue(nestedValue)}`)
+      .filter(Boolean)
+      .join('；')
+  }
+  return String(value ?? '').trim()
+}
+
+const buildEvolutionSnapshots = () => {
+  const snapshots = new Map()
+
+  for (const round of rounds.value || []) {
+    for (const entity of round.affected_entities || []) {
+      const name = String(entity?.name || '').trim()
+      const key = normalizeGraphKey(name)
+      if (!key) {
+        continue
+      }
+      snapshots.set(key, {
+        name,
+        roundLabel: `第 ${round.round_number} 轮`,
+        newStatus: String(entity?.new_status || '').trim(),
+        stateChanges: String(entity?.state_changes || '').trim(),
+      })
+    }
+  }
+
+  for (const item of consolidationSummary.value?.final_entity_states || []) {
+    const name = String(item?.name || '').trim()
+    const key = normalizeGraphKey(name)
+    if (!key || snapshots.has(key)) {
+      continue
+    }
+    snapshots.set(key, {
+      name,
+      roundLabel: '推演总结',
+      newStatus: String(item?.final_status || '').trim(),
+      stateChanges: String(item?.final_status || '').trim(),
+    })
+  }
+
+  return snapshots
+}
 
 async function loadGraph() {
   if (!worldId.value) return
+  graphLoading.value = true
+  graphMessage.value = '图谱加载中...'
   try {
     const res = await service.get(`/api/world/${worldId.value}`)
     const w = res.world || {}
-    const nodes = (w.entities || []).map((e, i) => ({
-      uuid: e.id || `ent-${i}`, name: e.name, labels: [e.type || 'Entity'],
-      summary: Object.entries(e.attributes || {}).map(([k, v]) => `${k}: ${v}`).join('; '),
-      attributes: e.attributes || {},
-      stages: Array.isArray(e.stages) ? e.stages : [],
-    }))
+    const nodes = []
     const edges = []
-    for (const evt of w.events || []) {
-      const ents = evt.entities || []
-      for (let i = 0; i < ents.length; i++)
-        for (let j = i + 1; j < ents.length; j++) {
-          const src = nodes.find(n => n.name === ents[i])
-          const tgt = nodes.find(n => n.name === ents[j])
-          if (src && tgt) edges.push({ uuid: `e-${edges.length}`, name: 'RELATED_TO', fact: evt.name, source_node_uuid: src.uuid, target_node_uuid: tgt.uuid, attributes: {} })
+    const nodeByKey = new Map()
+    const edgeKeys = new Set()
+    const evolutionSnapshots = buildEvolutionSnapshots()
+
+    const registerNodeKeys = (node, names = []) => {
+      for (const rawName of names) {
+        const key = normalizeGraphKey(rawName)
+        if (key && !nodeByKey.has(key)) {
+          nodeByKey.set(key, node)
         }
+      }
     }
+
+    const ensureReferenceNode = (name, options = {}) => {
+      const displayName = String(name || '').trim()
+      const key = normalizeGraphKey(displayName)
+      if (!key) {
+        return null
+      }
+      if (nodeByKey.has(key)) {
+        return nodeByKey.get(key)
+      }
+
+      const snapshot = evolutionSnapshots.get(key)
+      const attributes = {
+        说明: options.summary || '该实体当前只在关系或推演结果中被引用。',
+      }
+      if (snapshot?.roundLabel) {
+        attributes['推演轮次'] = snapshot.roundLabel
+      }
+      if (snapshot?.newStatus) {
+        attributes['推演最新状态'] = snapshot.newStatus
+      }
+      if (snapshot?.stateChanges) {
+        attributes['推演变化'] = snapshot.stateChanges
+      }
+
+      const node = {
+        uuid: options.uuid || `ref-${nodes.length}`,
+        name: displayName,
+        labels: [options.label || '引用实体'],
+        summary: options.summary || snapshot?.stateChanges || snapshot?.newStatus || '仅在关系或推演结果中被提及。',
+        attributes,
+        stages: [],
+      }
+      nodes.push(node)
+      registerNodeKeys(node, [displayName])
+      return node
+    }
+
+    for (const entity of w.entities || []) {
+      const entityName = String(entity?.name || '').trim()
+      if (!entityName) {
+        continue
+      }
+
+      const snapshot = evolutionSnapshots.get(normalizeGraphKey(entityName))
+      const displayAttributes = {}
+      for (const [key, value] of Object.entries(entity.attributes || {})) {
+        const formatted = formatGraphValue(value)
+        if (formatted) {
+          displayAttributes[key] = formatted
+        }
+      }
+      if (snapshot?.roundLabel) {
+        displayAttributes['推演轮次'] = snapshot.roundLabel
+      }
+      if (snapshot?.newStatus) {
+        displayAttributes['推演最新状态'] = snapshot.newStatus
+      }
+      if (snapshot?.stateChanges) {
+        displayAttributes['推演变化'] = snapshot.stateChanges
+      }
+
+      const summary = Object.entries(displayAttributes)
+        .slice(0, 4)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('; ') || entityName
+
+      const node = {
+        uuid: entity.id || `ent-${nodes.length}`,
+        name: entityName,
+        labels: [entity.type || 'Entity'],
+        summary,
+        attributes: displayAttributes,
+        stages: Array.isArray(entity.stages) ? entity.stages : [],
+      }
+      nodes.push(node)
+      registerNodeKeys(node, [entityName, ...(Array.isArray(entity.aliases) ? entity.aliases : [])])
+    }
+
+    evolutionSnapshots.forEach((snapshot, key) => {
+      if (!nodeByKey.has(key)) {
+        ensureReferenceNode(snapshot.name, {
+          label: '推演实体',
+          summary: snapshot.stateChanges || snapshot.newStatus || '推演结果中出现的实体。',
+        })
+      }
+    })
+
+    const pushEdge = (sourceNode, targetNode, relationship = {}) => {
+      if (!sourceNode || !targetNode) {
+        return
+      }
+      const relationName = String(relationship.type || relationship.name || '关联').trim() || '关联'
+      const fact = String(relationship.description || relationship.source_event || relationship.fact || '').trim()
+      const edgeKey = [sourceNode.uuid, targetNode.uuid, relationName, fact].join('|')
+      if (edgeKeys.has(edgeKey)) {
+        return
+      }
+      edgeKeys.add(edgeKey)
+      edges.push({
+        uuid: relationship.id || `rel-${edges.length}`,
+        name: relationName,
+        fact,
+        source_node_uuid: sourceNode.uuid,
+        target_node_uuid: targetNode.uuid,
+        attributes: relationship,
+      })
+    }
+
+    for (const entity of w.entities || []) {
+      const sourceNode = ensureReferenceNode(entity?.name, { label: entity?.type || 'Entity' })
+      for (const relationship of Array.isArray(entity?.relationships) ? entity.relationships : []) {
+        const targetName = String(relationship?.target || '').trim()
+        if (!targetName) {
+          continue
+        }
+        const targetNode = ensureReferenceNode(targetName, {
+          label: '引用实体',
+          summary: '在实体关系中被引用。',
+        })
+        pushEdge(sourceNode, targetNode, relationship)
+      }
+    }
+
     graphData.value = { graph_id: worldId.value, nodes, edges, node_count: nodes.length, edge_count: edges.length }
-  } catch (e) { /* ignore */ }
+    if (!nodes.length) {
+      graphMessage.value = '当前世界观暂无可显示的图谱节点。'
+    }
+  } catch (e) {
+    graphData.value = null
+    graphMessage.value = '图谱暂时不可用，但右侧推演结果仍可查看。'
+  } finally {
+    graphLoading.value = false
+  }
 }
 
 function toggleGraphMax() {}
@@ -218,12 +532,21 @@ async function fetchEvolution() {
     const evo = res.evolution || res
     status.value = evo.status || 'running'
     worldId.value = evo.world_id || ''
-    rounds.value = evo.rounds || []
+    evolutionScenario.value = evo.scenario || ''
+    evolutionConfig.value = evo.config || {}
+    consolidationSummary.value = evo.consolidation || null
+    rounds.value = Array.isArray(evo.rounds)
+      ? evo.rounds
+          .filter(round => Number(round?.round_number || 0) > 0)
+          .sort((left, right) => Number(left.round_number || 0) - Number(right.round_number || 0))
+      : []
     currentRound.value = rounds.value.length
     totalRounds.value = (evo.config && evo.config.rounds) || 5
     evoType.value = evo.evolution_type || 'forward'
     parentEvoId.value = evo.parent_evolution_id || ''
-    if (worldId.value) loadGraph()
+    if (worldId.value) {
+      await loadGraph()
+    }
   } catch (e) { loadError.value = '加载失败: ' + (e.message || '') } finally { loading.value = false }
 }
 
@@ -232,10 +555,24 @@ function startPolling() {
     try {
       const res = await service.get(`/api/evolution/${evolutionId.value}`)
       const evo = res.evolution || res
+      const previousRoundCount = rounds.value.length
+      const previousStatus = status.value
       status.value = evo.status || 'running'
-      rounds.value = evo.rounds || []
+      evolutionScenario.value = evo.scenario || ''
+      evolutionConfig.value = evo.config || {}
+      consolidationSummary.value = evo.consolidation || null
+      rounds.value = Array.isArray(evo.rounds)
+        ? evo.rounds
+            .filter(round => Number(round?.round_number || 0) > 0)
+            .sort((left, right) => Number(left.round_number || 0) - Number(right.round_number || 0))
+        : []
       currentRound.value = rounds.value.length
-      if (!worldId.value && evo.world_id) { worldId.value = evo.world_id; loadGraph() }
+      if (!worldId.value && evo.world_id) {
+        worldId.value = evo.world_id
+      }
+      if (worldId.value && (previousRoundCount !== rounds.value.length || previousStatus !== status.value || !graphData.value)) {
+        await loadGraph()
+      }
       if (status.value === 'completed' || status.value === 'failed') { clearInterval(pollTimer); pollTimer = null }
     } catch (e) { /* ignore */ }
   }, 3000)
@@ -256,7 +593,11 @@ async function startForward() {
   try {
     const lastRound = rounds.value[rounds.value.length - 1]
     const lastYear = lastRound?.year_advanced_to || lastRound?.raw_response?.year_advanced_to || ''
-    const config = { rounds: forwardRounds.value, temperature: 0.7 }
+    const config = {
+      rounds: forwardRounds.value,
+      temperature: evolutionConfig.value?.temperature ?? 0.7,
+      focus_areas: Array.isArray(evolutionConfig.value?.focus_areas) ? evolutionConfig.value.focus_areas : [],
+    }
     if (lastYear) {
       config.time_span_start = lastYear
     }
@@ -264,7 +605,7 @@ async function startForward() {
       world_id: worldId.value, scenario: forwardScenario.value,
       config,
       evolution_type: 'forward', parent_evolution_id: evolutionId.value,
-      parent_round: rounds.value.length - 1,
+      parent_round: lastRound?.round_number || rounds.value.length,
     })
     router.push({ name: 'SimulationEvolution', params: { id: res.evolution_id } })
   } catch (e) { alert('启动失败: ' + (e.message || '')) } finally { forwarding.value = false }
@@ -295,19 +636,194 @@ const chatEntity = ref(null)
 const chatMessages = ref([])
 const chatInput = ref('')
 const chatLoading = ref(false)
-const chatStages = ref([])
-const selectedStage = ref('')
+const chatProfileLoading = ref(false)
+const chatBrief = ref('')
+const chatCurrentTime = ref('')
+const chatCurrentStatus = ref('')
+const chatProfileNotice = ref('')
+const chatProfileCollapsed = ref(false)
 
-function onEntityClick(entityData) {
-  chatEntity.value = entityData
+function getCurrentEvolutionTime() {
+  const latestRound = [...(rounds.value || [])]
+    .filter(round => Number(round?.round_number || 0) > 0)
+    .sort((left, right) => Number(right?.round_number || 0) - Number(left?.round_number || 0))[0]
+
+  if (latestRound?.year_advanced_to) {
+    return latestRound.year_advanced_to
+  }
+
+  const timeline = consolidationSummary.value?.timeline || []
+  const latestTimelineItem = [...timeline].reverse().find(item => item?.time)
+  if (latestTimelineItem?.time) {
+    return latestTimelineItem.time
+  }
+
+  const anchor = evolutionConfig.value?.resolved_anchor || {}
+  return anchor.start_time || evolutionConfig.value?.time_span_start || ''
+}
+
+function buildLocalEntityBrief(entityName, sourceEntity = null) {
+  const normalizedName = normalizeGraphKey(entityName)
+  if (!normalizedName) {
+    return null
+  }
+
+  const graphNode = sourceEntity?.name
+    ? sourceEntity
+    : (graphData.value?.nodes || []).find(node => normalizeGraphKey(node?.name) === normalizedName)
+
+  const finalState = (consolidationSummary.value?.final_entity_states || []).find(item => normalizeGraphKey(item?.name) === normalizedName)
+
+  let latestChange = null
+  for (const round of [...(rounds.value || [])].sort((left, right) => Number(right?.round_number || 0) - Number(left?.round_number || 0))) {
+    const matched = (round.affected_entities || []).find(item => normalizeGraphKey(item?.name) === normalizedName)
+    if (matched) {
+      latestChange = {
+        roundNumber: round.round_number,
+        yearAdvancedTo: round.year_advanced_to,
+        newStatus: matched.new_status || '',
+        stateChanges: matched.state_changes || '',
+      }
+      break
+    }
+  }
+
+  const attrs = graphNode?.attributes || {}
+  const currentTime = latestChange?.yearAdvancedTo || getCurrentEvolutionTime()
+  const currentStatus = finalState?.final_status
+    || latestChange?.newStatus
+    || latestChange?.stateChanges
+    || attrs['推演最新状态']
+    || attrs['当前状态']
+    || ''
+
+  const detailLines = Object.entries(attrs)
+    .filter(([key, value]) => value && !['推演轮次', '推演最新状态', '推演变化'].includes(key))
+    .slice(0, 8)
+    .map(([key, value]) => `- ${key}: ${String(value)}`)
+
+  const lines = [
+    `姓名: ${graphNode?.name || finalState?.name || entityName}`,
+  ]
+
+  const typeLabel = graphNode?.labels?.find(label => label && label !== 'Entity') || graphNode?.labels?.[0] || ''
+  if (typeLabel) {
+    lines.push(`类型: ${typeLabel}`)
+  }
+  if (currentTime || currentStatus) {
+    lines.push('当前角色锚点（最高优先级）:')
+    if (currentTime) {
+      lines.push(`- 当前时间: ${currentTime}`)
+    }
+    if (currentStatus) {
+      lines.push(`- 当前身份/状态: ${currentStatus}`)
+    }
+  }
+  if (latestChange || finalState) {
+    lines.push('本次推演中的角色演化:')
+    if (latestChange) {
+      const roundHeader = latestChange.yearAdvancedTo
+        ? `- 第${latestChange.roundNumber}轮（${latestChange.yearAdvancedTo}）`
+        : `- 第${latestChange.roundNumber}轮`
+      const changeText = latestChange.newStatus || latestChange.stateChanges
+      lines.push(changeText ? `${roundHeader}: ${changeText}` : roundHeader)
+    }
+    if (finalState?.final_status) {
+      lines.push(`- 推演结局: ${finalState.final_status}`)
+    }
+  }
+
+  const baseIntro = attrs['简介'] || graphNode?.summary || ''
+  if (baseIntro) {
+    lines.push('原始设定/图谱摘要（前端兜底生成）:')
+    lines.push(String(baseIntro))
+  }
+  if (detailLines.length) {
+    lines.push('补充资料:')
+    lines.push(...detailLines)
+  }
+
+  const brief = lines.filter(Boolean).join('\n')
+  if (!brief.trim()) {
+    return null
+  }
+
+  return {
+    character_brief: brief,
+    current_time: currentTime,
+    current_status: currentStatus,
+  }
+}
+
+async function fetchEntityProfile(entityName) {
+  if (!worldId.value || !entityName) return
+  const fallbackProfile = buildLocalEntityBrief(entityName, chatEntity.value)
+  if (fallbackProfile) {
+    chatBrief.value = fallbackProfile.character_brief || ''
+    chatCurrentTime.value = fallbackProfile.current_time || ''
+    chatCurrentStatus.value = fallbackProfile.current_status || ''
+    chatProfileNotice.value = '当前先使用页面里的推演数据生成角色小传，稍后会尝试补全。'
+  }
+  chatProfileLoading.value = true
+  try {
+    const res = await service.post('/api/evolution/entity-chat', {
+      world_id: worldId.value,
+      evolution_id: evolutionId.value,
+      entity_name: entityName,
+      question: '',
+      history: [],
+    })
+    chatBrief.value = res.character_brief || ''
+    chatCurrentTime.value = res.current_time || ''
+    chatCurrentStatus.value = res.current_status || ''
+    chatProfileNotice.value = ''
+    if (res.entity_name && chatEntity.value) {
+      chatEntity.value = { ...chatEntity.value, name: res.entity_name }
+    }
+  } catch (e) {
+    if (fallbackProfile) {
+      chatProfileNotice.value = `后端角色小传补全失败，当前显示的是基于本页推演数据生成的版本。${e?.message ? ` 原因: ${e.message}` : ''}`
+    } else {
+      chatBrief.value = `角色小传生成失败${e?.message ? `: ${e.message}` : '，请稍后重试。'}`
+      chatCurrentTime.value = ''
+      chatCurrentStatus.value = ''
+      chatProfileNotice.value = ''
+    }
+  } finally {
+    chatProfileLoading.value = false
+  }
+}
+
+function resetChatState(entity) {
+  if (typeof entity === 'string') {
+    chatEntity.value = { name: entity }
+  } else {
+    chatEntity.value = entity ? { ...entity } : null
+  }
   chatMessages.value = []
   chatInput.value = ''
-  selectedStage.value = ''
-  const attrs = entityData.attributes || {}
-  const stages = Array.isArray(entityData.stages) && entityData.stages.length > 0
-    ? entityData.stages
-    : (attrs['阶段'] || attrs['stages'] || [])
-  chatStages.value = Array.isArray(stages) ? stages.filter(s => typeof s === 'object') : []
+  chatBrief.value = ''
+  chatCurrentTime.value = ''
+  chatCurrentStatus.value = ''
+  chatProfileNotice.value = ''
+}
+
+async function openEvolutionEntityChat(entity) {
+  const entityName = typeof entity === 'string' ? entity : entity?.name || ''
+  if (!entityName) {
+    return
+  }
+  resetChatState(entity)
+  await fetchEntityProfile(entityName)
+}
+
+async function onEntityClick(entityData) {
+  const entityName = entityData?.name || ''
+  if (!entityName) {
+    return
+  }
+  resetChatState(entityData)
+  await fetchEntityProfile(entityName)
 }
 
 async function sendChat() {
@@ -319,14 +835,17 @@ async function sendChat() {
   try {
     const res = await service.post('/api/evolution/entity-chat', {
       world_id: worldId.value,
+      evolution_id: evolutionId.value,
       entity_name: chatEntity.value.name,
       question: userMsg,
-      stage_name: selectedStage.value || '',
+      history: chatMessages.value.slice(0, -1),
     })
     chatMessages.value.push({ role: 'assistant', content: res.reply || '...' })
-    // 更新可用阶段列表
-    if (res.available_stages && res.available_stages.length > 0) {
-      chatStages.value = res.available_stages
+    chatBrief.value = res.character_brief || chatBrief.value
+    chatCurrentTime.value = res.current_time || chatCurrentTime.value
+    chatCurrentStatus.value = res.current_status || chatCurrentStatus.value
+    if (res.entity_name) {
+      chatEntity.value = { ...chatEntity.value, name: res.entity_name }
     }
   } catch (e) {
     chatMessages.value.push({ role: 'assistant', content: '对话失败: ' + (e.message || '') })
@@ -348,7 +867,35 @@ async function sendChat() {
 .evo-graph-panel :deep(.graph-container) { height: calc(100% - 44px); }
 .graph-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--wf-text-muted); }
 
-.evo-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.evo-right { flex: 1; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+
+.evo-meta { margin: var(--spacing-md); margin-bottom: 0; }
+.evo-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--spacing-sm); }
+.meta-block { padding: var(--spacing-sm); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); }
+.meta-block.is-wide { grid-column: 1 / -1; }
+.meta-label { display: block; font-size: 0.78rem; color: var(--wf-text-muted); margin-bottom: 4px; }
+.meta-value { margin: 0; font-size: 0.88rem; line-height: 1.6; color: var(--wf-text-primary); white-space: pre-wrap; }
+
+.inline-status { margin: var(--spacing-md); margin-bottom: 0; display: flex; align-items: center; gap: var(--spacing-md); }
+.inline-status h4 { margin: 0 0 4px; font-size: 0.95rem; color: var(--wf-text-primary); }
+.inline-status p { margin: 0; font-size: 0.84rem; color: var(--wf-text-secondary); }
+
+.result-summary { margin: var(--spacing-md); margin-bottom: 0; display: flex; flex-direction: column; gap: var(--spacing-sm); }
+.result-summary-header { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-sm); }
+.result-summary-header h3 { margin: 0; font-size: 1rem; color: var(--wf-text-primary); }
+.result-summary-text { margin: 0; line-height: 1.8; color: var(--wf-text-primary); white-space: pre-wrap; }
+.result-chip-list { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
+.result-section { display: flex; flex-direction: column; gap: var(--spacing-xs); }
+.result-section h4 { margin: 0; font-size: 0.88rem; color: var(--wf-text-secondary); }
+.result-list { margin: 0; padding-left: 1.1rem; color: var(--wf-text-primary); }
+.result-timeline { display: flex; flex-direction: column; gap: 6px; }
+.final-state-list { display: flex; flex-direction: column; gap: var(--spacing-sm); }
+.final-state-card { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacing-sm); padding: var(--spacing-sm); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); }
+.final-state-main h5 { margin: 0 0 4px; font-size: 0.9rem; color: var(--wf-text-primary); }
+.final-state-main p { margin: 0; font-size: 0.84rem; line-height: 1.6; color: var(--wf-text-secondary); }
+.timeline-item { display: grid; grid-template-columns: 110px 1fr; gap: var(--spacing-sm); align-items: start; }
+.timeline-time { font-size: 0.78rem; color: var(--wf-accent); }
+.timeline-event { font-size: 0.86rem; color: var(--wf-text-primary); line-height: 1.5; }
 
 .progress-section { background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding: var(--spacing-sm) var(--spacing-lg); }
 .progress-info { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--wf-text-secondary); margin-bottom: 4px; }
@@ -356,7 +903,7 @@ async function sendChat() {
 .progress-bar { height: 3px; background: rgba(255, 255, 255, 0.06); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--wf-accent); transition: width 0.5s ease; box-shadow: 0 0 8px var(--wf-accent-glow); }
 
-.rounds-scroll { flex: 1; overflow-y: auto; padding: var(--spacing-md); display: flex; flex-direction: column; gap: var(--spacing-md); }
+.rounds-scroll { flex: 0 0 auto; min-height: 0; overflow: visible; padding: var(--spacing-md); display: flex; flex-direction: column; gap: var(--spacing-md); }
 
 .round-card { }
 .round-header { display: flex; justify-content: space-between; margin-bottom: var(--spacing-sm); }
@@ -394,16 +941,18 @@ async function sendChat() {
 .apply-ent-change { color: var(--wf-text-secondary); font-size: 0.8rem; flex: 1; }
 
 /* Chat Dialog */
-.entity-chat-dialog { max-width: 560px; height: 520px; display: flex; flex-direction: column; }
-.chat-messages { flex: 1; overflow-y: auto; padding: var(--spacing-sm); display: flex; flex-direction: column; gap: var(--spacing-sm); }
+.entity-chat-dialog { max-width: 560px; height: 520px; display: flex; flex-direction: column; min-height: 0; }
+.chat-profile-card { padding: var(--spacing-sm) var(--spacing-md); background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid var(--wf-border); display: flex; flex-direction: column; gap: var(--spacing-sm); flex: 0 0 auto; max-height: 210px; overflow-y: auto; }
+.chat-profile-loading { font-size: 0.84rem; color: var(--wf-text-muted); }
+.chat-profile-notice { font-size: 0.8rem; line-height: 1.6; color: var(--wf-accent); }
+.chat-profile-meta { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
+.chat-profile-text { margin: 0; font-size: 0.85rem; line-height: 1.7; color: var(--wf-text-secondary); white-space: pre-wrap; }
+.chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: var(--spacing-sm); display: flex; flex-direction: column; gap: var(--spacing-sm); }
 .chat-msg { padding: var(--spacing-sm) var(--spacing-md); border-radius: var(--radius-md); font-size: 0.9rem; max-width: 85%; }
 .chat-msg.user { background: var(--wf-accent-muted); color: var(--wf-accent); align-self: flex-end; border: 1px solid rgba(255, 255, 175, 0.12); }
 .chat-msg.assistant { background: rgba(255, 255, 255, 0.04); color: var(--wf-text-secondary); align-self: flex-start; border: 1px solid var(--wf-border); }
 .chat-input-row { display: flex; gap: var(--spacing-sm); padding: var(--spacing-sm); border-top: 1px solid var(--wf-border); }
 .chat-input { flex: 1; }
-.stage-selector { display: flex; align-items: center; gap: var(--spacing-sm); padding: var(--spacing-sm) var(--spacing-md); background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid var(--wf-border); }
-.stage-label { font-size: 0.85rem; color: var(--wf-text-secondary); white-space: nowrap; }
-.stage-select { flex: 1; font-size: 0.85rem; }
 
 .btn-sm { padding: 8px 20px; font-size: 13px; border-radius: var(--radius-full); }
 </style>

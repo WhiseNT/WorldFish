@@ -9,6 +9,7 @@ graph_bp = Blueprint('graph', __name__)
 simulation_bp = Blueprint('simulation', __name__)
 report_bp = Blueprint('report', __name__)
 world_build_bp = Blueprint('world_build', __name__)
+agent_bp = Blueprint('agent', __name__)
 
 # 导入模块
 from . import graph  # noqa: E402, F401
@@ -18,8 +19,11 @@ from . import world_build  # noqa: E402, F401
 from . import project  # noqa: E402, F401
 
 from . import evolution  # noqa: E402, F401
+from . import rag  # noqa: E402, F401
+from . import agent  # noqa: E402, F401
 
 # 从模块获取蓝图
 project_bp = project.project_bp
 evolution_bp = evolution.evolution_bp
+rag_bp = rag.rag_bp
 

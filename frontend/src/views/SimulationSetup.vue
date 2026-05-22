@@ -59,6 +59,30 @@
               <span class="form-hint">{{ config.temperature }} — 越高越有创意</span>
             </div>
             <div class="form-group">
+              <label>起始时间锚点</label>
+              <input
+                type="text"
+                v-model.trim="config.time_span_start"
+                class="form-input wide-input"
+                :placeholder="world.anchor_time || '留空则自动解析场景或沿用父轮次时间'"
+              />
+              <span class="form-hint">留空时会优先使用父轮次时间，其次尝试解析场景中的时间提示，最后回退到世界观锚定时间。</span>
+            </div>
+            <div class="form-group">
+              <label>起始事件锚点</label>
+              <input
+                type="text"
+                v-model.trim="config.anchor_event"
+                class="form-input wide-input"
+                list="simulation-anchor-events"
+                placeholder="可输入事件名或关键词，例如 王都政变"
+              />
+              <datalist id="simulation-anchor-events">
+                <option v-for="eventName in eventOptions" :key="eventName" :value="eventName"></option>
+              </datalist>
+              <span class="form-hint">若填写，将优先从该事件发生后开始推演；也支持直接在“推演需求”里写事件名。</span>
+            </div>
+            <div class="form-group">
               <label>关注领域</label>
               <div class="checkbox-group">
                 <label v-for="area in focusOptions" :key="area" class="checkbox-label">
@@ -130,6 +154,8 @@ const hasLlmConfig = ref(true) // Will be checked on mount
 const config = ref({
   rounds: 5,
   temperature: 0.7,
+  time_span_start: '',
+  anchor_event: '',
   focus_areas: [],
 })
 const worldStyle = ref({
@@ -140,6 +166,7 @@ const worldStyle = ref({
 const focusOptions = ['政治军事', '经济发展', '文化变迁', '科技演进', '角色关系', '地理变化']
 
 const canStart = computed(() => scenario.value.trim().length > 0 && hasLlmConfig.value)
+const eventOptions = computed(() => (events.value || []).map(evt => String(evt?.name || '').trim()).filter(Boolean))
 
 onMounted(async () => {
   // Check LLM config

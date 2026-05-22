@@ -26,6 +26,38 @@ def _serialize_env_value(value: Any) -> str:
     return f'"{escaped}"'
 
 
+def _parse_bool_env(value: Any, default: Any = None):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {'1', 'true', 'enabled', 'yes', 'on'}:
+        return True
+    if normalized in {'0', 'false', 'disabled', 'no', 'off'}:
+        return False
+    return default
+
+
+def _parse_int_env(key: str, default: int) -> int:
+    try:
+        return int(os.environ.get(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_float_env(key: str, default: float) -> float:
+    try:
+        return float(os.environ.get(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_reasoning_effort(value: Any) -> str:
+    normalized = str(value or 'max').strip().lower()
+    return normalized if normalized in {'high', 'max'} else 'max'
+
+
 def _persist_env_updates(updates: Dict[str, Any]):
     existing_lines = []
     if os.path.exists(project_root_env):
@@ -77,6 +109,32 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    LLM_THINKING_ENABLED = _parse_bool_env(os.environ.get('LLM_THINKING_ENABLED'), None)
+    LLM_REASONING_EFFORT = _parse_reasoning_effort(os.environ.get('LLM_REASONING_EFFORT'))
+    LLM_DEFAULT_CONTEXT_WINDOW = _parse_int_env('LLM_DEFAULT_CONTEXT_WINDOW', 128 * 1024)
+    LLM_DEEPSEEK_V4_CONTEXT_WINDOW = _parse_int_env('LLM_DEEPSEEK_V4_CONTEXT_WINDOW', 1_000_000)
+    LLM_CONTEXT_WINDOW = _parse_int_env('LLM_CONTEXT_WINDOW', 0)
+    AGENT_CONTEXT_COMPRESSION_RATIO = _parse_float_env('AGENT_CONTEXT_COMPRESSION_RATIO', 0.70)
+    
+    # Embedding 配置（RAG 向量化）
+    # 可独立配置 Embedding API（不填则复用 LLM 的 key/url）
+    EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
+    EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
+    EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+
+    @classmethod
+    def get_embedding_config(cls) -> dict:
+        """获取 Embedding 配置（独立配置优先，否则复用 LLM 配置）。"""
+        return {
+            "api_key": cls.EMBEDDING_API_KEY or cls.LLM_API_KEY,
+            "base_url": cls.EMBEDDING_BASE_URL or cls.LLM_BASE_URL,
+            "model_name": cls.EMBEDDING_MODEL_NAME,
+        }
+    
+    # RAG 配置
+    RAG_CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "800"))
+    RAG_CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
+    RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
@@ -118,7 +176,19 @@ class Config:
         cls.LLM_API_KEY = os.environ.get('LLM_API_KEY')
         cls.LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
         cls.LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+        cls.LLM_THINKING_ENABLED = _parse_bool_env(os.environ.get('LLM_THINKING_ENABLED'), None)
+        cls.LLM_REASONING_EFFORT = _parse_reasoning_effort(os.environ.get('LLM_REASONING_EFFORT'))
+        cls.LLM_DEFAULT_CONTEXT_WINDOW = _parse_int_env('LLM_DEFAULT_CONTEXT_WINDOW', 128 * 1024)
+        cls.LLM_DEEPSEEK_V4_CONTEXT_WINDOW = _parse_int_env('LLM_DEEPSEEK_V4_CONTEXT_WINDOW', 1_000_000)
+        cls.LLM_CONTEXT_WINDOW = _parse_int_env('LLM_CONTEXT_WINDOW', 0)
+        cls.AGENT_CONTEXT_COMPRESSION_RATIO = _parse_float_env('AGENT_CONTEXT_COMPRESSION_RATIO', 0.70)
         cls.ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+        cls.EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
+        cls.EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
+        cls.EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+        cls.RAG_CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "800"))
+        cls.RAG_CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
+        cls.RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
         cls.OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
         cls.REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
         cls.REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
@@ -136,12 +206,86 @@ class Config:
     @classmethod
     def get_llm_config_status(cls) -> Dict[str, Any]:
         cls.reload()
+        agent_settings = cls.get_agent_settings_status(reload_first=False)
         return {
             'api_key_configured': bool(cls.LLM_API_KEY),
             'api_key_masked': cls.mask_secret(cls.LLM_API_KEY),
             'base_url': cls.LLM_BASE_URL,
             'model_name': cls.LLM_MODEL_NAME,
+            **agent_settings,
         }
+
+    @classmethod
+    def get_agent_settings_status(cls, reload_first: bool = True) -> Dict[str, Any]:
+        if reload_first:
+            cls.reload()
+        model_name = cls.LLM_MODEL_NAME
+        normalized_model = (model_name or '').strip().lower()
+        is_deepseek_v4 = normalized_model in {'deepseek-v4-pro', 'deepseek-v4-flash'} or (
+            'deepseek' in normalized_model and 'v4' in normalized_model
+        )
+        context_window = cls.LLM_CONTEXT_WINDOW or (
+            cls.LLM_DEEPSEEK_V4_CONTEXT_WINDOW if is_deepseek_v4 else cls.LLM_DEFAULT_CONTEXT_WINDOW
+        )
+        return {
+            'model_name': model_name,
+            'thinking_enabled': cls.LLM_THINKING_ENABLED if cls.LLM_THINKING_ENABLED is not None else is_deepseek_v4,
+            'reasoning_effort': cls.LLM_REASONING_EFFORT,
+            'context_window': context_window,
+            'context_window_override': cls.LLM_CONTEXT_WINDOW,
+            'default_context_window': cls.LLM_DEFAULT_CONTEXT_WINDOW,
+            'deepseek_v4_context_window': cls.LLM_DEEPSEEK_V4_CONTEXT_WINDOW,
+            'compression_threshold': cls.AGENT_CONTEXT_COMPRESSION_RATIO,
+            'model_profile': 'deepseek-v4' if is_deepseek_v4 else 'openai-compatible',
+        }
+
+    @classmethod
+    def save_agent_settings(
+        cls,
+        thinking_enabled: Any = None,
+        reasoning_effort: Any = None,
+        context_window: Any = None,
+        compression_threshold: Any = None,
+    ) -> Dict[str, Any]:
+        updates: Dict[str, Any] = {}
+
+        if thinking_enabled is not None:
+            parsed = _parse_bool_env(thinking_enabled, None)
+            if parsed is None:
+                raise ValueError('thinking_enabled 必须是布尔值')
+            updates['LLM_THINKING_ENABLED'] = 'true' if parsed else 'false'
+
+        if reasoning_effort is not None:
+            parsed_effort = _parse_reasoning_effort(reasoning_effort)
+            if str(reasoning_effort).strip().lower() not in {'high', 'max'}:
+                raise ValueError('reasoning_effort 只能是 high 或 max')
+            updates['LLM_REASONING_EFFORT'] = parsed_effort
+
+        if context_window is not None:
+            try:
+                parsed_window = int(context_window)
+            except (TypeError, ValueError):
+                raise ValueError('context_window 必须是整数')
+            if parsed_window < 0:
+                raise ValueError('context_window 不能小于 0')
+            updates['LLM_CONTEXT_WINDOW'] = parsed_window
+
+        if compression_threshold is not None:
+            try:
+                parsed_threshold = float(compression_threshold)
+            except (TypeError, ValueError):
+                raise ValueError('compression_threshold 必须是数字')
+            if parsed_threshold < 0.50 or parsed_threshold > 0.95:
+                raise ValueError('compression_threshold 必须在 0.50 到 0.95 之间')
+            updates['AGENT_CONTEXT_COMPRESSION_RATIO'] = parsed_threshold
+
+        if updates:
+            _persist_env_updates(updates)
+            for key, value in updates.items():
+                os.environ[key] = str(value)
+
+        cls.reload()
+        return cls.get_agent_settings_status(reload_first=False)
 
     @classmethod
     def save_llm_config(

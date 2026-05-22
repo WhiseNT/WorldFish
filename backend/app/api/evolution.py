@@ -1,5 +1,6 @@
 """世界观进化推演 API"""
 
+import re
 from typing import Any, Dict, List
 
 from flask import Blueprint, request, jsonify
@@ -144,6 +145,203 @@ def _upsert_entity_setting(world, entity, stage_payload: Dict[str, Any]) -> bool
     return False
 
 
+def _normalize_entity_key(value: Any) -> str:
+    return re.sub(r"[\s\-—_·•・()（）\[\]{}《》<>“”\"'`]+", "", str(value or '').strip().lower())
+
+
+def _names_match(left: Any, right: Any) -> bool:
+    left_key = _normalize_entity_key(left)
+    right_key = _normalize_entity_key(right)
+    if not left_key or not right_key:
+        return False
+    if left_key == right_key:
+        return True
+    if min(len(left_key), len(right_key)) < 3:
+        return False
+    return left_key in right_key or right_key in left_key
+
+
+def _find_world_entity(world, entity_name: str):
+    exact_match = None
+    fuzzy_match = None
+    for entity in world.entities or []:
+        candidate_names = [entity.name] + list(getattr(entity, 'aliases', []) or [])
+        for candidate in candidate_names:
+            if _normalize_entity_key(candidate) == _normalize_entity_key(entity_name):
+                exact_match = entity
+                break
+            if fuzzy_match is None and _names_match(candidate, entity_name):
+                fuzzy_match = entity
+        if exact_match is not None:
+            break
+    return exact_match or fuzzy_match
+
+
+def _find_consolidated_state(evolution: Evolution, entity_name: str) -> Dict[str, Any]:
+    consolidation = getattr(evolution, 'consolidation', None) or {}
+    final_states = consolidation.get('final_entity_states') or []
+    for item in final_states:
+        if isinstance(item, dict) and _names_match(item.get('name'), entity_name):
+            return item
+    return {}
+
+
+def _find_latest_entity_change(evolution: Evolution, entity_name: str) -> Dict[str, Any]:
+    for round_data in sorted(evolution.rounds or [], key=lambda item: getattr(item, 'round_number', 0), reverse=True):
+        if getattr(round_data, 'round_number', 0) <= 0:
+            continue
+        for entity_change in round_data.affected_entities or []:
+            if isinstance(entity_change, dict) and _names_match(entity_change.get('name'), entity_name):
+                return {
+                    'round_number': round_data.round_number,
+                    'year_advanced_to': round_data.year_advanced_to,
+                    'name': entity_change.get('name') or entity_name,
+                    'new_status': str(entity_change.get('new_status') or '').strip(),
+                    'state_changes': str(entity_change.get('state_changes') or '').strip(),
+                }
+    return {}
+
+
+def _collect_related_world_events(world, entity_name: str, limit: int = 6) -> List[str]:
+    lines: List[str] = []
+    for event in world.events or []:
+        event_entities = getattr(event, 'entities', []) or []
+        if any(_names_match(name, entity_name) for name in event_entities):
+            time_label = getattr(event, 'date', '') or getattr(event, 'estimated_date', '') or '?'
+            lines.append(f"- [世界观] {time_label}: {event.name} — {(event.description or '')[:140]}")
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _collect_related_evolution_events(evolution: Evolution, entity_name: str, limit: int = 8) -> List[str]:
+    lines: List[str] = []
+    for round_data in sorted(evolution.rounds or [], key=lambda item: getattr(item, 'round_number', 0)):
+        if getattr(round_data, 'round_number', 0) <= 0:
+            continue
+        round_time = getattr(round_data, 'year_advanced_to', '') or '?'
+        for event in round_data.new_events or []:
+            if not isinstance(event, dict):
+                continue
+            involved_entities = event.get('involved_entities') or event.get('entities') or []
+            description = str(event.get('description') or '').strip()
+            if any(_names_match(name, entity_name) for name in involved_entities) or _names_match(description, entity_name):
+                event_time = str(event.get('date') or round_time or '?').strip() or '?'
+                lines.append(f"- [推演第{round_data.round_number}轮] {event_time}: {event.get('name', '未命名事件')} — {description[:160]}")
+            if len(lines) >= limit:
+                return lines
+    return lines
+
+
+def _infer_current_time(evolution: Evolution) -> str:
+    for round_data in sorted(evolution.rounds or [], key=lambda item: getattr(item, 'round_number', 0), reverse=True):
+        if getattr(round_data, 'round_number', 0) > 0 and str(getattr(round_data, 'year_advanced_to', '') or '').strip():
+            return str(round_data.year_advanced_to).strip()
+
+    consolidation = getattr(evolution, 'consolidation', None) or {}
+    timeline = consolidation.get('timeline') or []
+    for item in reversed(timeline):
+        time_text = str((item or {}).get('time') or '').strip()
+        if time_text:
+            return time_text
+
+    config = getattr(evolution, 'config', None) or {}
+    resolved_anchor = config.get('resolved_anchor') or {}
+    return str(resolved_anchor.get('start_time') or config.get('time_span_start') or '').strip()
+
+
+def _build_current_entity_brief(world, evolution: Evolution, requested_name: str) -> Dict[str, Any]:
+    base_entity = _find_world_entity(world, requested_name)
+    consolidated_state = _find_consolidated_state(evolution, requested_name) if evolution else {}
+    latest_change = _find_latest_entity_change(evolution, requested_name) if evolution else {}
+
+    canonical_name = (
+        str(consolidated_state.get('name') or '').strip()
+        or str(latest_change.get('name') or '').strip()
+        or str(getattr(base_entity, 'name', '') or '').strip()
+        or str(requested_name or '').strip()
+    )
+
+    current_time = _infer_current_time(evolution) if evolution else ''
+    current_status = (
+        str(consolidated_state.get('final_status') or '').strip()
+        or str(latest_change.get('new_status') or '').strip()
+        or str(latest_change.get('state_changes') or '').strip()
+        or str((getattr(base_entity, 'attributes', {}) or {}).get('当前状态') or '').strip()
+    )
+
+    base_attrs = dict(getattr(base_entity, 'attributes', {}) or {}) if base_entity else {}
+    base_intro = str(base_attrs.get('简介') or '').strip()
+
+    relationship_lines: List[str] = []
+    if base_entity:
+        for relationship in (getattr(base_entity, 'relationships', None) or [])[:6]:
+            if not isinstance(relationship, dict):
+                continue
+            target = str(relationship.get('target') or '').strip()
+            relation_type = str(relationship.get('type') or '关联').strip() or '关联'
+            description = str(relationship.get('description') or '').strip()
+            if target:
+                summary = f"- {target}（{relation_type}）"
+                if description:
+                    summary += f": {description}"
+                relationship_lines.append(summary)
+
+    evolution_lines: List[str] = []
+    if latest_change:
+        round_label = f"第{latest_change.get('round_number')}轮" if latest_change.get('round_number') else '最近一轮'
+        round_time = str(latest_change.get('year_advanced_to') or '').strip()
+        headline = f"- {round_label}"
+        if round_time:
+            headline += f"（{round_time}）"
+        status_text = str(latest_change.get('new_status') or latest_change.get('state_changes') or '').strip()
+        if status_text:
+            headline += f": {status_text}"
+        evolution_lines.append(headline)
+
+    if consolidated_state:
+        final_status = str(consolidated_state.get('final_status') or '').strip()
+        if final_status and final_status not in evolution_lines:
+            evolution_lines.append(f"- 推演结局: {final_status}")
+
+    related_events = []
+    if evolution:
+        related_events.extend(_collect_related_evolution_events(evolution, canonical_name))
+    related_events.extend(line for line in _collect_related_world_events(world, canonical_name) if line not in related_events)
+
+    if not base_entity and not consolidated_state and not latest_change and not related_events:
+        return {}
+
+    lines = [f"姓名: {canonical_name}"]
+    if base_entity and getattr(base_entity, 'type', ''):
+        lines.append(f"类型: {base_entity.type}")
+    if current_time or current_status:
+        lines.append("当前角色锚点（最高优先级）:")
+        if current_time:
+            lines.append(f"- 当前时间: {current_time}")
+        if current_status:
+            lines.append(f"- 当前身份/状态: {current_status}")
+    if evolution_lines:
+        lines.append("本次推演中的角色演化:")
+        lines.extend(evolution_lines)
+    if base_intro:
+        lines.append("原始设定简介（完整保留；其中可能混有其他人物、旧阶段或档案摘录。它们只能作为背景资料，不能改变你的当前身份锚点）:")
+        lines.append(base_intro)
+    if relationship_lines:
+        lines.append("稳定关系网络:")
+        lines.extend(relationship_lines)
+    if related_events:
+        lines.append("与该角色直接相关的事件:")
+        lines.extend(related_events[:8])
+
+    return {
+        'entity_name': canonical_name,
+        'current_time': current_time,
+        'current_status': current_status,
+        'character_brief': "\n".join(lines),
+    }
+
+
 @evolution_bp.route('/create', methods=['POST'])
 def create_evolution():
     """创建进化推演。支持向后推演 (forward) 和重新推演 (branch)"""
@@ -152,6 +350,10 @@ def create_evolution():
         world_id = data.get('world_id', '').strip()
         scenario = data.get('scenario', '').strip()
         config = data.get('config') or {}
+        if not isinstance(config, dict):
+            config = {}
+        else:
+            config = dict(config)
         evolution_type = data.get('evolution_type', 'forward')  # "forward" | "branch"
         parent_evolution_id = data.get('parent_evolution_id', '')
         parent_round = data.get('parent_round', -1)
@@ -172,17 +374,48 @@ def create_evolution():
         if parent_evolution_id and parent_round >= 0:
             parent_evo = EvolutionManager.get(parent_evolution_id)
             if parent_evo:
+                selected_parent_rounds = [
+                    r for r in (parent_evo.rounds or [])
+                    if getattr(r, 'round_number', 0) > 0 and getattr(r, 'round_number', 0) <= parent_round
+                ]
+                if not selected_parent_rounds:
+                    selected_parent_rounds = [r for r in (parent_evo.rounds or []) if getattr(r, 'round_number', 0) > 0]
+
+                last_parent_round = selected_parent_rounds[-1] if selected_parent_rounds else None
                 accumulated_context = {
                     'parent_evolution_id': parent_evolution_id,
                     'parent_round': parent_round,
                     'parent_narratives': [
-                        r.narrative for r in parent_evo.rounds[:parent_round + 1]
+                        r.narrative for r in selected_parent_rounds
                     ],
                     'parent_affected_entities': [],
                 }
-                for r in parent_evo.rounds[:parent_round + 1]:
+                if last_parent_round:
+                    accumulated_context['parent_anchor'] = {
+                        'round_number': last_parent_round.round_number,
+                        'year_advanced_to': last_parent_round.year_advanced_to,
+                        'time_span_start': last_parent_round.year_advanced_to,
+                    }
+                    if not str(config.get('time_span_start') or '').strip() and str(last_parent_round.year_advanced_to or '').strip():
+                        config['time_span_start'] = last_parent_round.year_advanced_to
+
+                for r in selected_parent_rounds:
                     for ent in (r.affected_entities or []):
                         accumulated_context['parent_affected_entities'].append(ent)
+
+        engine = WorldEvolutionEngine()
+        resolved_anchor = engine.resolve_anchor(
+            world,
+            scenario,
+            config,
+            accumulated_context=accumulated_context,
+        )
+        if resolved_anchor:
+            config['resolved_anchor'] = resolved_anchor
+            if resolved_anchor.get('start_time') and not str(config.get('time_span_start') or '').strip():
+                config['time_span_start'] = resolved_anchor['start_time']
+            if resolved_anchor.get('event_name') and not str(config.get('anchor_event') or '').strip():
+                config['anchor_event'] = resolved_anchor['event_name']
 
         evolution = Evolution.create(
             world_id=world_id, scenario=scenario, config=config,
@@ -191,7 +424,6 @@ def create_evolution():
         )
         EvolutionManager.save(evolution)
 
-        engine = WorldEvolutionEngine()
         engine.evolve_async(
             evolution.id, world, scenario, config,
             accumulated_context=accumulated_context,
@@ -340,125 +572,107 @@ def get_evolution(evolution_id: str):
 
 @evolution_bp.route('/entity-chat', methods=['POST'])
 def entity_chat():
-    """与世界观中的实体进行角色扮演对话（支持阶段选择）"""
+    """与当前推演中的实体进行角色扮演对话。"""
     try:
         data = request.get_json(silent=True) or {}
         world_id = data.get('world_id', '')
+        evolution_id = data.get('evolution_id', '')
         entity_name = data.get('entity_name', '')
-        question = data.get('question', '')
-        stage_name = data.get('stage_name', '')  # 可选：实体的特定阶段
+        question = str(data.get('question', '') or '').strip()
+        history = data.get('history') or []
 
-        if not all([world_id, entity_name, question]):
+        if not all([world_id, entity_name]):
             return jsonify({'success': False, 'message': '缺少参数'}), 400
-        if not Config.LLM_API_KEY:
-            return jsonify({'success': False, 'message': 'LLM API Key 未配置'}), 400
 
         world = WorldManager.get_world(world_id)
         if not world:
             return jsonify({'success': False, 'message': '世界观不存在'}), 404
 
-        # 查找实体及阶段信息
-        entity = None
-        for ent in world.entities:
-            if ent.name == entity_name:
-                entity = ent
-                break
+        evolution = EvolutionManager.get(evolution_id) if evolution_id else None
+        profile = _build_current_entity_brief(world, evolution, entity_name)
+        if not profile:
+            return jsonify({'success': False, 'message': f'实体 "{entity_name}" 不存在于当前推演或世界观中'}), 404
 
-        if not entity:
-            return jsonify({'success': False, 'message': f'实体 "{entity_name}" 不存在'}), 404
+        canonical_name = profile['entity_name']
+        current_time = profile.get('current_time', '')
+        current_status = profile.get('current_status', '')
+        character_brief = profile.get('character_brief', '')
 
-        attrs = dict(entity.attributes or {})
-        stages = entity.stages or attrs.get("阶段") or attrs.get("stages") or []
+        if not question:
+            return jsonify({
+                'success': True,
+                'entity_name': canonical_name,
+                'character_brief': character_brief,
+                'current_time': current_time,
+                'current_status': current_status,
+            })
 
-        # 处理阶段选择
-        stage_description = ""
-        if stage_name:
-            if isinstance(stages, list):
-                for stage in stages:
-                    if isinstance(stage, dict) and stage.get("名称", stage.get("name", "")) == stage_name:
-                        stage_attrs = stage.get("属性", stage.get("attributes", {}))
-                        stage_desc = stage.get("描述", stage.get("description", ""))
-                        stage_era = stage.get("时期", stage.get("era", ""))
-                        stage_description = f"\n当前阶段: {stage_name}"
-                        if stage_era:
-                            stage_description += f"\n阶段时期: {stage_era}"
-                        if stage_desc:
-                            stage_description += f"\n阶段描述: {stage_desc}"
-                        # 合并阶段属性
-                        if isinstance(stage_attrs, dict):
-                            for k, v in stage_attrs.items():
-                                attrs[k] = v
-                        break
+        if not Config.LLM_API_KEY:
+            return jsonify({'success': False, 'message': 'LLM API Key 未配置'}), 400
 
-        # 构建实体详细信息
-        attr_lines = []
-        for k, v in attrs.items():
-            if k in ("阶段", "stages"):
-                continue  # 阶段信息单独处理
-            if v:
-                attr_lines.append(f"{k}: {v}")
-        entity_profile = f"名称: {entity.name}\n类型: {entity.type or '未知'}\n"
-        if attr_lines:
-            entity_profile += "属性:\n" + "\n".join(f"  {line}" for line in attr_lines)
-        if stage_description:
-            entity_profile += stage_description
-
-        # 列出实体可用的阶段（供前端选择）
-        available_stages = []
-        if isinstance(stages, list):
-            for s in stages:
-                if isinstance(s, dict):
-                    s_name = s.get("名称", s.get("name", ""))
-                    if s_name:
-                        available_stages.append({
-                            "name": s_name,
-                            "era": s.get("时期", s.get("era", "")),
-                            "description": (s.get("描述", s.get("description", "")) or "")[:200],
-                        })
-
-        # 相关事件
-        related_events = []
-        for evt in world.events:
-            if entity_name in (evt.entities or []):
-                related_events.append(f"- {evt.date or '?'}: {evt.name} — {evt.description or ''}")
-
-        # 构建丰富的世界观上下文
         world_context = f"世界观名称: {world.name or '未命名'}\n"
         world_context += f"时代背景: {world.era or '未知'}\n"
         world_context += f"世界观描述: {world.description or '无'}\n"
-
         if world.writing_style:
             world_context += f"\n文风参考: {world.writing_style}"
+        if evolution:
+            world_context += f"\n推演场景: {evolution.scenario or '无'}"
+            resolved_anchor = (evolution.config or {}).get('resolved_anchor') or {}
+            if resolved_anchor.get('label'):
+                world_context += f"\n推演锚点: {resolved_anchor['label']}"
 
-        if related_events:
-            world_context += f"\n\n与该角色相关的剧情事件:\n" + "\n".join(related_events[:8])
-
-        # 增强的角色扮演 prompt
-        system_prompt = f"""你正在角色扮演一个虚构世界中的角色。你必须完全沉浸在这个角色中。
+        system_prompt = f"""你正在角色扮演一个虚构世界中的角色。你必须完全沉浸在这个角色中，并且始终以当前推演结局时点的角色状态回答。
 
 {world_context}
 
-【你要扮演的角色】
-{entity_profile}
+【你要扮演的角色（以当前推演状态为准）】
+{character_brief}
 
-【角色扮演规则——必须严格遵守】
-1. 你**就是**{entity_name}本人。用第一人称"我"回答。永远不要用"作为一个AI"、"根据设定"等出戏的表达。
-2. 回答的口吻、用词、语气必须完全符合角色的身份、性格、能力等级和世界观。
-3. 你拥有该角色在剧情中应有的全部记忆和知识，包括与该角色相关的所有事件。
-4. 如果你被问到角色不知道的事，用符合角色性格的方式回应（如："我不清楚"、"那不是我能接触的"），但不要破坏沉浸感。
-5. 回答长度根据问题灵活调整。简单问候简短回应（20-50字），涉及世界观或剧情的问题可以详细回答（100-300字）。
-6. 说话风格要与世界观文风一致。如果世界是史诗奇幻，回答要有史诗感；如果是现代都市，回答要口语化自然。
-7. 不要跳出角色进行解释或说明，你就是角色本人。"""
+    【角色锚定优先级——必须按这个顺序理解角色】
+    A. 当前角色锚点（最高优先级）
+    - 你此刻就是“{canonical_name}”。
+    - 默认当前时间是“{current_time or '当前推演终点'}”。
+    - 默认当前身份/状态是“{current_status or '以当前角色锚点和推演演化为准'}”。
+    - 除非用户明确要求你“回忆过去某一阶段”，否则一律以当前时点开口说话。
 
-        user_prompt = f"问题: {question}\n\n请以{entity_name}的身份和口吻回答。"
+    B. 本次推演中的角色演化（第二优先级）
+    - 推演中发生的身份变化、立场变化、关系变化、能力变化，都已经真实发生并构成你当前人格和处境的一部分。
+    - 当原始设定与推演演化冲突时，必须以后者为准。
+
+    C. 原始设定简介（第三优先级）
+    - 原始设定可以完整吸收，用来保留角色的长期人格、过去经历、说话习惯、基础世界知识与历史关系。
+    - 但原始设定只能解释“你以前是谁、你怎么走到今天”，不能覆盖你“现在是谁”。
+    - 如果原始设定里出现其他人物姓名、其他角色档案、旁注、旧阶段记录或混杂条目，把它们视为与你有关的背景资料或外部档案，不要因此把自己错认成别人，也不要把说话视角切换成其他人。
+
+    【回答前必须进行的隐式锚定检查——不要把检查过程输出给用户】
+    1. 先确认“我现在是谁”。
+    2. 再确认“我现在处于哪个时间点、什么身份、什么处境”。
+    3. 再确认“原始设定里出现的其他姓名或旧档案，是否会让我误把自己认成别人”。如果会，忽略这种错误映射。
+    4. 再确认“这句回答有没有滑回早期身份、早期记忆视角或新手阶段”。如果有，立刻改写成当前时点版本。
+    5. 如果用户问的是过去经历，你要以“当前的我在回忆过去”的方式回答，而不是把自己退回过去那个阶段。
+
+    【角色扮演规则——必须严格遵守】
+    1. 你**就是**{canonical_name}本人。用第一人称“我”回答。永远不要用“作为一个AI”“根据设定”等出戏表达。
+    2. 若原始设定与本次推演后的身份/状态冲突，永远以“当前推演状态”为准，不得退回新手期、早期身份或旧人格。
+    3. 你拥有角色在当前时间点之前应有的记忆，包括世界观原始经历和本次推演中与你相关的事件。
+    4. 如果被问到你不知道或不该知道的内容，要用符合身份的方式表示不知情，但不要跳出角色。
+    5. 回答长度按问题自然调整；涉及剧情、立场、身份、能力、关系时可以详细回答。
+    6. 说话风格要符合该角色的身份、处境和世界观文风。"""
+
+        messages = [{"role": "system", "content": system_prompt}]
+        for item in history[-12:] if isinstance(history, list) else []:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get('role') or '').strip()
+            content = str(item.get('content') or '').strip()
+            if role in {'user', 'assistant'} and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": question})
 
         from ..utils.llm_client import LLMClient
         llm = LLMClient()
         reply = llm.chat(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages,
             temperature=0.8,
             max_tokens=1024,
         )
@@ -466,8 +680,10 @@ def entity_chat():
         return jsonify({
             'success': True,
             'reply': reply,
-            'entity_name': entity_name,
-            'available_stages': available_stages,
+            'entity_name': canonical_name,
+            'character_brief': character_brief,
+            'current_time': current_time,
+            'current_status': current_status,
         })
 
     except Exception as e:

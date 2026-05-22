@@ -2,9 +2,14 @@
   <div class="app-shell">
     <nav class="wf-navbar">
       <div class="wf-navbar-left">
+        <router-link to="/" class="wf-home-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          <span>首页</span>
+        </router-link>
         <router-link to="/" class="wf-brand">
-          <span class="wf-brand-text">WORLDFISH</span>
-          <span class="wf-brand-accent"></span>
+          <img src="/worldfish_logo.svg" alt="WorldFish" class="wf-brand-logo" />
         </router-link>
       </div>
       <div class="wf-navbar-center">
@@ -48,7 +53,26 @@
 .wf-navbar-left {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
+  gap: var(--spacing-sm);
+}
+
+.wf-home-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--wf-text-muted);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  border: 1px solid transparent;
+}
+.wf-home-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--wf-text-primary);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .wf-brand {
@@ -58,21 +82,14 @@
   text-decoration: none;
 }
 
-.wf-brand-text {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--wf-text-primary);
-  letter-spacing: 2px;
+.wf-brand-logo {
+  height: 32px;
+  width: auto;
+  display: block;
+  transition: opacity var(--transition-fast);
 }
-
-.wf-brand-accent {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--wf-accent);
-  box-shadow: 0 0 8px var(--wf-accent-glow);
+.wf-brand:hover .wf-brand-logo {
+  opacity: 0.85;
 }
 
 .wf-navbar-center {
