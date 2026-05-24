@@ -179,7 +179,7 @@
               <span>{{ llmStatusText }}</span>
               <span v-if="llmConfigStatus.api_key_masked" class="llm-status-meta">{{ llmConfigStatus.api_key_masked }}</span>
             </div>
-            <button class="btn btn-secondary" @click="openLlmConfigDialog">
+            <button class="btn btn-secondary" @click="goToLlmConfig">
               配置 LLM
             </button>
           </div>
@@ -236,6 +236,23 @@
             <span class="json-import-hint">直接导入 JSON 格式的世界观数据，无需 AI 解读</span>
           </div>
 
+          <div class="form-section extraction-mode-section">
+            <div class="section-header compact-header">
+              <h3 class="section-title small-title">扫描模式</h3>
+              <span class="llm-status-chip">统一 RAG 向量索引</span>
+            </div>
+            <div class="type-selector">
+              <button type="button" class="type-btn" :class="{ active: extractionMode === 'fast' }" @click="extractionMode = 'fast'">
+                快速扫描
+                <span>大块并行，适合快速生成世界观草稿</span>
+              </button>
+              <button type="button" class="type-btn" :class="{ active: extractionMode === 'deep' }" @click="extractionMode = 'deep'">
+                深度扫描
+                <span>线性滚动，保留摘要与实体快照</span>
+              </button>
+            </div>
+          </div>
+
           <div class="form-group form-group-full">
             <label class="form-label">或直接输入世界观文本</label>
             <textarea
@@ -245,13 +262,22 @@
               class="form-textarea"
             ></textarea>
           </div>
-          <button
-            @click="extractWorldInfo"
-            :disabled="isExtracting || (!extractText && selectedFiles.length === 0)"
-            class="btn btn-primary extract-btn"
-          >
-            {{ isExtracting ? '提取中...' : '提取世界观信息' }}
-          </button>
+          <div class="extract-action-row">
+            <button
+              @click="extractWorldInfo(false)"
+              :disabled="isExtracting || (!extractText && selectedFiles.length === 0)"
+              class="btn btn-primary extract-btn"
+            >
+              {{ isExtracting ? '提取中...' : '提取世界观信息' }}
+            </button>
+            <button
+              @click="extractWorldInfo(true)"
+              :disabled="isExtracting || (!extractText && selectedFiles.length === 0)"
+              class="btn btn-primary extract-btn"
+            >
+              重新完整扫描
+            </button>
+          </div>
 
           <!-- 提取进度条 -->
           <div v-if="isExtracting && extractProgress.message" class="extract-progress">
@@ -262,6 +288,7 @@
               <span class="progress-stage">{{ extractProgress.message }}</span>
               <span class="progress-pct">{{ extractProgress.progress }}%</span>
             </div>
+            <div v-if="cacheProgressText" class="cache-progress-note">{{ cacheProgressText }}</div>
             <div v-if="extractProgress.ragProgress" class="rag-sub-progress">
               <div class="rag-sub-header">
                 <span>RAG 向量索引</span>
@@ -271,10 +298,98 @@
                 <div class="progress-bar-fill rag-progress-fill" :style="{ width: (extractProgress.ragProgress.progress || 0) + '%' }"></div>
               </div>
               <p class="rag-sub-message">{{ extractProgress.ragProgress.message }}</p>
+              <p v-if="ragDocumentText" class="rag-sub-message">{{ ragDocumentText }}</p>
+            </div>
+            <div v-if="extractionMode === 'deep' && deepStateText" class="cache-progress-note">{{ deepStateText }}</div>
+            <div class="extract-inline-actions">
+              <button type="button" class="btn btn-secondary" :disabled="isPausingExtract || isCancellingExtract" @click="pauseExtraction">
+                {{ isPausingExtract ? '暂停中...' : '暂停' }}
+              </button>
+              <button type="button" class="btn btn-secondary" :disabled="isCancellingExtract" @click="cancelExtraction">
+                {{ isCancellingExtract ? '正在中断...' : '中断并保存' }}
+              </button>
             </div>
           </div>
 
           <p v-if="extractError" class="extract-error">{{ extractError }}</p>
+
+          <div v-if="showExtractScanModal" class="deep-scan-overlay">
+            <div class="deep-scan-modal">
+              <div class="deep-scan-top">
+                <div class="deep-scan-title-row">
+                  <h3>{{ scanModalTitle }}</h3>
+                  <div class="scan-title-actions">
+                    <span>{{ extractProgress.progress || 0 }}%</span>
+                    <button type="button" class="scan-close-btn" @click="closeExtractScanPanel">×</button>
+                  </div>
+                </div>
+                <div class="progress-bar-container deep-main-bar">
+                  <div class="progress-bar-fill" :style="{ width: (extractProgress.progress || 0) + '%' }"></div>
+                </div>
+                <div class="deep-scan-meta">已处理: {{ deepProcessedText }} / {{ extractProgress.detail?.total_chars_label || '未知总量' }}</div>
+              </div>
+
+              <div class="deep-scan-section">
+                <div class="deep-row">
+                  <span class="deep-label">当前状态</span>
+                  <strong>{{ extractProgress.message || scanStatusLabel }}</strong>
+                </div>
+                <div class="deep-row">
+                  <span class="deep-label">当前阅读</span>
+                  <strong>{{ deepCurrentTitle }}</strong>
+                </div>
+                <div class="deep-row stacked">
+                  <span class="deep-label">块进度</span>
+                  <div class="progress-bar-container deep-chunk-bar">
+                    <div class="progress-bar-fill" :style="{ width: scanChunkProgress + '%' }"></div>
+                  </div>
+                  <span>{{ scanChunkProgress }}%</span>
+                </div>
+                <div class="deep-scan-meta">{{ scanChunkText }}</div>
+              </div>
+
+              <div v-if="extractProgress.ragProgress" class="deep-scan-section">
+                <h4>RAG 向量索引</h4>
+                <div class="progress-bar-container deep-chunk-bar">
+                  <div class="progress-bar-fill rag-progress-fill" :style="{ width: (extractProgress.ragProgress.progress || 0) + '%' }"></div>
+                </div>
+                <p class="deep-empty">{{ extractProgress.ragProgress.message }}</p>
+              </div>
+
+              <div class="deep-scan-section">
+                <h4>{{ extractionMode === 'deep' ? '📖 实时发现实体' : '📦 快速扫描进度' }}</h4>
+                <ul v-if="deepDiscoveries.length" class="deep-discovery-list">
+                  <li v-for="(item, index) in deepDiscoveries" :key="index">{{ item }}</li>
+                </ul>
+                <p v-else class="deep-empty">{{ scanDiscoveryFallback }}</p>
+              </div>
+
+              <div class="deep-scan-section">
+                <h4>{{ extractionMode === 'deep' ? '🧠 模型思考摘要' : '🧠 扫描摘要' }}</h4>
+                <p class="deep-summary">{{ deepThinkingSummary }}</p>
+              </div>
+
+              <div class="deep-scan-footer">
+                <div class="deep-stats-row">
+                  <span v-for="item in deepKnowledgeStats" :key="item.label">{{ item.label }}({{ item.count }})</span>
+                </div>
+                <div class="deep-actions-row">
+                  <button v-if="canPauseExtract" type="button" class="btn btn-secondary" :disabled="isPausingExtract || isCancellingExtract" @click="pauseExtraction">
+                    {{ isPausingExtract ? '暂停中...' : '暂停' }}
+                  </button>
+                  <button v-if="canResumeExtract" type="button" class="btn btn-secondary" :disabled="isResumingExtract" @click="resumeExtraction">
+                    {{ isResumingExtract ? '继续中...' : '继续' }}
+                  </button>
+                  <button v-if="canCancelExtract" type="button" class="btn btn-secondary" :disabled="isCancellingExtract" @click="cancelExtraction">
+                    {{ isCancellingExtract ? '正在中断...' : '中断并保存当前成果' }}
+                  </button>
+                  <button v-if="canDeleteExtract" type="button" class="btn btn-danger" :disabled="isDeletingExtractTask" @click="deleteExtractionTask">
+                    {{ isDeletingExtractTask ? '删除中...' : '删除扫描' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <!-- 提取结果预览 -->
           <div v-if="extractedData" class="extract-preview">
@@ -283,6 +398,9 @@
               <span v-if="extractedData.rag_indexed" class="rag-index-badge">
                 已索引 {{ extractedData.rag_document_count || 0 }} 条至 RAG 知识库
               </span>
+            </div>
+            <div v-if="hasExtractionFailures" class="extract-warning">
+              有 {{ extractionDiagnostics.failed_chunks.length }} / {{ extractionDiagnostics.total_chunks }} 个章节组解析失败，当前结果可能不完整。请查看预览中的 extraction_diagnostics 或降低并发/重试。
             </div>
             <div class="preview-content">
               <pre class="preview-code">{{ JSON.stringify(extractedData, null, 2) }}</pre>
@@ -550,7 +668,12 @@
           <div class="settings-content">
             <div class="content-header">
               <div class="header-search">
-                <input type="text" placeholder="搜索设定标题..." class="search-input">
+                <input
+                  type="text"
+                  v-model="settingsSearchQuery"
+                  placeholder="搜索设定标题、描述、别名或详细内容..."
+                  class="search-input"
+                >
               </div>
               <div class="header-actions">
                 <button class="btn btn-secondary my-proposals-btn">我的提案</button>
@@ -629,7 +752,7 @@
           <div class="header-info">
             <span class="timeline-eyebrow">Chronology Atlas</span>
             <h3 class="header-title">世界时间线</h3>
-            <p class="header-description">保留时间线：{{ timelinePrimaryLabel }}，事件与实体阶段已按可定位年份挂接。</p>
+            <p class="header-description">主轴焦点：{{ timelineFocusLabel }}；锚点：{{ timelinePrimaryLabel }}。远离主线的背景时间不会拉宽主轴。</p>
           </div>
           <div class="header-actions">
             <div class="zoom-controls">
@@ -662,9 +785,9 @@
             <small>显示 {{ timelineDiagnostics.visibleEvents }} 条</small>
           </div>
           <div class="timeline-status-card">
-            <span class="status-label">实体阶段</span>
-            <strong>{{ timelineDiagnostics.stageAnchors }}</strong>
-            <small>显示 {{ timelineDiagnostics.visibleStages }} 条</small>
+            <span class="status-label">背景时间</span>
+            <strong>{{ timelineDiagnostics.backgroundItems }}</strong>
+            <small>未纳入主轴显示</small>
           </div>
         </div>
 
@@ -731,6 +854,12 @@
             <div class="timeline-axis">
               <div class="timeline-line"></div>
               <div
+                v-for="gap in timelineCompressedGaps"
+                :key="gap.label"
+                class="timeline-compressed-gap"
+                :style="{ left: gap.position + '%' }"
+              >//<span>{{ gap.label }}</span></div>
+              <div
                 v-for="tick in timelineTicks"
                 :key="tick.label"
                 class="timeline-tick"
@@ -796,13 +925,13 @@
               </div>
             </div>
 
-            <div 
-              v-if="world.anchor_time"
+      <div
+              v-if="timelineAnchor"
               class="anchor-time-marker"
               :style="{ left: getAnchorTimePosition() + '%' }"
               @click="scrollToPosition(getAnchorTimePosition())"
             >
-              <div class="anchor-label">锚定时间: {{ world.anchor_time }}</div>
+              <div class="anchor-label">锚定时间: {{ timelinePrimaryLabel }}</div>
             </div>
           </div>
         </div>
@@ -995,10 +1124,10 @@
             </div>
             
             <div class="form-row">
-              <div class="form-group">
-                <label class="form-label">* 基准年份</label>
-                <input type="text" v-model="currentCalendar.startYear" class="form-input">
-              </div>
+            <div class="form-group">
+              <label class="form-label">* 本历法基准年份</label>
+              <input type="text" v-model="currentCalendar.startYear" class="form-input" placeholder="如：危机纪元0年">
+            </div>
               <div class="form-group">
                 <label class="form-label">结束年份</label>
                 <div class="end-year-input">
@@ -1015,6 +1144,10 @@
               <div class="form-group">
                 <label class="form-label">* 时间单位名称</label>
                 <input type="text" v-model="currentCalendar.unit" class="form-input">
+              </div>
+              <div class="form-group">
+                <label class="form-label">客观基准时间</label>
+                <input type="text" v-model="currentCalendar.absoluteBaseTime" class="form-input" placeholder="如：公元2000年">
               </div>
               <div class="form-group">
                 <label class="form-label">月日制 / 附加规则</label>
@@ -1324,6 +1457,9 @@ import { generateOntologyFromProject } from '../api/graph'
 import service from '../api/index'
 import WorldMapEditor from '../components/map/WorldMapEditor.vue'
 
+const LAST_EXTRACT_TASK_KEY = 'worldfish:lastExtractTaskId'
+const EXTRACT_TASK_DELETED_EVENT = 'worldfish:extract-task-deleted'
+
 const SETTING_CATEGORY_OPTIONS = [
   { id: 'character', name: '角色', icon: '👤' },
   { id: 'item', name: '物品', icon: '📦' },
@@ -1439,7 +1575,7 @@ const normalizeEntitiesForUi = (entities = []) => {
 
       return normalizedEntity
     })
-    .filter(entity => entity.name)
+    .filter(entity => entity.name && !isFragmentEntityName(entity.name, entity.type, entity.attributes?.['简介']))
 }
 
 const ENTITY_SPECIAL_ATTRIBUTE_KEYS = new Set(['简介', '实力变化', '性格变化', '关键转折'])
@@ -1767,6 +1903,10 @@ const TIMELINE_STAGE_ROW_HEIGHT = 38
 const TIMELINE_EVENT_LIMIT = 96
 const TIMELINE_STAGE_LIMIT = 56
 const TIMELINE_ISSUE_LIMIT = 8
+const TIMELINE_FOCUS_WINDOWS = [50, 100, 300, 1000, 3000]
+const TIMELINE_FOCUS_MIN_ITEMS = 2
+const TIMELINE_FOCUS_VISUAL_RATIO = 0.72
+const TIMELINE_CONTEXT_POINT_SPAN = 20
 
 const POLITICAL_ENTITY_KEYWORDS = [
   'organization', 'nation', 'state', 'kingdom', 'empire', 'dynasty', 'faction', 'government', 'alliance', 'church', 'tribe',
@@ -1786,6 +1926,146 @@ const normalizeCalendarRatio = (value) => {
   let text = String(value || '1').trim()
   text = text.replace(/^×\s*/i, '').replace(/^x\s*/i, '').trim()
   return `×${text || '1'}`
+}
+
+const parseCalendarRatioNumber = (value) => {
+  const text = String(value || '1').trim().replace(/^×\s*/i, '').replace(/^x\s*/i, '').trim()
+  const parsed = Number.parseFloat(text)
+  return Number.isFinite(parsed) && parsed !== 0 ? parsed : 1
+}
+
+const normalizeCalendarName = (value) => String(value || '')
+  .replace(/[\s·•・_\-—]+/g, '')
+  .replace(/纪元$/g, '纪')
+  .replace(/历法$/g, '历')
+  .trim()
+  .toLowerCase()
+
+const parseAbsoluteYearFromText = (value) => {
+  const text = normalizeTimelineText(value)
+  if (!text) return null
+  const explicit = text.match(/(?:公元|ad|ce)\s*([-+]?\d{1,6})\s*年?/i)
+  if (explicit) return Number.parseInt(explicit[1], 10)
+  const bc = text.match(/(?:公元前|bc|bce)\s*(\d{1,6})\s*年?/i)
+  if (bc) return -Math.abs(Number.parseInt(bc[1], 10))
+  const bare = text.match(/^([-+]?\d{1,6})\s*年?$/)
+  if (bare) return Number.parseInt(bare[1], 10)
+  return null
+}
+
+const parseLocalYearForCalendar = (value, calendarName = '') => {
+  const text = normalizeTimelineText(value)
+  if (!text) return null
+  const names = [calendarName, calendarName.replace(/纪元$/, '纪'), calendarName.replace(/纪$/, '纪元')]
+    .filter(Boolean)
+    .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (names.length) {
+    const re = new RegExp(`(?:${names.join('|')})\\s*(前)?\\s*([-+]?\\d{1,6}|元)\\s*年?`, 'i')
+    const match = text.match(re)
+    if (match) {
+      const raw = match[2] === '元' ? 0 : Number.parseInt(match[2], 10)
+      return match[1] ? -Math.abs(raw) : raw
+    }
+  }
+  const generic = text.match(/(?:第)?\s*(前)?\s*([-+]?\d{1,6}|元)\s*年/)
+  if (generic && !/(公元|ad|ce|bc|bce)/i.test(text)) {
+    const raw = generic[2] === '元' ? 0 : Number.parseInt(generic[2], 10)
+    return generic[1] ? -Math.abs(raw) : raw
+  }
+  return null
+}
+
+const parseCalendarEquation = (value, calendarName = '') => {
+  const text = normalizeTimelineText(value)
+  if (!text) return null
+  const local = parseLocalYearForCalendar(text, calendarName)
+  const absolute = parseAbsoluteYearFromText(text)
+  if (Number.isFinite(local) && Number.isFinite(absolute)) {
+    return { localYear: local, absoluteYear: absolute }
+  }
+  return null
+}
+
+const buildCalendarReferenceIndex = (calendars = []) => {
+  const references = []
+  ;(calendars || []).forEach((calendar, index) => {
+    const name = String(calendar?.name || '').trim()
+    if (!name) return
+    const textSources = [calendar.absoluteBaseTime, calendar.baseTime, calendar.timeRange, calendar.description].filter(Boolean)
+    const equation = textSources.map(source => parseCalendarEquation(source, name)).find(Boolean)
+    const explicitAbsolute = parseAbsoluteYearFromText(calendar.absoluteBaseTime)
+    const baseAbsolute = Number.isFinite(explicitAbsolute) ? explicitAbsolute : equation?.absoluteYear
+    const localFromBase = parseLocalYearForCalendar(calendar.baseTime, name)
+    const localBaseYear = Number.isFinite(Number(calendar.localBaseYear))
+      ? Number(calendar.localBaseYear)
+      : (Number.isFinite(equation?.localYear) ? equation.localYear : (Number.isFinite(localFromBase) ? localFromBase : 0))
+    const aliases = [name, name.replace(/纪元$/, '纪'), name.replace(/纪$/, '纪元')]
+      .filter(Boolean)
+      .map(normalizeCalendarName)
+    references.push({
+      id: calendar.id || `calendar_ref_${index}`,
+      name,
+      aliases: Array.from(new Set(aliases)),
+      localBaseYear,
+      absoluteBaseYear: Number.isFinite(baseAbsolute) ? baseAbsolute : null,
+      ratio: parseCalendarRatioNumber(calendar.ratio),
+      confidence: Number.isFinite(baseAbsolute) ? 'high' : 'low',
+      source: calendar,
+    })
+  })
+  references.push({
+    id: 'gregorian',
+    name: '公元',
+    aliases: ['公元', 'ad', 'ce', 'gregorian'].map(normalizeCalendarName),
+    localBaseYear: 0,
+    absoluteBaseYear: 0,
+    ratio: 1,
+    confidence: 'high',
+    source: null,
+  })
+  return references
+}
+
+const resolveTimelineExpression = (value, options = {}) => {
+  const text = normalizeTimelineText(value)
+  if (!text) return null
+  const calendarRefs = options.calendarRefs || []
+  const anchorYear = Number.isFinite(options.anchorYear) ? options.anchorYear : null
+
+  const absolute = parseAbsoluteYearFromText(text)
+  if (Number.isFinite(absolute) && /(公元|ad|ce|bc|bce)/i.test(text)) {
+    return { year: absolute, absoluteYear: absolute, localYear: absolute, calendarName: '公元', label: text, rawDateText: text, confidence: 'high' }
+  }
+
+  const matchedRef = calendarRefs.find(ref => ref.aliases.some(alias => alias && normalizeCalendarName(text).includes(alias)))
+  if (matchedRef) {
+    const localYear = parseLocalYearForCalendar(text, matchedRef.name)
+    if (Number.isFinite(localYear) && Number.isFinite(matchedRef.absoluteBaseYear)) {
+      const year = matchedRef.absoluteBaseYear + (localYear - matchedRef.localBaseYear) * matchedRef.ratio
+      return {
+        year,
+        absoluteYear: year,
+        localYear,
+        calendarName: matchedRef.name,
+        label: `${text} / 公元${Math.round(year)}年`,
+        rawDateText: text,
+        confidence: matchedRef.confidence,
+      }
+    }
+    if (Number.isFinite(localYear)) {
+      return { year: null, absoluteYear: null, localYear, calendarName: matchedRef.name, label: text, rawDateText: text, confidence: 'low' }
+    }
+  }
+
+  if (Number.isFinite(absolute)) {
+    return { year: absolute, absoluteYear: absolute, localYear: absolute, calendarName: '客观年', label: text, rawDateText: text, confidence: 'medium' }
+  }
+
+  const years = extractTimelineYears(text, { anchorYear })
+  if (years.length) {
+    return { year: years[0], absoluteYear: years[0], localYear: years[0], calendarName: '', label: text, rawDateText: text, confidence: 'medium' }
+  }
+  return null
 }
 
 const extractTimelineYears = (value, options = {}) => {
@@ -1930,25 +2210,30 @@ const assessCalendarTimelineIssue = (calendar = {}, years = []) => {
   return ''
 }
 
-const buildCalendarTimelineItem = (calendar = {}, index = 0, anchorYear = null) => {
+const buildCalendarTimelineItem = (calendar = {}, index = 0, timelineContext = {}) => {
+  const calendarRefs = timelineContext.calendarRefs || []
+  const anchorYear = Number.isFinite(timelineContext.anchorYear) ? timelineContext.anchorYear : null
+  const ownRef = calendarRefs.find(ref => String(ref.source?.id || '') === String(calendar.id || '') || ref.name === calendar.name)
+  const startResolved = resolveTimelineExpression(calendar.baseTime || calendar.timeRange, { calendarRefs, anchorYear })
   const parsedRange = parseTimelineRange(calendar.timeRange, { anchorYear })
-  const rangeYears = parsedRange ? [parsedRange.start, parsedRange.end].filter(Number.isFinite) : []
-  const baseYear = parseTimelineYear(calendar.baseTime, { anchorYear })
-  const years = [...extractTimelineYears(calendar.baseTime, { anchorYear }), ...rangeYears]
-  const issue = assessCalendarTimelineIssue(calendar, years)
+  const rangeEndText = String(calendar.timeRange || '').split(/\s*~\s*/)[1] || ''
+  const endResolved = resolveTimelineExpression(rangeEndText, { calendarRefs, anchorYear })
+  const issue = assessCalendarTimelineIssue(calendar, [startResolved?.year, endResolved?.year].filter(Number.isFinite))
 
-  if (issue === '更像周期或节日，不进入主时间轴' || !years.length) {
+  if (issue === '更像周期或节日，不进入主时间轴') {
     return null
   }
 
-  const start = Number.isFinite(baseYear) ? baseYear : parsedRange?.start
+  const start = Number.isFinite(startResolved?.year)
+    ? startResolved.year
+    : (Number.isFinite(ownRef?.absoluteBaseYear) ? ownRef.absoluteBaseYear : null)
   if (!Number.isFinite(start)) {
     return null
   }
 
-  let end = Number.isFinite(parsedRange?.end) ? parsedRange.end : null
-  if (!Number.isFinite(end) && Number.isFinite(baseYear) && Number.isFinite(parsedRange?.start) && parsedRange.start !== baseYear) {
-    end = parsedRange.start
+  let end = Number.isFinite(endResolved?.year) ? endResolved.year : null
+  if (!Number.isFinite(end) && Number.isFinite(parsedRange?.end)) {
+    end = parsedRange.end
   }
   if (!Number.isFinite(end) && parsedRange?.openEnded && Number.isFinite(anchorYear) && anchorYear > start) {
     end = anchorYear
@@ -1956,29 +2241,18 @@ const buildCalendarTimelineItem = (calendar = {}, index = 0, anchorYear = null) 
   if (!Number.isFinite(end)) {
     end = start + 1
   }
-  if (end < start) {
-    const swap = end
-    end = start
-    return {
-      id: calendar.id || `calendar_${index}`,
-      name: String(calendar.name || '未命名历法').trim(),
-      caption: `${inferCalendarTimelineType(calendar)} · ${calendar.timeRange || calendar.baseTime || '未定义区间'}`,
-      start: swap,
-      end,
-      kind: inferCalendarTimelineType(calendar) === '纪年' ? 'year' : 'era',
-      issue,
-      source: calendar,
-    }
-  }
 
+  const rangeStart = Math.min(start, end)
+  const rangeEnd = Math.max(start, end)
   return {
     id: calendar.id || `calendar_${index}`,
     name: String(calendar.name || '未命名历法').trim(),
-    caption: `${inferCalendarTimelineType(calendar)} · ${calendar.timeRange || calendar.baseTime || '未定义区间'}`,
-    start,
-    end,
+    caption: `${inferCalendarTimelineType(calendar)} · ${calendar.timeRange || calendar.baseTime || '未定义区间'}${ownRef?.confidence === 'low' ? ' · 未换算' : ''}`,
+    start: rangeStart,
+    end: rangeEnd,
     kind: inferCalendarTimelineType(calendar) === '纪年' ? 'year' : 'era',
-    issue,
+    issue: ownRef?.confidence === 'low' ? '缺少客观基准年' : issue,
+    confidence: ownRef?.confidence || startResolved?.confidence || 'medium',
     source: calendar,
   }
 }
@@ -1990,31 +2264,36 @@ const getTimelineEventDateText = (event = {}) => {
   return date
 }
 
-const buildTimelineEventItem = (event = {}, index = 0, anchorYear = null) => {
+const buildTimelineEventItem = (event = {}, index = 0, timelineContext = {}) => {
   const dateText = getTimelineEventDateText(event)
-  const year = parseTimelineYear(dateText, { anchorYear })
-  if (!Number.isFinite(year)) {
+  const resolved = resolveTimelineExpression(dateText, timelineContext)
+  if (!Number.isFinite(resolved?.year)) {
     return null
   }
 
   const entities = Array.isArray(event.entities) ? event.entities.map(item => String(item || '').trim()).filter(Boolean) : []
+  const year = resolved.year
   return {
     id: event.id || `event_${index}_${String(event.name || '').slice(0, 12)}`,
     name: String(event.name || '未命名事件').trim(),
     year,
-    label: `${formatTimelineYear(year)}年`,
-    dateText,
+    localYear: resolved.localYear,
+    calendarName: resolved.calendarName,
+    label: resolved.label || `${formatTimelineYear(year)}年`,
+    dateText: resolved.label || dateText,
+    rawDateText: dateText,
     description: String(event.description || '').trim(),
     entities,
+    confidence: resolved.confidence,
     weight: entities.length + (String(event.date || '').trim() ? 3 : 0) + (String(event.description || '').length > 40 ? 1 : 0),
     source: event,
   }
 }
 
-const buildTimelineStageItem = (entity = {}, stage = {}, index = 0, anchorYear = null) => {
+const buildTimelineStageItem = (entity = {}, stage = {}, index = 0, timelineContext = {}) => {
   const era = String(stage.era || '').trim()
-  const year = parseTimelineYear(era, { anchorYear })
-  if (!Number.isFinite(year)) {
+  const resolved = resolveTimelineExpression(era, timelineContext)
+  if (!Number.isFinite(resolved?.year)) {
     return null
   }
 
@@ -2023,10 +2302,13 @@ const buildTimelineStageItem = (entity = {}, stage = {}, index = 0, anchorYear =
     entityName: String(entity.name || '未命名实体').trim(),
     entityType: String(entity.type || '实体').trim(),
     name: String(stage.name || '阶段').trim(),
-    year,
-    label: `${formatTimelineYear(year)}年`,
+    year: resolved.year,
+    localYear: resolved.localYear,
+    calendarName: resolved.calendarName,
+    label: resolved.label || `${formatTimelineYear(resolved.year)}年`,
     era,
     description: String(stage.description || '').trim(),
+    confidence: resolved.confidence,
     weight: String(stage.description || '').length + (entity.type === '人物' ? 12 : 0),
     source: { entity, stage },
   }
@@ -2115,6 +2397,39 @@ const normalizeAliases = (aliases) => {
 
 const getCategoryMeta = (categoryId) => SETTING_CATEGORY_OPTIONS.find(category => category.id === categoryId) || SETTING_CATEGORY_OPTIONS[SETTING_CATEGORY_OPTIONS.length - 1]
 
+const FRAGMENT_ENTITY_NAMES = new Set([
+  '的', '地', '得', '了', '着', '过', '和', '与', '及', '或', '在', '从', '向', '把', '被', '对', '为', '以', '于',
+  '心地', '冷酷', '残酷', '尊敬', '尊敬的', '可敬', '可敬的', '人类应该', '人类是',
+  '这', '那', '这个', '那个', '一种', '某种', '东西', '事情', '方面', '时候', '地方', '问题'
+])
+
+const normalizeIdentityKey = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[\s\-—_·•・()（）\[\]{}《》<>『』"'`]+/g, '')
+
+const isFragmentEntityName = (name, type = '', detail = '') => {
+  const text = String(name || '').trim()
+  const key = normalizeIdentityKey(text)
+  const entityType = String(type || '').trim()
+  const detailText = String(detail || '').trim()
+  if (!key) return true
+  if (FRAGMENT_ENTITY_NAMES.has(key)) return true
+  if (/^[的地得了着过和与及或在从向把被对于以之其]$/.test(text)) return true
+  if (/^[，。！？、；：,.!?;:'"“”‘’（）()\[\]{}<>《》\s]+$/.test(text)) return true
+  if (/^[一二三四五六七八九十百千万\d]+$/.test(text)) return true
+  if (/^(说|说道|写道|认为|觉得|表示|指出|开始|继续|突然|然后)$/.test(text)) return true
+  if (lenientShortFragment(key, entityType, detailText)) return true
+  return false
+}
+
+const lenientShortFragment = (key, entityType, detailText) => {
+  if (key.length > 2) return false
+  if (!['', '其他', '地点', '人物', '物品', '能力', 'geography', 'other'].includes(entityType)) return false
+  if (key.length === 1) return true
+  return /[说道认为表示指出]\s*[：:]|[，。！？；]/.test(detailText)
+}
+
 const normalizeSettingsForUi = (settings = []) => {
   const normalizedCollections = []
   const normalizedItems = []
@@ -2143,6 +2458,10 @@ const normalizeSettingsForUi = (settings = []) => {
     }
 
     if (!normalizedSetting.name) {
+      return
+    }
+
+    if (settingType === 'setting' && isFragmentEntityName(normalizedSetting.name, normalizedSetting.category, `${normalizedSetting.description}\n${normalizedSetting.detailContent}`)) {
       return
     }
 
@@ -2476,13 +2795,22 @@ const mergeEventRecords = (currentEvents = [], incomingEvents = []) => {
     const idKey = String(event.id || '').trim()
     const nameKey = String(event.name || '').trim().toLowerCase()
     const dateKey = String(event.date || '').trim().toLowerCase()
+    const estimatedDateKey = String(event.estimated_date || '').trim().toLowerCase()
+    const entityKey = Array.isArray(event.entities)
+      ? event.entities.map(name => String(name || '').trim().toLowerCase()).filter(Boolean).sort().join('|')
+      : ''
     const keys = []
     if (idKey) {
       keys.push(`id:${idKey}`)
     }
-    if (nameKey) {
+    if (nameKey && dateKey) {
       keys.push(`name:${nameKey}|date:${dateKey}`)
-      keys.push(`name:${nameKey}`)
+    }
+    if (nameKey && isMeaningfulEventTime(estimatedDateKey)) {
+      keys.push(`name:${nameKey}|estimated:${estimatedDateKey}`)
+    }
+    if (nameKey && entityKey) {
+      keys.push(`name:${nameKey}|entities:${entityKey}`)
     }
     return keys
   }
@@ -2806,9 +3134,17 @@ export default {
         reference_text: ''
       },
       extractText: '',
+      extractionMode: 'fast',
       isExtracting: false,
       extractProgress: { stage: '', progress: 0, message: '', detail: {}, ragProgress: null },
       extractPollTimer: null,
+      extractTaskId: '',
+      isCancellingExtract: false,
+      isPausingExtract: false,
+      isResumingExtract: false,
+      isDeletingExtractTask: false,
+      showExtractScanPanel: false,
+      extractPanelDismissed: false,
       extractedData: null,
       selectedFiles: [],
       isDragOver: false,
@@ -2847,6 +3183,7 @@ export default {
       timelineCanvas: null,
       // 设定管理
       activeCategory: 'character',
+      settingsSearchQuery: '',
       settingCategories: createDefaultSettingCategories(),
       settings: createDefaultSettings(),
       showNewSettingDialog: false,
@@ -2894,11 +3231,20 @@ export default {
         minHeight: this.timelineHeight,
       }
     },
+    calendarRefs() {
+      return buildCalendarReferenceIndex(this.calendars)
+    },
+    timelineContext() {
+      const anchorResolved = resolveTimelineExpression(this.world.anchor_time, { calendarRefs: this.calendarRefs })
+      return {
+        calendarRefs: this.calendarRefs,
+        anchorYear: Number.isFinite(anchorResolved?.year) ? anchorResolved.year : null,
+      }
+    },
     calendarSummaries() {
       return [...this.calendars].sort((a, b) => {
-        const anchorYear = parseTimelineYear(this.world.anchor_time)
-        const aStart = parseTimelineYear(a.baseTime || a.timeRange?.split(' ~ ')[0], { anchorYear }) ?? 0
-        const bStart = parseTimelineYear(b.baseTime || b.timeRange?.split(' ~ ')[0], { anchorYear }) ?? 0
+        const aStart = resolveTimelineExpression(a.baseTime || a.timeRange?.split(' ~ ')[0], this.timelineContext)?.year ?? 0
+        const bStart = resolveTimelineExpression(b.baseTime || b.timeRange?.split(' ~ ')[0], this.timelineContext)?.year ?? 0
         return aStart - bStart
       })
     },
@@ -2913,9 +3259,8 @@ export default {
         .slice(0, 8)
     },
     calendarTimelineItems() {
-      const anchorYear = parseTimelineYear(this.world.anchor_time)
       return this.calendars
-        .map((calendar, index) => buildCalendarTimelineItem(calendar, index, anchorYear))
+        .map((calendar, index) => buildCalendarTimelineItem(calendar, index, this.timelineContext))
         .filter(Boolean)
         .sort((a, b) => a.start - b.start || a.end - b.end)
         .slice(0, 48)
@@ -2924,14 +3269,13 @@ export default {
       return this.calculateSpanLayout(this.calendarTimelineItems)
     },
     timelineEventAnchors() {
-      const anchorYear = parseTimelineYear(this.world.anchor_time)
       return (this.events || [])
-        .map((event, index) => buildTimelineEventItem(event, index, anchorYear))
+        .map((event, index) => buildTimelineEventItem(event, index, this.timelineContext))
         .filter(Boolean)
     },
     timelineEventItems() {
       const groupedByYear = new Map()
-      this.timelineEventAnchors.forEach(event => {
+      this.timelineEventAnchors.filter(event => this.isInsideFocusWindow(event.year, 1.25)).forEach(event => {
         const bucket = groupedByYear.get(event.year) || []
         bucket.push(event)
         groupedByYear.set(event.year, bucket)
@@ -2950,14 +3294,67 @@ export default {
         .slice(0, TIMELINE_EVENT_LIMIT)
     },
     timelineEventLayout() {
-      return this.calculatePointLayout(this.timelineEventItems, 5, 4)
+      return this.calculatePointLayout(this.timelineEventItems, 4.2, 12)
+    },
+    timelineDensityItems() {
+      const items = []
+      this.timelineEventAnchors.forEach(event => {
+        const keywordBoost = /(开始|开端|序章|觉醒|穿越|危机爆发|主角|故事开始|战争|登场|关键转折)/.test(`${event.name} ${event.description} ${event.rawDateText}`) ? 4 : 0
+        items.push({ year: event.year, weight: 8 + event.weight + keywordBoost, label: event.name, type: 'event' })
+      })
+      this.timelineStageAnchors.forEach(stage => {
+        const protagonistBoost = /(主角|主人公|男主|女主)/.test(`${stage.entityName} ${stage.entityType}`) ? 3 : 0
+        items.push({ year: stage.year, weight: 4 + protagonistBoost, label: `${stage.entityName} · ${stage.name}`, type: 'stage' })
+      })
+      this.calendarTimelineItems.forEach(calendar => {
+        items.push({ year: calendar.start, weight: 1.2, label: calendar.name, type: 'calendar' })
+        items.push({ year: calendar.end, weight: 0.8, label: calendar.name, type: 'calendar' })
+      })
+      return items.filter(item => Number.isFinite(item.year))
+    },
+    timelineFocusWindow() {
+      const items = this.timelineDensityItems
+      if (!items.length) return null
+      if (items.length === 1) {
+        const year = items[0].year
+        return { min: year - 100, max: year + 100, center: year, score: items[0].weight, items, reason: 'single' }
+      }
+
+      let best = null
+      const centers = items.map(item => item.year)
+      centers.forEach(center => {
+        TIMELINE_FOCUS_WINDOWS.forEach(size => {
+          const half = size / 2
+          const inside = items.filter(item => item.year >= center - half && item.year <= center + half)
+          if (inside.length < TIMELINE_FOCUS_MIN_ITEMS) return
+          const score = inside.reduce((sum, item) => sum + item.weight, 0) / Math.log10(size + 10)
+          const eventCount = inside.filter(item => item.type === 'event').length
+          const candidate = { min: center - half, max: center + half, center, score, items: inside, eventCount, reason: 'density' }
+          if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.eventCount > best.eventCount)) {
+            best = candidate
+          }
+        })
+      })
+
+      if (best) return best
+      const years = items.map(item => item.year).sort((a, b) => a - b)
+      const center = years[Math.floor(years.length / 2)]
+      return { min: center - 500, max: center + 500, center, score: 0, items, reason: 'median' }
+    },
+    isInsideFocusWindow() {
+      return (year, multiplier = 1) => {
+        const focus = this.timelineFocusWindow
+        if (!focus || !Number.isFinite(year)) return true
+        const center = focus.center
+        const half = Math.max((focus.max - focus.min) / 2, 1) * multiplier
+        return year >= center - half && year <= center + half
+      }
     },
     timelineStageAnchors() {
-      const anchorYear = parseTimelineYear(this.world.anchor_time)
       const stages = []
       ;(this.entities || []).forEach((entity) => {
         ;(entity.stages || []).forEach((stage, index) => {
-          const item = buildTimelineStageItem(entity, stage, index, anchorYear)
+          const item = buildTimelineStageItem(entity, stage, index, this.timelineContext)
           if (item) stages.push(item)
         })
       })
@@ -2965,21 +3362,19 @@ export default {
     },
     timelineStageItems() {
       return [...this.timelineStageAnchors]
+        .filter(stage => this.isInsideFocusWindow(stage.year, 1.25))
         .sort((a, b) => a.year - b.year || b.weight - a.weight)
         .slice(0, TIMELINE_STAGE_LIMIT)
     },
     timelineStageLayout() {
-      return this.calculatePointLayout(this.timelineStageItems, 6, 3)
+      return this.calculatePointLayout(this.timelineStageItems, 4.8, 8)
     },
     timelineIssueCalendars() {
-      const anchorYear = parseTimelineYear(this.world.anchor_time)
       return this.calendars
         .map((calendar, index) => {
-          const years = [
-            ...extractTimelineYears(calendar.baseTime, { anchorYear }),
-            ...extractTimelineYears(calendar.timeRange, { anchorYear }),
-          ]
-          const issue = assessCalendarTimelineIssue(calendar, years)
+          const ref = this.calendarRefs.find(item => String(item.source?.id || '') === String(calendar.id || '') || item.name === calendar.name)
+          const resolved = resolveTimelineExpression(calendar.baseTime || calendar.timeRange, this.timelineContext)
+          const issue = ref?.confidence === 'low' ? '缺少客观基准年，无法安全换算到主时间轴' : assessCalendarTimelineIssue(calendar, [resolved?.year].filter(Number.isFinite))
           return issue ? {
             id: calendar.id || `issue_${index}`,
             name: calendar.name || '未命名历法',
@@ -2989,6 +3384,19 @@ export default {
         .filter(Boolean)
         .slice(0, TIMELINE_ISSUE_LIMIT)
     },
+    timelineBackgroundItems() {
+      const items = []
+      this.timelineEventAnchors.forEach(event => {
+        if (!this.isInsideFocusWindow(event.year, 1.25)) items.push({ type: 'event', year: event.year, label: event.name })
+      })
+      this.timelineStageAnchors.forEach(stage => {
+        if (!this.isInsideFocusWindow(stage.year, 1.25)) items.push({ type: 'stage', year: stage.year, label: `${stage.entityName} · ${stage.name}` })
+      })
+      this.calendarTimelineItems.forEach(calendar => {
+        if (!this.isInsideFocusWindow(calendar.start, 1.5) && !this.isInsideFocusWindow(calendar.end, 1.5)) items.push({ type: 'calendar', year: calendar.start, label: calendar.name })
+      })
+      return items
+    },
     timelineDiagnostics() {
       return {
         totalCalendars: this.calendars.length,
@@ -2997,24 +3405,113 @@ export default {
         visibleEvents: this.timelineEventItems.length,
         stageAnchors: this.timelineStageAnchors.length,
         visibleStages: this.timelineStageItems.length,
+        backgroundItems: this.timelineBackgroundItems.length,
         noisyCalendars: this.timelineIssueCalendars.length,
       }
     },
+    timelineAnchor() {
+      const focus = this.timelineFocusWindow
+      const explicit = resolveTimelineExpression(this.world.anchor_time, this.timelineContext)
+      if (Number.isFinite(explicit?.year) && (!focus || this.isInsideFocusWindow(explicit.year, 1))) {
+        return { year: explicit.year, label: explicit.label || this.world.anchor_time, source: 'manual' }
+      }
+      const focusItems = (focus?.items || []).filter(item => item.type === 'event' || item.type === 'stage')
+      const bestFocusItem = [...focusItems].sort((a, b) => b.weight - a.weight)[0]
+      if (bestFocusItem) return { year: bestFocusItem.year, label: bestFocusItem.label, source: 'density' }
+      if (focus) return { year: focus.center, label: `密集主轴 ${formatTimelineYear(Math.round(focus.center))}年附近`, source: 'density' }
+      const years = this.timelineEventAnchors.map(event => event.year).filter(Number.isFinite).sort((a, b) => a - b)
+      if (years.length) return { year: years[Math.floor(years.length / 2)], label: '事件中位时间', source: 'median' }
+      return null
+    },
     timelinePrimaryLabel() {
+      if (this.timelineAnchor) return this.timelineAnchor.label || `${formatTimelineYear(this.timelineAnchor.year)}年`
       const primary = this.calendarTimelineItems.find(item => item.kind === 'era') || this.calendarTimelineItems[0]
       if (primary) return primary.name
       return this.world.anchor_time || '未锚定'
     },
-    timelineTicks() {
-      const { min, max } = this.getTimeRange()
-      const totalRange = Math.max(max - min, 1)
-      return Array.from({ length: 6 }).map((_, index) => {
-        const year = Math.round(min + (totalRange * index) / 5)
-        return {
-          label: `${formatTimelineYear(year)}年`,
-          position: ((year - min) / totalRange) * 100,
+    timelineFocusLabel() {
+      const focus = this.timelineFocusWindow
+      if (!focus) return this.timelinePrimaryLabel
+      return `${formatTimelineYear(Math.round(focus.min))}年 - ${formatTimelineYear(Math.round(focus.max))}年 · ${focus.items.length} 个密集节点`
+    },
+    timelineScaleSegments() {
+      const focus = this.timelineFocusWindow
+      const contextYears = this.timelineBackgroundItems
+        .map(item => item.year)
+        .filter(Number.isFinite)
+      const focusMin = focus?.min ?? this.getTimeRange().min
+      const focusMax = focus?.max ?? this.getTimeRange().max
+      const focusRange = Math.max(focusMax - focusMin, 1)
+      const contextSpans = contextYears
+        .filter(year => year < focusMin || year > focusMax)
+        .sort((a, b) => a - b)
+        .map(year => ({
+          type: 'context',
+          start: year - TIMELINE_CONTEXT_POINT_SPAN / 2,
+          end: year + TIMELINE_CONTEXT_POINT_SPAN / 2,
+          center: year,
+        }))
+
+      const raw = [...contextSpans, { type: 'focus', start: focusMin, end: focusMax, center: (focusMin + focusMax) / 2 }]
+        .sort((a, b) => a.start - b.start)
+      const segments = []
+      raw.forEach((segment, index) => {
+        const prev = raw[index - 1]
+        if (prev && segment.start > prev.end) {
+          const gapSize = segment.start - prev.end
+          segments.push({
+            type: gapSize > focusRange * 3 ? 'gap' : 'space',
+            start: prev.end,
+            end: segment.start,
+            compressed: gapSize > focusRange * 3,
+          })
         }
+        segments.push(segment)
       })
+
+      const contextCount = segments.filter(item => item.type === 'context').length
+      const gapCount = segments.filter(item => item.compressed).length
+      const reserved = focus ? TIMELINE_FOCUS_VISUAL_RATIO : 1
+      const remaining = Math.max(0.12, 1 - reserved)
+      const unit = contextCount + gapCount || 1
+      let cursor = 0
+      return segments.map(segment => {
+        let visualSpan
+        if (segment.type === 'focus') visualSpan = reserved
+        else if (segment.compressed) visualSpan = remaining * 0.55 / unit
+        else visualSpan = remaining * 0.9 / unit
+        visualSpan = Math.max(segment.type === 'focus' ? 0.45 : 0.035, visualSpan)
+        const result = { ...segment, visualStart: cursor, visualEnd: cursor + visualSpan }
+        cursor += visualSpan
+        return result
+      }).map(segment => ({
+        ...segment,
+        visualStart: segment.visualStart / Math.max(cursor, 1),
+        visualEnd: segment.visualEnd / Math.max(cursor, 1),
+      }))
+    },
+    timelineCompressedGaps() {
+      return this.timelineScaleSegments
+        .filter(segment => segment.compressed)
+        .map(segment => ({
+          position: ((segment.visualStart + segment.visualEnd) / 2) * 100,
+          label: `压缩 ${formatTimelineYear(Math.round(segment.start))}年-${formatTimelineYear(Math.round(segment.end))}年`,
+        }))
+    },
+    timelineTicks() {
+      const focus = this.timelineFocusWindow
+      const focusTicks = focus
+        ? Array.from({ length: 5 }).map((_, index) => Math.round(focus.min + ((focus.max - focus.min) * index) / 4))
+        : []
+      const contextTicks = this.timelineScaleSegments
+        .filter(segment => segment.type === 'context')
+        .map(segment => Math.round(segment.center))
+      return [...contextTicks, ...focusTicks]
+        .filter((year, index, arr) => Number.isFinite(year) && arr.indexOf(year) === index)
+        .map(year => ({
+          label: `${formatTimelineYear(year)}年`,
+          position: this.getTimelinePosition(year),
+        }))
     },
     timelineRangeLabels() {
       const { min, max } = this.getTimeRange()
@@ -3042,7 +3539,22 @@ export default {
       return Math.max(this.getLayoutRowCount(this.timelineStageLayout), 1) * TIMELINE_STAGE_ROW_HEIGHT + 16
     },
     filteredSettings() {
-      return this.settings.filter(setting => setting.category === this.activeCategory)
+      const query = String(this.settingsSearchQuery || '').trim().toLowerCase()
+      return this.settings.filter(setting => {
+        if (setting.settingType !== 'setting') return false
+        if (!query && setting.category !== this.activeCategory) return false
+        if (!query) return true
+
+        const searchableText = [
+          setting.name,
+          setting.description,
+          setting.detailContent,
+          setting.category,
+          ...(Array.isArray(setting.aliases) ? setting.aliases : []),
+        ].map(value => String(value || '').toLowerCase()).join('\n')
+
+        return searchableText.includes(query)
+      })
     },
     settingCollections() {
       return this.settings.filter(setting => setting.settingType === 'collection')
@@ -3110,6 +3622,121 @@ export default {
         return '继续初始化项目'
       }
       return '创建推演项目'
+    },
+    extractionDiagnostics() {
+      return this.extractedData?.extraction_diagnostics || {}
+    },
+    hasExtractionFailures() {
+      return Array.isArray(this.extractionDiagnostics.failed_chunks) && this.extractionDiagnostics.failed_chunks.length > 0
+    },
+    cacheProgressText() {
+      const detail = this.extractProgress.detail || {}
+      const total = detail.total_chunks || this.extractedData?.extraction_diagnostics?.total_chunks || 0
+      if (!total) return ''
+      const completed = detail.completed_chunks ?? this.extractedData?.completed_chunks ?? 0
+      const failed = detail.failed_chunks ?? this.extractedData?.failed_chunks ?? 0
+      const resumed = detail.resumed_from_cache ? '已从缓存恢复，' : ''
+      return `${resumed}已完成 ${completed}/${total} 块${failed ? `，失败 ${failed} 块，可再次点击解析继续` : ''}`
+    },
+    ragDocumentText() {
+      const detail = this.extractProgress.ragProgress?.detail || {}
+      const count = detail.total_chunks || detail.processed_chunks || this.extractedData?.rag_added_count || 0
+      const docs = this.extractedData?.rag_document_count
+      if (!count && !docs) return ''
+      return `文本块 ${count || 0}${docs ? `，知识库文档 ${docs}` : ''}`
+    },
+    deepStateText() {
+      const state = this.extractProgress.detail?.deep_state || this.extractedData?.deep_state
+      if (!state) return ''
+      const stats = state.snapshot_stats || {}
+      const summary = state.rolling_summary_preview ? `摘要：${state.rolling_summary_preview}` : ''
+      return `深度状态：实体快照 ${stats.entity_count || state.confirmed_entity_count || 0}，省略 ${stats.snapshot_omitted_count || 0}${summary ? `；${summary}` : ''}`
+    },
+    showExtractScanModal() {
+      return this.showExtractScanPanel && !this.extractPanelDismissed && Boolean(this.extractTaskId)
+    },
+    showDeepScanModal() {
+      return this.showExtractScanModal && this.extractionMode === 'deep'
+    },
+    extractStatus() {
+      return this.extractProgress.status || this.extractProgress.stage || ''
+    },
+    scanStatusLabel() {
+      return {
+        running: '运行中',
+        extracting: '解析中',
+        pause_requested: '正在暂停',
+        paused: '已暂停',
+        cancel_requested: '正在中断并保存',
+        cancelled: '已中断并保存',
+        stale: '意外中断，可继续',
+        done: '已完成',
+        completed: '已完成',
+        error: '失败',
+        failed: '失败',
+      }[this.extractStatus] || '准备中'
+    },
+    scanModalTitle() {
+      if (this.isCancellingExtract || this.extractStatus === 'cancel_requested') return '正在中断并保存...'
+      if (this.extractStatus === 'paused') return '扫描已暂停'
+      if (this.extractStatus === 'cancelled') return '扫描已中断'
+      if (this.extractStatus === 'stale') return '扫描意外中断'
+      return this.extractionMode === 'deep' ? '深度扫描中...' : '快速扫描中...'
+    },
+    deepState() {
+      return this.extractProgress.detail?.deep_state || this.extractedData?.deep_state || {}
+    },
+    deepProcessedText() {
+      const detail = this.extractProgress.detail || {}
+      return detail.processed_chars_label || `${detail.processed_chars || 0}字`
+    },
+    deepCurrentTitle() {
+      return this.deepState.current_chunk_title || '准备读取文本块...'
+    },
+    deepChunkProgress() {
+      const value = Number(this.deepState.current_chunk_progress || 0)
+      return Math.max(0, Math.min(100, Math.round(value)))
+    },
+    scanChunkProgress() {
+      const detail = this.extractProgress.detail || {}
+      const total = Number(detail.total_chunks || 0)
+      if (!total) return this.deepChunkProgress
+      const completed = Number(detail.completed_chunks || 0)
+      return Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
+    },
+    scanChunkText() {
+      const detail = this.extractProgress.detail || {}
+      const completed = detail.completed_chunks || 0
+      const total = detail.total_chunks || 0
+      const failed = detail.failed_chunks || 0
+      return `已完成 ${completed}/${total || '?'} 块${failed ? `，失败 ${failed} 块` : ''}`
+    },
+    deepDiscoveries() {
+      return Array.isArray(this.deepState.discoveries) ? this.deepState.discoveries : []
+    },
+    scanDiscoveryFallback() {
+      if (this.extractionMode === 'deep') return '正在阅读文本，等待模型返回结构化发现...'
+      return `${this.scanChunkText}，快速扫描正在并行提取实体、事件与设定。`
+    },
+    deepThinkingSummary() {
+      return this.deepState.rolling_summary_preview || '模型正在建立上下文，完成当前块后会显示阶段性摘要。'
+    },
+    deepKnowledgeStats() {
+      const stats = this.deepState.knowledge_stats || {}
+      return ['人物', '物品', '势力', '地点', '事件'].map(label => ({ label, count: stats[label] || 0 }))
+    },
+    canPauseExtract() {
+      return this.extractStatus === 'running' || this.extractStatus === 'extracting'
+    },
+    canResumeExtract() {
+      return ['paused', 'stale', 'cancelled'].includes(this.extractStatus)
+    },
+    canCancelExtract() {
+      return ['running', 'extracting', 'pause_requested', 'paused', 'stale'].includes(this.extractStatus)
+    },
+    canDeleteExtract() {
+      return ['paused', 'stale', 'cancelled', 'failed', 'error', 'completed', 'done'].includes(this.extractStatus)
+        || (this.extractProgress.done && ['pause_requested', 'cancel_requested'].includes(this.extractStatus))
     },
     // 计算时间线容器的高度，确保容纳语义时间带与事件层
     timelineHeight() {
@@ -3381,15 +4008,11 @@ export default {
 
       return payload
     },
+    goToLlmConfig() {
+      this.$router.push({ name: 'LlmConfig' })
+    },
     openLlmConfigDialog() {
-      this.llmConfig = {
-        apiKey: '',
-        baseUrl: this.llmConfigStatus.base_url || 'https://api.openai.com/v1',
-        modelName: this.llmConfigStatus.model_name || ''
-      }
-      this.llmConfigFeedback = ''
-      this.llmConfigFeedbackType = 'success'
-      this.showLlmConfigDialog = true
+      this.goToLlmConfig()
     },
     closeLlmConfigDialog() {
       this.showLlmConfigDialog = false
@@ -3703,7 +4326,108 @@ export default {
       }
     },
 
-    async extractWorldInfo() {
+    clearStoredExtractTask(taskId) {
+      if (!taskId || localStorage.getItem(LAST_EXTRACT_TASK_KEY) === taskId) {
+        localStorage.removeItem(LAST_EXTRACT_TASK_KEY)
+      }
+    },
+    resetExtractTaskState(taskId = this.extractTaskId) {
+      if (this.extractPollTimer) {
+        clearTimeout(this.extractPollTimer)
+        this.extractPollTimer = null
+      }
+      this.clearStoredExtractTask(taskId)
+      if (taskId && this.extractTaskId && taskId !== this.extractTaskId) {
+        return
+      }
+      this.extractTaskId = ''
+      this.isExtracting = false
+      this.isCancellingExtract = false
+      this.isPausingExtract = false
+      this.isResumingExtract = false
+      this.showExtractScanPanel = false
+      this.extractPanelDismissed = true
+      this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null }
+    },
+    emitExtractTaskDeleted(taskId) {
+      window.dispatchEvent(new CustomEvent(EXTRACT_TASK_DELETED_EVENT, { detail: { taskId } }))
+    },
+    handleExtractTaskDeleted(event) {
+      const taskId = event.detail?.taskId
+      if (!taskId || taskId !== this.extractTaskId) return
+      this.resetExtractTaskState(taskId)
+    },
+    removeExtractTaskRouteQuery(taskId) {
+      if (!this.$router || !this.$route || this.$route.query?.extractTaskId !== taskId) return
+      const query = { ...this.$route.query }
+      delete query.extractTaskId
+      delete query.showExtractPanel
+      this.$router.replace({ query })
+    },
+
+    applyExtractProgress(progResp = {}) {
+      this.extractProgress = {
+        status: progResp.status || progResp.stage || '',
+        stage: progResp.stage || '',
+        progress: progResp.progress || 0,
+        message: progResp.message || '',
+        detail: {
+          ...(progResp.detail || {}),
+          cache_key: progResp.cache_key || progResp.detail?.cache_key,
+          cache_status: progResp.cache_status || progResp.detail?.cache_status,
+          resumed_from_cache: progResp.resumed_from_cache ?? progResp.detail?.resumed_from_cache,
+          completed_chunks: progResp.completed_chunks ?? progResp.detail?.completed_chunks,
+          failed_chunks: progResp.failed_chunks ?? progResp.detail?.failed_chunks,
+          total_chunks: progResp.total_chunks ?? progResp.detail?.total_chunks,
+          processed_chars: progResp.processed_chars ?? progResp.detail?.processed_chars,
+          total_chars: progResp.total_chars ?? progResp.detail?.total_chars,
+          processed_chars_label: progResp.processed_chars_label || progResp.detail?.processed_chars_label,
+          total_chars_label: progResp.total_chars_label || progResp.detail?.total_chars_label,
+          context_window: progResp.context_window || progResp.detail?.context_window,
+          target_chunk_chars: progResp.target_chunk_chars || progResp.detail?.target_chunk_chars,
+        },
+        ragProgress: progResp.rag_progress || progResp.detail?.rag_progress || null,
+      }
+      if (progResp.extraction_mode) {
+        this.extractionMode = progResp.extraction_mode
+      }
+      if (progResp.extracted_data) {
+        this.extractedData = progResp.extracted_data
+      }
+      if (progResp.error) {
+        this.extractError = progResp.error
+      }
+    },
+    startExtractPolling(taskId) {
+      if (!taskId) return
+      if (this.extractPollTimer) {
+        clearTimeout(this.extractPollTimer)
+      }
+      const pollInterval = 1500
+      const pollProgress = async () => {
+        try {
+          const progResp = await worldApi.getExtractProgress(taskId)
+          this.applyExtractProgress(progResp)
+          if (progResp.done) {
+            this.isExtracting = false
+            this.isCancellingExtract = false
+            this.isPausingExtract = false
+            this.isResumingExtract = false
+            if (['completed', 'failed', 'error', 'done'].includes(progResp.status || progResp.stage)) {
+              this.clearStoredExtractTask(taskId)
+            }
+            return
+          }
+        } catch (e) {
+          console.warn('进度轮询失败:', e)
+        }
+        if (this.isExtracting) {
+          this.extractPollTimer = setTimeout(pollProgress, pollInterval)
+        }
+      }
+      pollProgress()
+    },
+    async extractWorldInfo(forceRebuild = false) {
       const hasText = this.extractText.trim()
       const hasFiles = this.selectedFiles.length > 0
       if (!hasText && !hasFiles) return
@@ -3717,7 +4441,14 @@ export default {
       this.isExtracting = true
       this.extractError = ''
       this.extractedData = null
-      this.extractProgress = { stage: 'starting', progress: 0, message: '正在提交提取任务...', detail: {}, ragProgress: null }
+      this.extractTaskId = ''
+      this.isCancellingExtract = false
+      this.isPausingExtract = false
+      this.isResumingExtract = false
+      this.isDeletingExtractTask = false
+      this.showExtractScanPanel = true
+      this.extractPanelDismissed = false
+      this.extractProgress = { status: 'running', stage: 'starting', progress: 0, message: '正在提交提取任务...', detail: {}, ragProgress: null }
       try {
         // 如果没有 worldId，先轻量创建以便 RAG 自动索引
         const hasWorldId = await this.ensureWorldId()
@@ -3726,6 +4457,7 @@ export default {
         }
 
         // 1. 提交提取任务（附带 worldId 用于自动 RAG 索引）
+        const extractOptions = { extraction_mode: this.extractionMode, force_rebuild: forceRebuild }
         let initResponse
         if (hasFiles) {
           const formData = new FormData()
@@ -3735,12 +4467,16 @@ export default {
           if (hasText) {
             formData.append('text', this.extractText)
           }
-          initResponse = await worldApi.extractWorldFromFile(formData, this.worldId)
+          initResponse = await worldApi.extractWorldFromFile(formData, this.worldId, extractOptions)
         } else {
-          initResponse = await worldApi.extractWorld(this.extractText, this.worldId)
+          initResponse = await worldApi.extractWorld(this.extractText, this.worldId, extractOptions)
         }
 
         const taskId = initResponse.task_id
+        this.extractTaskId = taskId || ''
+        if (taskId) {
+          localStorage.setItem(LAST_EXTRACT_TASK_KEY, taskId)
+        }
         if (!taskId) {
           // 可能是直接 JSON 数据返回
           this.extractedData = initResponse.extracted_data
@@ -3749,37 +4485,7 @@ export default {
         }
 
         // 2. 轮询进度（无超时限制，直到后端完成）
-        const pollInterval = 1500
-
-        const pollProgress = async () => {
-          try {
-            const progResp = await worldApi.getExtractProgress(taskId)
-            this.extractProgress = {
-              stage: progResp.stage || '',
-              progress: progResp.progress || 0,
-              message: progResp.message || '',
-              detail: progResp.detail || {},
-              ragProgress: progResp.rag_progress || progResp.detail?.rag_progress || null,
-            }
-            if (progResp.done) {
-              if (progResp.extracted_data) {
-                this.extractedData = progResp.extracted_data
-              }
-              if (progResp.error) {
-                this.extractError = progResp.error
-              }
-              this.isExtracting = false
-              return
-            }
-          } catch (e) {
-            console.warn('进度轮询失败:', e)
-          }
-          if (this.isExtracting) {
-            this.extractPollTimer = setTimeout(pollProgress, pollInterval)
-          }
-        }
-
-        await pollProgress()
+        this.startExtractPolling(taskId)
       } catch (error) {
         console.error('提取失败:', error)
         const serverMsg = error.response?.data?.message
@@ -3788,6 +4494,97 @@ export default {
           this.openLlmConfigDialog()
         }
         this.isExtracting = false
+        this.isCancellingExtract = false
+        this.isPausingExtract = false
+      }
+    },
+    closeExtractScanPanel() {
+      this.extractPanelDismissed = true
+      this.showExtractScanPanel = false
+    },
+    async restoreExtractTaskFromRoute() {
+      const taskId = this.$route?.query?.extractTaskId
+      if (!taskId) return
+      try {
+        const progResp = await worldApi.getExtractProgress(taskId)
+        this.extractTaskId = taskId
+        this.applyExtractProgress(progResp)
+        this.showExtractScanPanel = this.$route?.query?.showExtractPanel === '1'
+        this.extractPanelDismissed = false
+        localStorage.setItem(LAST_EXTRACT_TASK_KEY, taskId)
+        if (!progResp.done) {
+          this.isExtracting = true
+          this.startExtractPolling(taskId)
+        }
+      } catch (error) {
+        console.warn('恢复扫描任务失败:', error)
+      }
+    },
+    async pauseExtraction() {
+      if (!this.extractTaskId || this.isPausingExtract) return
+      this.isPausingExtract = true
+      try {
+        await worldApi.pauseExtract(this.extractTaskId)
+        this.extractProgress = {
+          ...this.extractProgress,
+          message: '正在暂停解析，当前块完成后保存进度...',
+        }
+      } catch (error) {
+        console.error('暂停提取失败:', error)
+        this.extractError = error.response?.data?.message || error.message || '暂停请求失败'
+        this.isPausingExtract = false
+      }
+    },
+    async resumeExtraction() {
+      if (!this.extractTaskId || this.isResumingExtract) return
+      this.isResumingExtract = true
+      this.isExtracting = true
+      try {
+        await worldApi.resumeExtract(this.extractTaskId)
+        this.extractProgress = {
+          ...this.extractProgress,
+          status: 'running',
+          stage: 'starting',
+          message: '正在从上次 checkpoint 继续解析...',
+        }
+        this.startExtractPolling(this.extractTaskId)
+      } catch (error) {
+        console.error('继续提取失败:', error)
+        this.extractError = error.response?.data?.message || error.message || '继续请求失败'
+      } finally {
+        this.isResumingExtract = false
+      }
+    },
+    async deleteExtractionTask() {
+      if (!this.extractTaskId || this.isDeletingExtractTask) return
+      if (!confirm('确定删除这条扫描记录吗？不会删除已合并到世界观的数据。')) return
+      this.isDeletingExtractTask = true
+      try {
+        await worldApi.deleteExtractTask(this.extractTaskId)
+        const deletedTaskId = this.extractTaskId
+        this.resetExtractTaskState(deletedTaskId)
+        this.removeExtractTaskRouteQuery(deletedTaskId)
+        this.emitExtractTaskDeleted(deletedTaskId)
+      } catch (error) {
+        console.error('删除扫描失败:', error)
+        this.extractError = error.response?.data?.message || error.message || '删除扫描失败'
+      } finally {
+        this.isDeletingExtractTask = false
+      }
+    },
+    async cancelExtraction() {
+      if (!this.extractTaskId || this.isCancellingExtract) return
+      this.isCancellingExtract = true
+      try {
+        await worldApi.cancelExtract(this.extractTaskId)
+        this.extractProgress = {
+          ...this.extractProgress,
+          message: '正在中断提取并保存当前成果...',
+        }
+      } catch (error) {
+        console.error('中断提取失败:', error)
+        this.extractError = error.response?.data?.message || error.message || '中断请求失败'
+        this.isCancellingExtract = false
       }
     },
     handleFileDrop(e) {
@@ -4220,7 +5017,9 @@ export default {
         unit: '年',
         ratio: '×1',
         calendarType: '未开启',
-        description: ''
+        description: '',
+        absoluteBaseTime: '',
+        localBaseYear: 0
       }
       this.editCalendars.push(newCalendar)
       this.currentCalendar = {
@@ -4229,6 +5028,8 @@ export default {
         endYear: '',
         noEndTime: false,
         ratioValue: '1',
+        absoluteBaseTime: '',
+        localBaseYear: 0,
         customCalendar: false,
       }
       this.showCalendarDetailEdit = true
@@ -4277,6 +5078,8 @@ export default {
       } else {
         this.currentCalendar.ratioValue = '1'
       }
+      this.currentCalendar.absoluteBaseTime = calendar.absoluteBaseTime || ''
+      this.currentCalendar.localBaseYear = Number.isFinite(Number(calendar.localBaseYear)) ? Number(calendar.localBaseYear) : 0
       this.currentCalendar.customCalendar = String(calendar.calendarType || '').trim() && calendar.calendarType !== '未开启'
       // 打开编辑窗口
       this.showCalendarDetailEdit = true
@@ -4287,6 +5090,7 @@ export default {
       const startYear = String(this.currentCalendar.startYear || '').trim()
       const endYear = String(this.currentCalendar.endYear || '').trim()
       const ratioValue = String(this.currentCalendar.ratioValue || '1').trim() || '1'
+      const localBaseYear = parseLocalYearForCalendar(startYear, this.currentCalendar.name) ?? 0
       const savedCalendar = {
         id: this.currentCalendar.id,
         name: String(this.currentCalendar.name || '').trim() || '未命名历法',
@@ -4299,6 +5103,8 @@ export default {
         ratio: `×${ratioValue.replace(/^×/, '')}`,
         calendarType: String(this.currentCalendar.calendarType || '未开启').trim() || '未开启',
         description: String(this.currentCalendar.description || '').trim(),
+        absoluteBaseTime: String(this.currentCalendar.absoluteBaseTime || '').trim(),
+        localBaseYear,
       }
 
       const index = this.editCalendars.findIndex(c => c.id === savedCalendar.id)
@@ -4318,40 +5124,90 @@ export default {
       this.currentCalendar = null
       this.showCalendarDetailEdit = false
     },
+    getTimelinePosition(year) {
+      if (!Number.isFinite(year)) return 50
+      const segments = this.timelineScaleSegments || []
+      if (!segments.length) {
+        const { min: minTime, max: maxTime } = this.getTimeRange()
+        return ((year - minTime) / Math.max(maxTime - minTime, 1)) * 100
+      }
+      let segment = segments.find(item => year >= item.start && year <= item.end)
+      if (!segment) {
+        segment = segments.reduce((closest, item) => {
+          const distance = year < item.start ? item.start - year : year - item.end
+          const closestDistance = closest ? (year < closest.start ? closest.start - year : year - closest.end) : Infinity
+          return distance < closestDistance ? item : closest
+        }, null)
+      }
+      if (!segment) return 50
+      const local = segment.end === segment.start ? 0.5 : Math.max(0, Math.min(1, (year - segment.start) / (segment.end - segment.start)))
+      return (segment.visualStart + (segment.visualEnd - segment.visualStart) * local) * 100
+    },
+
+    getTimelineSpanPosition(start, end, options = {}) {
+      const left = this.getTimelinePosition(start)
+      const right = this.getTimelinePosition(Number.isFinite(end) ? end : this.getTimeRange().max)
+      const rawWidth = Math.abs(right - left)
+      const minWidth = options.minWidth ?? 3
+      return { left: Math.min(left, right), width: Math.max(rawWidth, minWidth), rawWidth }
+    },
+
     calculateSpanLayout(items) {
       const layout = new Map()
       const rowEnds = []
+      const safetyGap = 0.15
 
       ;[...items]
-        .sort((a, b) => a.start - b.start)
-        .forEach(item => {
+        .map(item => {
           const start = Number.isFinite(item.start) ? item.start : 0
-          const end = Number.isFinite(item.end) ? item.end : Infinity
+          const end = Number.isFinite(item.end) ? item.end : start + 1
+          const spanPosition = this.getTimelineSpanPosition(start, end, { minWidth: 0 })
+          const displayPosition = this.getTimelineSpanPosition(start, end, { minWidth: 0.8 })
+          return {
+            item,
+            start,
+            end,
+            visualStart: spanPosition.left,
+            visualEnd: spanPosition.left + spanPosition.rawWidth,
+            displayLeft: displayPosition.left,
+            displayWidth: displayPosition.width,
+          }
+        })
+        .sort((a, b) => a.visualStart - b.visualStart || a.visualEnd - b.visualEnd)
+        .forEach(entry => {
           let row = 0
 
-          while (row < rowEnds.length && rowEnds[row] > start) {
+          while (row < rowEnds.length && rowEnds[row] - safetyGap > entry.visualStart) {
             row += 1
           }
 
-          rowEnds[row] = end
-          layout.set(item.id, { row, start, end })
+          rowEnds[row] = entry.visualEnd
+          layout.set(entry.item.id, {
+            row,
+            start: entry.start,
+            end: entry.end,
+            visualStart: entry.visualStart,
+            visualEnd: entry.visualEnd,
+            displayLeft: entry.displayLeft,
+            displayWidth: entry.displayWidth,
+          })
         })
 
       return layout
     },
 
-    calculatePointLayout(items, proximity = 4, maxRows = 4) {
+    calculatePointLayout(items, proximity = 4, maxRows = 10) {
       const layout = new Map()
-      const rowPositions = Array.from({ length: maxRows }, () => -Infinity)
-      const { min: minTime, max: maxTime } = this.getTimeRange()
-      const totalRange = Math.max(maxTime - minTime, 1)
-
+      const rowPositions = []
       ;[...items]
-        .sort((a, b) => (a.year || 0) - (b.year || 0))
+        .sort((a, b) => (a.year || 0) - (b.year || 0) || b.weight - a.weight)
         .forEach(item => {
-          const year = Number.isFinite(item.year) ? item.year : minTime
-          const position = ((year - minTime) / totalRange) * 100
+          const year = Number.isFinite(item.year) ? item.year : this.getTimeRange().min
+          const position = this.getTimelinePosition(year)
           let row = rowPositions.findIndex(lastPosition => Math.abs(position - lastPosition) >= proximity)
+          if (row < 0 && rowPositions.length < maxRows) {
+            row = rowPositions.length
+          }
           if (row < 0) {
             row = rowPositions.indexOf(Math.min(...rowPositions))
           }
@@ -4376,11 +5232,8 @@ export default {
         return {}
       }
 
-      const { min: minTime, max: maxTime } = this.getTimeRange()
-      const totalRange = Math.max(maxTime - minTime, 1)
-      const left = ((layoutInfo.start - minTime) / totalRange) * 100
-      const effectiveEnd = layoutInfo.end === Infinity ? maxTime : layoutInfo.end
-      const width = Math.max((((effectiveEnd - layoutInfo.start) / totalRange) * 100), 8)
+      const left = Number.isFinite(layoutInfo.displayLeft) ? layoutInfo.displayLeft : layoutInfo.visualStart
+      const width = Number.isFinite(layoutInfo.displayWidth) ? layoutInfo.displayWidth : Math.max(layoutInfo.visualEnd - layoutInfo.visualStart, 3)
       const top = layoutInfo.row * TIMELINE_LANE_ROW_HEIGHT
       const palettes = paletteSet === 'political'
         ? [
@@ -4400,7 +5253,7 @@ export default {
       return {
         position: 'absolute',
         left: `${left}%`,
-        width: `${Math.min(width, 100 - left)}%`,
+        width: `${Math.max(0.2, Math.min(width, 100 - left))}%`,
         top: `${top}px`,
         height: '38px',
         background,
@@ -4447,75 +5300,60 @@ export default {
       let maxTime = -Infinity
 
       const registerYear = (year) => {
-        if (!Number.isFinite(year)) {
-          return
-        }
-
+        if (!Number.isFinite(year)) return
         minTime = Math.min(minTime, year)
         maxTime = Math.max(maxTime, year)
       }
 
-      const anchorYear = parseTimelineYear(this.world.anchor_time)
+      const focus = this.timelineFocusWindow
+      if (focus) {
+        return { min: focus.min, max: focus.max }
+      }
+
+      const anchorYear = this.timelineAnchor?.year
 
       this.calendarTimelineItems.forEach(calendar => {
-        const start = calendar.start
-        const end = calendar.end
-
-        registerYear(start)
-        registerYear(end)
+        registerYear(calendar.start)
+        registerYear(calendar.end)
       })
-
       this.timelineEventItems.forEach(event => registerYear(event.year))
       this.timelineStageItems.forEach(stage => registerYear(stage.year))
       registerYear(anchorYear)
 
       if (!Number.isFinite(minTime) || !Number.isFinite(maxTime)) {
-        return { min: -10000, max: 26000 }
+        const fallback = Number.isFinite(anchorYear) ? anchorYear : 0
+        return { min: fallback - 1000, max: fallback + 1000 }
       }
 
-      if (minTime === maxTime) {
-        return {
-          min: minTime - 1000,
-          max: maxTime + 1000
-        }
+      if (!Number.isFinite(anchorYear)) {
+        const padding = Math.max(100, Math.round((maxTime - minTime) * 0.1))
+        return { min: minTime - padding, max: maxTime + padding }
       }
 
-      const padding = Math.max(100, Math.round((maxTime - minTime) * 0.1))
-
+      const leftSpan = Math.max(anchorYear - minTime, 0)
+      const rightSpan = Math.max(maxTime - anchorYear, 0)
+      const half = Math.max(leftSpan, rightSpan, 100)
+      const paddedHalf = Math.ceil(half * 1.15)
       return {
-        min: minTime - padding,
-        max: maxTime + padding
+        min: anchorYear - paddedHalf,
+        max: anchorYear + paddedHalf,
       }
     },
     
     // 获取事件在时间轴上的位置
     getEventPosition(date) {
-      const year = parseTimelineYear(date)
+      const year = resolveTimelineExpression(date, this.timelineContext)?.year
       if (!Number.isFinite(year)) return 50
 
-      const { min: minTime, max: maxTime } = this.getTimeRange()
-      const totalRange = maxTime - minTime
-      
-      // 确保年份在范围内
-      const clampedYear = Math.max(minTime, Math.min(maxTime, year))
-      const position = ((clampedYear - minTime) / totalRange) * 100
-      return position
+      return this.getTimelinePosition(year)
     },
     
     // 获取锚定时间的位置
     getAnchorTimePosition() {
-      if (!this.world.anchor_time) return 50 // 默认中间位置
-
-      const year = parseTimelineYear(this.world.anchor_time)
+      const year = this.timelineAnchor?.year
       if (!Number.isFinite(year)) return 50
 
-      const { min: minTime, max: maxTime } = this.getTimeRange()
-      const totalRange = maxTime - minTime
-      
-      // 确保年份在范围内
-      const clampedYear = Math.max(minTime, Math.min(maxTime, year))
-      const position = ((clampedYear - minTime) / totalRange) * 100
-      return position
+      return this.getTimelinePosition(year)
     },
     
     // 缩放功能
@@ -4536,6 +5374,9 @@ export default {
     updateTimelineZoom() {
       this.$nextTick(() => {
         this.syncTimelineRefs()
+        if (this.timelineAnchor) {
+          this.scrollToPosition(this.getAnchorTimePosition())
+        }
       })
     },
 
@@ -4604,6 +5445,7 @@ export default {
   }
   ,
   mounted() {
+    window.addEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     this.syncTimelineRefs()
     this.updateTimelineZoom()
     this.loadLlmConfigStatus()
@@ -4611,6 +5453,14 @@ export default {
     const worldId = this.$route?.query?.worldId
     if (worldId) {
       this.loadWorld(worldId)
+    }
+    this.restoreExtractTaskFromRoute()
+  },
+  beforeUnmount() {
+    window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
+    if (this.extractPollTimer) {
+      clearTimeout(this.extractPollTimer)
+      this.extractPollTimer = null
     }
   }
 }
@@ -4783,8 +5633,238 @@ export default {
 
 .form-input:focus, .form-textarea:focus, .form-select:focus {
   outline: none;
-  border-color: var(--primary-blue);
-  box-shadow: 0 0 0 2px var(--primary-blue-light);
+  border-color: var(--wf-accent);
+  box-shadow: 0 0 0 3px var(--wf-accent-muted);
+}
+
+.extraction-mode-section {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-lg);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-xl);
+  background: var(--wf-bg-card);
+}
+
+.compact-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.small-title {
+  font-size: 1rem;
+  color: var(--wf-text-primary);
+}
+
+.type-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.type-btn {
+  padding: var(--spacing-lg);
+  min-height: 96px;
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-xl);
+  background: var(--wf-bg-card);
+  color: var(--wf-text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-weight: 600;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.type-btn:hover:not(.active) {
+  border-color: var(--wf-border-light);
+  background: var(--wf-bg-hover);
+}
+
+.type-btn span {
+  display: block;
+  margin-top: 0;
+  color: var(--wf-text-muted);
+  font-size: 0.86rem;
+  font-weight: 400;
+}
+
+.type-btn.active {
+  border-color: var(--wf-accent);
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
+  box-shadow: var(--shadow-glow);
+}
+
+.extract-action-row {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.extract-action-row .extract-btn {
+  min-width: 132px;
+}
+
+.extract-inline-actions,
+.deep-actions-row {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-sm);
+}
+
+.cache-progress-note {
+  margin-top: var(--spacing-sm);
+  font-size: 0.82rem;
+  color: var(--wf-text-muted);
+}
+
+.deep-scan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg);
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.deep-scan-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  border: 1px solid var(--wf-border-light);
+  border-radius: var(--radius-xl);
+  background: rgba(17, 17, 19, 0.96);
+  color: var(--wf-text-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.deep-scan-top,
+.deep-scan-section,
+.deep-scan-footer {
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--wf-border);
+}
+
+.deep-scan-footer {
+  border-bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+.deep-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+}
+
+.deep-scan-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+}
+
+.deep-scan-title-row h3,
+.deep-scan-section h4 {
+  margin: 0;
+  color: var(--wf-text-primary);
+}
+
+.deep-scan-title-row span {
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+}
+
+.scan-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.scan-close-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--wf-text-primary);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.scan-close-btn:hover {
+  border-color: var(--wf-border-light);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.deep-main-bar,
+.deep-chunk-bar {
+  height: 8px;
+  background: var(--wf-bg-input);
+}
+
+.deep-scan-meta,
+.deep-empty,
+.deep-summary {
+  margin-top: var(--spacing-sm);
+  color: var(--wf-text-secondary);
+  font-size: 0.9rem;
+}
+
+.deep-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+}
+
+.deep-row:last-child {
+  margin-bottom: 0;
+}
+
+.deep-row.stacked {
+  grid-template-columns: 96px 1fr auto;
+}
+
+.deep-label {
+  color: var(--wf-text-muted);
+  font-size: 0.86rem;
+}
+
+.deep-discovery-list {
+  margin: var(--spacing-sm) 0 0;
+  padding-left: 1.1rem;
+  color: var(--wf-text-secondary);
+}
+
+.deep-discovery-list li {
+  margin: 4px 0;
+}
+
+.deep-summary {
+  padding: var(--spacing-md);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-md);
+  background: var(--wf-bg-input);
+  line-height: 1.7;
 }
 
 .rag-sub-progress {
@@ -4833,21 +5913,25 @@ export default {
   gap: var(--spacing-sm);
 }
 
-.btn-primary { 
-  background: var(--primary-blue); 
-  color: white; 
+.btn-primary {
+  background: var(--wf-accent);
+  color: var(--wf-text-on-accent);
+  border-color: var(--wf-accent);
+  font-weight: 600;
 }
-.btn-primary:hover:not(:disabled) { 
-  background: var(--primary-blue-dark); 
+.btn-primary:hover:not(:disabled) {
+  background: var(--wf-accent-hover);
+  box-shadow: var(--shadow-glow-strong);
 }
 
-.btn-secondary { 
-  background: var(--neutral-gray-100); 
-  color: var(--wf-text-primary); 
-  border-color: var(--neutral-gray-300);
+.btn-secondary {
+  background: transparent;
+  color: var(--wf-accent);
+  border-color: var(--wf-border-light);
 }
-.btn-secondary:hover:not(:disabled) { 
-  background: var(--neutral-gray-200); 
+.btn-secondary:hover:not(:disabled) {
+  background: var(--wf-accent-muted);
+  border-color: var(--wf-accent);
 }
 
 .btn-danger { 
@@ -5562,7 +6646,7 @@ export default {
   }
 
   .timeline-band {
-    min-width: 74px;
+    min-width: 0;
     padding: 7px 10px;
   }
 }
@@ -5868,6 +6952,29 @@ export default {
   background: rgba(255, 255, 255, 0.16);
 }
 
+.timeline-compressed-gap {
+  position: absolute;
+  top: -14px;
+  transform: translateX(-50%);
+  color: var(--wf-warning);
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.timeline-compressed-gap span {
+  display: block;
+  margin-top: 18px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: var(--wf-text-secondary);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
 .timeline-axis-range {
   margin-top: 30px;
 }
@@ -5906,7 +7013,7 @@ export default {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-width: 160px;
+  min-width: 0;
   padding: 6px 12px;
   border-radius: var(--radius-md);
   color: var(--wf-text-primary) !important;
@@ -7144,4 +8251,3 @@ export default {
   margin-top: var(--spacing-md);
 }
 </style>
-

@@ -6,6 +6,7 @@ LLM客户端封装
 import json
 import re
 from typing import Optional, Dict, Any, List
+import requests
 from openai import OpenAI
 from openai.types.chat import ChatCompletion
 
@@ -31,6 +32,8 @@ class LLMClient:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         role: str = "agent",
+        api_type: Optional[str] = None,
+        url_mode: Optional[str] = None,
     ):
         resolved_config = Config.get_llm_config(role)
         self.role = role
@@ -38,14 +41,18 @@ class LLMClient:
         self.api_key = api_key or resolved_config["api_key"]
         self.base_url = base_url or resolved_config["base_url"]
         self.model = model or resolved_config["model_name"]
+        self.api_type = (api_type or resolved_config.get("api_type") or "openai_compatible").strip().lower()
+        self.url_mode = (url_mode or resolved_config.get("url_mode") or "base_url").strip().lower()
         
         if not self.api_key:
             raise ValueError("LLM API Key 未配置，请配置 LLM_API_KEY / SUBAGENT_LLM_API_KEY / PARSER_LLM_API_KEY 中至少一个")
         
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        self.client = None
+        if self.api_type != "anthropic" and self.url_mode != "full_url":
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url
+            )
 
     @property
     def is_deepseek_v4(self) -> bool:
@@ -119,11 +126,73 @@ class LLMClient:
         extra_body = dict(payload.pop("extra_body") or {})
         if extra_body:
             payload.update(extra_body)
+        if self.url_mode == "full_url":
+            response = requests.post(
+                self.base_url,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            return response.json()
         return self.client.post(
             "/chat/completions",
             cast_to=ChatCompletion,
             body=payload,
         )
+
+    @staticmethod
+    def _messages_to_anthropic(messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+        system_parts = []
+        converted = []
+        for message in messages or []:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "system":
+                system_parts.append(str(content))
+                continue
+            converted.append({
+                "role": "assistant" if role == "assistant" else "user",
+                "content": str(content),
+            })
+        if not converted:
+            converted.append({"role": "user", "content": "Hello"})
+        return "\n\n".join(system_parts), converted
+
+    def _anthropic_chat(self, **kwargs: Any) -> Dict[str, Any]:
+        base_url = (self.base_url or "https://api.anthropic.com").rstrip("/")
+        if self.url_mode == "full_url":
+            url = self.base_url
+        elif base_url.endswith("/v1"):
+            url = f"{base_url}/messages"
+        else:
+            url = f"{base_url}/v1/messages"
+        system, messages = self._messages_to_anthropic(kwargs.get("messages") or [])
+        payload = {
+            "model": kwargs.get("model") or self.model,
+            "messages": messages,
+            "max_tokens": kwargs.get("max_tokens") or self.default_max_tokens,
+        }
+        if system:
+            payload["system"] = system
+        if kwargs.get("temperature") is not None:
+            payload["temperature"] = kwargs.get("temperature")
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def _anthropic_text(response: Dict[str, Any]) -> str:
+        parts = []
+        for item in response.get("content") or []:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text") or "")
+        return "".join(parts).strip()
 
     def create_chat_completion(
         self,
@@ -134,6 +203,10 @@ class LLMClient:
     ):
         """创建聊天补全，并按模型族注入兼容参数。"""
         kwargs.setdefault("model", self.model)
+        if self.api_type == "anthropic":
+            return self._anthropic_chat(**kwargs)
+        if self.url_mode == "full_url":
+            return self._create_chat_completion_raw(**kwargs)
         if self.is_deepseek_v4:
             enabled = self.thinking_enabled if thinking_enabled is None else bool(thinking_enabled)
             if enabled:
@@ -186,8 +259,10 @@ class LLMClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
+        api_type: Optional[str] = None,
+        url_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
-        client = cls(api_key=api_key, base_url=base_url, model=model)
+        client = cls(api_key=api_key, base_url=base_url, model=model, api_type=api_type, url_mode=url_mode)
         reply = client.chat(
             messages=[{"role": "user", "content": "Reply with OK only."}],
             temperature=0,
@@ -197,8 +272,47 @@ class LLMClient:
         return {
             "ok": True,
             "model": client.model,
+            "api_type": client.api_type,
+            "url_mode": client.url_mode,
             "reply": reply.strip(),
         }
+
+    @staticmethod
+    def _models_url(base_url: str, api_type: str, url_mode: str) -> str:
+        url = (base_url or '').rstrip('/')
+        if url_mode == 'full_url':
+            for suffix in ('/chat/completions', '/messages', '/embeddings'):
+                if url.endswith(suffix):
+                    url = url[:-len(suffix)]
+                    break
+        if api_type == 'anthropic':
+            return f"{url}/models" if url.endswith('/v1') else f"{url}/v1/models"
+        return f"{url}/models" if url.endswith('/v1') else f"{url}/v1/models"
+
+    @classmethod
+    def list_models(
+        cls,
+        api_key: str,
+        base_url: str,
+        api_type: str = 'openai_compatible',
+        url_mode: str = 'base_url',
+    ) -> List[str]:
+        models_url = cls._models_url(base_url, api_type, url_mode)
+        if api_type == 'anthropic':
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+        else:
+            headers = {"Authorization": f"Bearer {api_key}"}
+        response = requests.get(models_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get('data') if isinstance(payload, dict) else payload
+        models = []
+        for item in data or []:
+            if isinstance(item, str):
+                models.append(item)
+            elif isinstance(item, dict) and item.get('id'):
+                models.append(item['id'])
+        return models
     
     def chat(
         self,
@@ -231,7 +345,12 @@ class LLMClient:
             kwargs["response_format"] = response_format
         
         response = self.create_chat_completion(**kwargs, thinking_enabled=thinking_enabled)
-        content = response.choices[0].message.content or ""
+        if isinstance(response, dict) and 'choices' in response:
+            content = response['choices'][0]['message'].get('content') or ""
+        elif isinstance(response, dict):
+            content = self._anthropic_text(response)
+        else:
+            content = response.choices[0].message.content or ""
         # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
         return content

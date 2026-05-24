@@ -5,14 +5,19 @@
 章节感知切分，全文处理无遗漏
 """
 
+from app.config import Config
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
 from app.prompts import load_prompt
+from datetime import datetime
+import hashlib
 import json
+import os
 import re
 import threading
-from typing import Dict, Any, List, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from typing import Dict, Any, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
 logger = get_logger('worldfish.service.enhanced_world_extractor')
 
@@ -45,6 +50,19 @@ class EnhancedWorldExtractor:
         "掌门", "宗主", "门主", "教主", "教皇", "国王", "皇帝", "皇后", "王后", "王爷", "公主", "太子", "将军", "元帅", "大臣", "首领", "统领",
     }
 
+    FRAGMENT_ENTITY_KEYS = {
+        "的", "地", "得", "了", "着", "过", "和", "与", "及", "或", "在", "从", "向", "把", "被", "对", "为", "以", "于",
+        "心地", "冷酷", "残酷", "尊敬", "尊敬的", "可敬", "可敬的", "敌人", "敌人的", "人类", "人类是", "人类应该",
+        "这", "那", "这个", "那个", "一种", "某种", "东西", "事情", "方面", "时候", "地方", "问题",
+    }
+    FRAGMENT_NAME_PATTERNS = (
+        r"^[的地得了着过和与及或在从向把被对于以之其]$",
+        r"^[，。！？、；：,.!?;:'\"“”‘’（）()\[\]{}<>《》\s]+$",
+        r"^[一二三四五六七八九十百千万\d]+$",
+        r".*[。！？；;]$",
+        r"^(说|说道|写道|认为|觉得|表示|指出|开始|继续|突然|然后)$",
+    )
+
     SETTING_CATEGORY_TO_ENTITY_TYPE = {
         "character": "人物",
         "item": "物品",
@@ -60,18 +78,24 @@ class EnhancedWorldExtractor:
     CHUNK_OVERLAP = 300
     CHAPTERS_PER_CHUNK = 4   # 每批最多合并 4 章，降低单次 LLM 负载
     CHAPTER_CHUNK_CHAR_BUDGET = 10000
-    OUTER_WORKERS = 20       # 并行 LLM 调用数
+    OUTER_WORKERS = 6        # 并行 LLM 调用数；过高容易触发中转站连接/编码异常
+    CHUNK_RETRY_TIMES = 3
 
     # 章节标记正则
+    CHAPTER_TITLE_SUFFIX = r'(?:\s*[：:、.．\-—]\s*[^\n]{0,80}|\s+[^\n]{1,80})?'
     CHAPTER_RE = (
         r'(?:^|\n)\s*'
+        r'(?:#{1,6}\s*)?'
         r'(?:'
-        r'第[零一二三四五六七八九十百千\d]+[部卷章节]'
-        r'|Chapter\s+\d+'
-        r'|Part\s+\d+'
-        r'|VOLUME\s*\d+'
-        r'|[第]?[零一二三四五六七八九十百千\d]+章[\s\n]'
-        r')'
+        r'(?:第\s*[零〇一二三四五六七八九十百千万\d]+\s*[部卷章节篇集]' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:[零〇一二三四五六七八九十百千万\d]+\s*[部卷章节篇集]' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:卷\s*[零〇一二三四五六七八九十百千万\d]+' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:Chapter\s+\d+' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:Part\s+\d+' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:VOLUME\s*\d+' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:三体\s*[ⅠⅡⅢIVXivx123一二三]+' + CHAPTER_TITLE_SUFFIX + r')'
+        r'|(?:(?:序章|楔子|引子|尾声|终章|后记)' + CHAPTER_TITLE_SUFFIX + r')'
+        r')\s*(?=\n|$)'
     )
 
     def __init__(self):
@@ -84,10 +108,81 @@ class EnhancedWorldExtractor:
             _thread_local.client = LLMClient(role="parser")
         return _thread_local.client
 
-    def _record_error(self, stage: str, error: Exception):
+    def _format_error_message(self, error: Exception) -> str:
         message = str(error).strip()
+        if isinstance(error, UnicodeDecodeError):
+            return (
+                f"响应编码解码失败：尝试用 {error.encoding or '未知编码'} 解码时，"
+                f"在字节位置 {error.start} 遇到非法字节 0x{error.object[error.start]:02x}。"
+                "通常是模型中转站返回了非 UTF-8/压缩异常响应，请稍后重试或降低并发。"
+            )
+        return message
+
+    def _record_error(self, stage: str, error: Exception):
+        message = self._format_error_message(error)
         logger.error(f"{stage}失败: {message}")
         self.errors.append(f"{stage}: {message}")
+
+    @classmethod
+    def get_text_volume_profile(cls, text_len: int) -> Dict[str, Any]:
+        """根据解析模型上下文窗口生成统一大块切分策略。"""
+        text_len = max(0, int(text_len or 0))
+        max_workers = max(1, int(getattr(Config, "EXTRACTION_MAX_WORKERS", cls.OUTER_WORKERS)))
+        context_window = int(getattr(Config, "LLM_DEFAULT_CONTEXT_WINDOW", 128 * 1024) or 128 * 1024)
+        parser_model = ""
+        try:
+            client = LLMClient(role="parser")
+            context_window = max(8192, int(getattr(client, "context_window", context_window) or context_window))
+            parser_model = getattr(client, "model", "") or ""
+        except Exception:
+            llm_config = Config.get_llm_config("parser")
+            parser_model = llm_config.get("model_name", "") or ""
+            if getattr(Config, "LLM_CONTEXT_WINDOW", 0) > 0:
+                context_window = int(Config.LLM_CONTEXT_WINDOW)
+
+        tokenizer_estimate = max(0.1, float(getattr(Config, "EXTRACTION_TOKENIZER_ESTIMATE", 1.2)))
+        target_ratio = max(0.05, float(getattr(Config, "EXTRACTION_TARGET_CONTEXT_RATIO", 0.45)))
+        output_reserve_ratio = max(0.0, float(getattr(Config, "EXTRACTION_OUTPUT_RESERVE_RATIO", 0.18)))
+        # 深度/快速提取都应尽量吃满模型上下文，而不是按 RAG 小块策略切成大量碎片。
+        usable_tokens = max(2048, int(context_window * max(0.08, target_ratio - output_reserve_ratio)))
+        target_chunk_chars = int(usable_tokens / tokenizer_estimate)
+        dynamic_min_chars = 60_000 if context_window >= 128_000 else int(getattr(Config, "EXTRACTION_MIN_CHUNK_CHARS", 8000))
+        dynamic_max_chars = max(int(getattr(Config, "EXTRACTION_MAX_CHUNK_CHARS", 220000)), 180_000 if context_window >= 128_000 else 80_000)
+        target_chunk_chars = max(dynamic_min_chars, min(dynamic_max_chars, target_chunk_chars))
+        chunk_overlap = max(500, min(4000, int(target_chunk_chars * 0.01)))
+
+        profile_name = "short" if text_len <= target_chunk_chars else "novel"
+        if text_len > target_chunk_chars * 8:
+            profile_name = "huge"
+        if text_len > target_chunk_chars * 20:
+            profile_name = "massive"
+
+        profile = {
+            "profile": profile_name,
+            "chunk_size": target_chunk_chars,
+            "chunk_overlap": chunk_overlap,
+            "chapter_chunk_char_budget": target_chunk_chars,
+            "chapters_per_chunk": 9999,
+            "outer_workers": max_workers,
+            "rag_chunk_size": max(Config.RAG_HUGE_CHUNK_SIZE, 1800),
+            "rag_chunk_overlap": 180,
+            "rag_chunk_preset": "novel",
+            "rag_profile": "novel",
+            "text_length": text_len,
+            "context_window": context_window,
+            "target_chunk_chars": target_chunk_chars,
+            "parser_model": parser_model,
+            "chunk_profile_version": int(getattr(Config, "EXTRACTION_CHUNK_PROFILE_VERSION", 3)),
+        }
+        profile["outer_workers"] = max(1, min(int(profile["outer_workers"]), max_workers))
+        return profile
+
+    @staticmethod
+    def _safe_text(value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode('utf-8', errors='replace')
+        text = str(value or '')
+        return text.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
 
     def _has_meaningful_content(self, data: Dict[str, Any]) -> bool:
         if not isinstance(data, dict):
@@ -244,6 +339,28 @@ class EnhancedWorldExtractor:
             "source": dict(stage.get("source")) if isinstance(stage.get("source"), dict) else {},
         }
 
+    def _is_fragment_entity_name(self, name: Any, entity_type: Any = "", attributes: Optional[Dict[str, Any]] = None) -> bool:
+        """过滤 LLM 把语气词、单字、形容词、引语残片误当实体的情况。"""
+        text = str(name or "").strip()
+        key = self._normalize_identity_key(text)
+        etype = str(entity_type or "").strip()
+        attributes = attributes or {}
+        if not key:
+            return True
+        if key in self.FRAGMENT_ENTITY_KEYS:
+            return True
+        if any(re.match(pattern, text) for pattern in self.FRAGMENT_NAME_PATTERNS):
+            return True
+        if len(key) == 1 and etype in {"", "其他", "地点", "人物", "物品", "能力"}:
+            return True
+
+        intro = str(attributes.get("简介") or attributes.get("description") or "").strip()
+        if len(key) <= 2 and intro:
+            # 典型坏例：name=地 / 心地，简介=地说：'人类应该...'。这种不是实体，而是句子碎片。
+            if re.search(r"[说道认为表示指出]\s*[：:]|[，。！？；]", intro) and etype in {"", "其他", "地点"}:
+                return True
+        return False
+
     def _normalize_relationship(self, relationship: Any) -> Dict[str, Any]:
         if isinstance(relationship, str):
             return {}
@@ -304,6 +421,10 @@ class EnhancedWorldExtractor:
             return {}
         raw_attributes = entity.get("attributes") if isinstance(entity.get("attributes"), dict) else {}
         attributes = dict(raw_attributes)
+        entity_type = str(entity.get("type") or "其他").strip() or "其他"
+        if self._is_fragment_entity_name(name, entity_type, attributes):
+            logger.debug(f"过滤疑似碎片实体: {name} ({entity_type})")
+            return {}
         raw_stages = entity.get("stages") or entity.get("阶段") or attributes.get("stages") or attributes.get("阶段") or []
         raw_relationships = (
             entity.get("relationships")
@@ -352,7 +473,7 @@ class EnhancedWorldExtractor:
         return {
             **entity,
             "name": name,
-            "type": str(entity.get("type") or "其他").strip() or "其他",
+            "type": entity_type,
             "aliases": aliases,
             "attributes": attributes,
             "stages": stages,
@@ -577,7 +698,7 @@ class EnhancedWorldExtractor:
         def add_reference(raw_name: Any, note: str = "", inferred_type: str = "") -> None:
             name = str(raw_name or "").strip()
             key = self._normalize_identity_key(name)
-            if not key or self._is_generic_identity_value(name):
+            if not key or self._is_generic_identity_value(name) or self._is_fragment_entity_name(name, inferred_type or "其他"):
                 return
             reference_names.setdefault(key, name)
             if note:
@@ -672,13 +793,17 @@ class EnhancedWorldExtractor:
         self._canonicalize_entity_links(finalized.get("entities") or [], finalized.get("events") or [])
         finalized["writing_style"] = str(data.get("writing_style") or "").strip()
         finalized["reference_text"] = str(data.get("reference_text") or "")
+        if isinstance(data.get("extraction_diagnostics"), dict):
+            finalized["extraction_diagnostics"] = data["extraction_diagnostics"]
         return finalized
 
     def _normalize_setting_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         name = str(item.get("name") or item.get("title") or item.get("label") or "").strip()
         desc = str(item.get("description") or item.get("summary") or item.get("content") or "").strip()
         detail = str(item.get("detailContent") or item.get("detail") or desc).strip()
-        if not name or not (desc or detail):
+        category = self._normalize_setting_category(item.get("category") or item.get("type"))
+        pseudo_type = self._setting_category_to_entity_type(category)
+        if not name or not (desc or detail) or self._is_fragment_entity_name(name, pseudo_type, {"简介": desc or detail}):
             return {}
         return {
             "name": name, "settingType": "setting",
@@ -754,21 +879,51 @@ class EnhancedWorldExtractor:
 
     _EXTRACTION_SYSTEM_PROMPT = load_prompt("extraction_system")
 
-    def _extract_from_chunk(self, chunk: str, chunk_index: int = 0) -> Dict[str, Any]:
+    def _extract_from_chunk(self, chunk: str, chunk_index: int = 0, context_prefix: str = "") -> Dict[str, Any]:
         """单次 LLM 调用穷举提取一个文本块的所有世界观数据"""
         context_text = ("这是整个文本的开头部分（含多章），世界观基础设定通常在此。"
                         if chunk_index == 0
                         else f"这是文本的第{chunk_index + 1}个章节组（含多章）。请提取本段中出现的所有信息。")
-        prompt = load_prompt("extraction_chunk", context=context_text, chunk=chunk)
+        if context_prefix:
+            context_text = f"{context_text}\n\n{context_prefix}"
+        context_text = f"{context_text}\n\n重要要求：本次为{'深度连续扫描' if context_prefix else '全量扫描'}，必须穷举当前文本块中的人物、组织/国家/种族、地点、物品/能力、事件、关系与设定条目；不要因为已有摘要中出现过就跳过当前块中的新证据、新别名、新关系或新阶段。"
+        safe_chunk = self._safe_text(chunk)
+        prompt = load_prompt("extraction_chunk", context=context_text, chunk=safe_chunk)
 
 
-        result = self._get_client().chat_json(
-            messages=[
-                {"role": "system", "content": self._EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=32768,
-        )
+        last_error = None
+        for attempt in range(1, self.CHUNK_RETRY_TIMES + 1):
+            try:
+                result = self._get_client().chat_json(
+                    messages=[
+                        {"role": "system", "content": self._EXTRACTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=32768,
+                )
+                break
+            except UnicodeDecodeError as exc:
+                last_error = exc
+                if hasattr(_thread_local, 'client'):
+                    delattr(_thread_local, 'client')
+                logger.warning(
+                    f"章节组{chunk_index + 1}响应解码失败，第 {attempt}/{self.CHUNK_RETRY_TIMES} 次：{self._format_error_message(exc)}"
+                )
+                if attempt < self.CHUNK_RETRY_TIMES:
+                    time.sleep(0.8 * attempt)
+                    continue
+                raise
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.CHUNK_RETRY_TIMES and any(keyword in str(exc).lower() for keyword in ['connection', 'timeout', 'temporarily', 'rate limit', '502', '503', '504']):
+                    if hasattr(_thread_local, 'client'):
+                        delattr(_thread_local, 'client')
+                    logger.warning(f"章节组{chunk_index + 1}请求失败，第 {attempt}/{self.CHUNK_RETRY_TIMES} 次：{exc}")
+                    time.sleep(0.8 * attempt)
+                    continue
+                raise
+        else:
+            raise last_error or RuntimeError(f"章节组{chunk_index + 1}提取失败")
 
         if not isinstance(result, dict):
             raise ValueError(f"章节组{chunk_index + 1}提取返回格式无效")
@@ -793,7 +948,7 @@ class EnhancedWorldExtractor:
         world_info = result.get("world_info") or {}
 
         chunk_result = {
-            "world_info": world_info if chunk_index == 0 else {},
+            "world_info": world_info if isinstance(world_info, dict) else {},
             "entities": entities,
             "events": events,
             "settings": settings,
@@ -812,21 +967,132 @@ class EnhancedWorldExtractor:
 
     # ==================== 整体提取流程 ====================
 
-    def extract_from_text(self, text: str, progress_callback=None) -> Dict[str, Any]:
-        """从文本提取世界观信息（章节感知全文处理，无遗漏）"""
+    def _source_hash(self, text: str) -> str:
+        return hashlib.sha256(self._safe_text(text).encode("utf-8", errors="replace")).hexdigest()
+
+    def build_cache_key(self, text: str, extraction_mode: str, volume_profile: Optional[Dict[str, Any]] = None) -> str:
+        volume_profile = volume_profile or self.get_text_volume_profile(len(text or ""))
+        raw = "|".join([
+            self._source_hash(text),
+            str(extraction_mode or "fast"),
+            str(volume_profile.get("parser_model") or ""),
+            str(volume_profile.get("context_window") or ""),
+            str(volume_profile.get("chunk_profile_version") or ""),
+        ])
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _cache_dir(self) -> str:
+        path = os.path.join(Config.UPLOAD_FOLDER, getattr(Config, "EXTRACTION_CHECKPOINT_DIR", "extraction_cache"))
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _cache_path(self, cache_key: str) -> str:
+        safe_key = re.sub(r"[^a-fA-F0-9_-]", "", cache_key)[:96]
+        return os.path.join(self._cache_dir(), f"{safe_key}.json")
+
+    def _load_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        path = self._cache_path(cache_key)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except Exception as exc:
+            logger.warning(f"读取提取缓存失败 [{cache_key}]: {exc}")
+            return None
+
+    def _save_cache(self, cache: Dict[str, Any]) -> None:
+        cache["updated_at"] = datetime.now().isoformat()
+        path = self._cache_path(cache.get("cache_key") or "")
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(cache, handle, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+
+    def _build_chunk_records(self, text: str, chunks: List[Any]) -> List[Dict[str, Any]]:
+        records = []
+        cursor = 0
+        total = len(chunks)
+        text_len = len(text or "")
+        for index, item in enumerate(chunks):
+            if isinstance(item, dict):
+                chunk_text = item.get("text") or ""
+                start, end = item.get("char_range") or (None, None)
+                if start is None:
+                    start = cursor
+                if end is None:
+                    end = start + len(chunk_text)
+                titles = item.get("chapter_titles") or []
+            else:
+                chunk_text = str(item or "")
+                found = text.find(chunk_text[: min(len(chunk_text), 200)], cursor)
+                start = found if found >= 0 else cursor
+                end = start + len(chunk_text)
+                titles = [m.group().strip() for m in re.finditer(self.CHAPTER_RE, chunk_text, re.MULTILINE | re.IGNORECASE)][:8]
+            start = max(0, min(int(start or 0), text_len))
+            end = max(start, min(int(end or start + len(chunk_text)), text_len))
+            cursor = max(end, cursor)
+            records.append({
+                "index": index,
+                "char_range": [start, end],
+                "chapter_titles": titles,
+                "status": "pending",
+                "attempts": 0,
+                "error": "",
+                "result": {},
+                "text": chunk_text,
+                "chunk_count": total,
+            })
+        return records
+
+    def _new_cache(self, cache_key: str, source_hash: str, mode: str, volume_profile: Dict[str, Any], chunks: List[Any]) -> Dict[str, Any]:
+        now = datetime.now().isoformat()
+        return {
+            "cache_key": cache_key,
+            "source_hash": source_hash,
+            "mode": mode,
+            "status": "running",
+            "created_at": now,
+            "updated_at": now,
+            "parser_model": volume_profile.get("parser_model"),
+            "context_window": volume_profile.get("context_window"),
+            "profile": volume_profile,
+            "chunks": self._build_chunk_records(getattr(self, "_current_source_text", ""), chunks),
+            "partial_results": [],
+            "diagnostics": {"merge_conflicts": [], "failed_chunks": [], "duplicate_candidates": [], "overlap_aligned_entities": []},
+            "final_result": None,
+            "rolling_summary": "",
+            "confirmed_entities": [],
+            "last_completed_chunk": -1,
+            "snapshot_stats": {},
+        }
+
+    def extract_from_text(self, text: str, progress_callback=None, extraction_mode: str = None, force_rebuild: bool = False, should_cancel=None, should_pause=None) -> Dict[str, Any]:
+        """从文本提取世界观信息（统一大块切分 + Fast/Deep 缓存续传）。"""
+        text = self._safe_text(text)
+        mode = str(extraction_mode or getattr(Config, "EXTRACTION_DEFAULT_MODE", "fast") or "fast").lower()
+        if mode not in {"fast", "deep"}:
+            mode = "fast"
         text_len = len(text) if text else 0
+        volume_profile = self.get_text_volume_profile(text_len)
+        logger.info(
+            f"文本 {text_len} 字符 -> {mode}/{volume_profile['profile']} 策略 "
+            f"(target={volume_profile['target_chunk_chars']}, context={volume_profile['context_window']}, workers={volume_profile['outer_workers']})"
+        )
         if text_len <= self.LONG_TEXT_THRESHOLD:
-            return self._extract_short_text(text, progress_callback)
-        logger.info(f"文本 {text_len} 字符 -> 章节感知全量提取")
-        return self._extract_chapters(text, progress_callback)
+            result = self._extract_short_text(text, progress_callback)
+            result.setdefault("extraction_diagnostics", {})["volume_profile"] = volume_profile
+            result["cache_key"] = self.build_cache_key(text, mode, volume_profile)
+            result["cache_status"] = "skipped_short_text"
+            result["resumed_from_cache"] = False
+            return result
+        return self._extract_chapters(text, progress_callback, volume_profile=volume_profile, extraction_mode=mode, force_rebuild=force_rebuild, should_cancel=should_cancel, should_pause=should_pause)
 
     def _extract_short_text(self, text: str, progress_callback=None) -> Dict[str, Any]:
         """短文本提取：主提取与文风分析并行，节省一次 LLM 往返"""
         self.errors = []
         try:
             # 主提取和文风分析互不依赖，并行执行
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
             if progress_callback:
                 progress_callback('extracting', 10, '正在提取世界观信息 + 分析文风...')
 
@@ -886,6 +1152,10 @@ class EnhancedWorldExtractor:
                 )
             extracted_data = self._consolidate_results(extracted_data)
             extracted_data = self._finalize_extraction(extracted_data)
+            if progress_callback:
+                progress_callback('validating', 94, '正在质量验证并补充明显遗漏...')
+            extracted_data = self.validate_extraction(extracted_data)
+            extracted_data = self._finalize_extraction(extracted_data)
             val_errors = self._validate_consolidated(extracted_data)
             if val_errors:
                 logger.warning(f"整合后验证: {len(val_errors)} 个问题")
@@ -899,159 +1169,605 @@ class EnhancedWorldExtractor:
             logger.error(f"提取世界观失败: {str(e)}")
             raise
 
-    def _extract_chapters(self, text: str, progress_callback=None) -> Dict[str, Any]:
-        """章节感知全量提取：文风分析+章节提取全部并行，不遗漏任何剧情"""
+    def _extract_chapters(
+        self,
+        text: str,
+        progress_callback=None,
+        volume_profile: Optional[Dict[str, Any]] = None,
+        extraction_mode: str = "fast",
+        force_rebuild: bool = False,
+        should_cancel=None,
+        should_pause=None,
+    ) -> Dict[str, Any]:
+        """统一大块提取：Fast 并行 / Deep 线性，共用缓存结构。"""
         self.errors = []
-        chunks = self._chapter_aware_split(text)
-        logger.info(f"章节切分: {len(text)} 字符 -> {len(chunks)} 个章节组（每 {self.CHAPTERS_PER_CHUNK} 章合并）")
+        self._current_source_text = text
+        mode = extraction_mode if extraction_mode in {"fast", "deep"} else "fast"
+        volume_profile = volume_profile or self.get_text_volume_profile(len(text or ""))
+        chunks = self._chapter_aware_split(text, volume_profile=volume_profile)
+        source_hash = self._source_hash(text)
+        cache_key = self.build_cache_key(text, mode, volume_profile)
+        cache = None if force_rebuild else self._load_cache(cache_key)
+        resumed_from_cache = bool(cache and cache.get("chunks"))
+        if not cache:
+            cache = self._new_cache(cache_key, source_hash, mode, volume_profile, chunks)
+            self._save_cache(cache)
 
-        if len(chunks) == 1:
-            return self._extract_short_text(chunks[0], progress_callback)
-
-        max_workers = min(self.OUTER_WORKERS, len(chunks))
-        all_results = [None] * len(chunks)
-        style_result = [None]
-        completed_count = [0]
+        chunk_records = cache.get("chunks") or []
+        for record in chunk_records:
+            if record.get("status") in {"running", "failed"}:
+                record["status"] = "pending"
+        all_results = [record.get("result") if record.get("status") == "completed" else None for record in chunk_records]
+        completed_initial = sum(1 for item in all_results if item)
+        logger.info(f"提取切分: {len(text)} 字符 -> {len(chunk_records)} 个大块，mode={mode}, cache={cache_key[:12]}, resumed={resumed_from_cache}")
 
         if progress_callback:
             progress_callback('extracting', 2,
-                f'全量提取 {len(chunks)} 个章节组（{max_workers} 线程并行）+ 文风分析...')
+                f'{mode.upper()} 扫描 {len(chunk_records)} 个大块，已缓存 {completed_initial}/{len(chunk_records)} 块...',
+                self._progress_detail(cache, volume_profile, resumed_from_cache))
 
-        def process_chunk(idx, chunk):
-            try:
-                result = self._extract_from_chunk(chunk, chunk_index=idx)
-                if self._has_meaningful_content(result):
-                    return (idx, result)
-            except Exception as e:
-                self._record_error(f"章节组{idx + 1}", e)
-            return (idx, None)
+        if cache.get("status") == "completed" and cache.get("final_result") and not force_rebuild:
+            final = cache["final_result"]
+            final.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
+            return final
+
+        style_result = [None]
+        style_source = next((record.get("text") for record in chunk_records if record.get("text")), text[:2000])
 
         def do_style():
             try:
-                return self.extract_writing_style(chunks[0])
+                return self.extract_writing_style(style_source)
             except Exception as e:
                 self._record_error("文风分析", e)
-                return {"writing_style": "", "reference_text": chunks[0][:2000] if chunks[0] else ""}
+                return {"writing_style": "", "reference_text": style_source[:2000] if style_source else ""}
 
-        with ThreadPoolExecutor(max_workers=max_workers + 1) as executor:
-            # 章节提取和文风分析全部并行
+        def process_record(record: Dict[str, Any], context_prefix: str = "") -> Tuple[int, Optional[Dict[str, Any]], str]:
+            idx = int(record.get("index") or 0)
+            chunk = record.get("text") or ""
+            record["status"] = "running"
+            record["attempts"] = int(record.get("attempts") or 0) + 1
+            self._save_cache(cache)
+            try:
+                result = self._extract_from_chunk(chunk, chunk_index=idx, context_prefix=context_prefix)
+                if self._has_meaningful_content(result):
+                    return idx, result, ""
+                return idx, None, "块结果为空"
+            except Exception as e:
+                self._record_error(f"大块{idx + 1}", e)
+                retry_chunks = self._fallback_split(chunk, chunk_size=max(self.CHUNK_SIZE, int(volume_profile.get("chunk_size", self.CHUNK_SIZE) // 2)), overlap=self.CHUNK_OVERLAP) if len(chunk) > self.CHUNK_SIZE else []
+                if len(retry_chunks) > 1:
+                    sub_results = []
+                    for sub_idx, sub_chunk in enumerate(retry_chunks):
+                        try:
+                            sub_result = self._extract_from_chunk(sub_chunk, chunk_index=idx, context_prefix=context_prefix)
+                            if self._has_meaningful_content(sub_result):
+                                sub_results.append(sub_result)
+                        except Exception as sub_error:
+                            self._record_error(f"大块{idx + 1}子段{sub_idx + 1}", sub_error)
+                    if sub_results:
+                        return idx, self._merge_extractions(sub_results), ""
+                return idx, None, self._format_error_message(e)
+
+        pending_records = [record for record in chunk_records if record.get("status") != "completed"]
+        completed_count = completed_initial
+
+        with ThreadPoolExecutor(max_workers=(1 if mode == "deep" else min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records)))) + 1) as executor:
             future_style = executor.submit(do_style)
-            futures = {executor.submit(process_chunk, i, c): i for i, c in enumerate(chunks)}
+            if mode == "deep":
+                for record in pending_records:
+                    if should_cancel and should_cancel():
+                        cache["status"] = "cancelled"
+                        self._save_cache(cache)
+                        break
+                    if should_pause and should_pause():
+                        cache["status"] = "paused"
+                        self._save_cache(cache)
+                        break
+                    snapshot, snapshot_stats = self._build_entity_snapshot(cache)
+                    context_prefix = self._build_deep_context(cache.get("rolling_summary") or "", snapshot)
+                    cache["current_chunk_index"] = int(record.get("index") or 0)
+                    cache["current_chunk_started_at"] = datetime.now().isoformat()
+                    cache["current_chunk_title"] = self._current_chunk_title(record)
+                    cache["current_chunk_char_range"] = record.get("char_range") or [0, 0]
+                    cache["current_chunk_text_length"] = len(record.get("text") or "")
+                    self._save_cache(cache)
+                    if progress_callback:
+                        progress_callback('extracting', 3 + int(completed_count / max(len(chunk_records), 1) * 85),
+                            f'DEEP 正在阅读 {cache["current_chunk_title"]}...',
+                            self._progress_detail(cache, volume_profile, resumed_from_cache))
+                    idx, result, error = process_record(record, context_prefix=context_prefix)
+                    self._checkpoint_chunk(cache, idx, result, error, deep_mode=True, snapshot_stats=snapshot_stats)
+                    all_results[idx] = result if result else None
+                    completed_count = sum(1 for item in all_results if item)
+                    if progress_callback:
+                        progress_callback('extracting', 3 + int(completed_count / max(len(chunk_records), 1) * 85),
+                            f'DEEP 大块 {completed_count}/{len(chunk_records)} 完成...',
+                            self._progress_detail(cache, volume_profile, resumed_from_cache))
+            else:
+                max_fast_workers = min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records)))
+                record_iter = iter(pending_records)
+                futures = {}
+                stop_requested = False
 
-            for future in as_completed(futures):
-                idx, result = future.result()
-                if result:
-                    all_results[idx] = result
-                completed_count[0] += 1
-                if progress_callback and len(chunks) > 0:
-                    pct = 3 + int(completed_count[0] / len(chunks) * 85)
-                    progress_callback('extracting', pct,
-                        f'章节组 {completed_count[0]}/{len(chunks)} 完成...')
+                def submit_next_records():
+                    while not stop_requested and len(futures) < max_fast_workers:
+                        if should_cancel and should_cancel():
+                            cache["status"] = "cancelled"
+                            self._save_cache(cache)
+                            return
+                        if should_pause and should_pause():
+                            cache["status"] = "paused"
+                            self._save_cache(cache)
+                            return
+                        try:
+                            next_record = next(record_iter)
+                        except StopIteration:
+                            return
+                        futures[executor.submit(process_record, next_record)] = int(next_record.get("index") or 0)
 
-            # 等待文风分析完成
+                submit_next_records()
+                while futures:
+                    done_futures, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
+                    for future in done_futures:
+                        futures.pop(future, None)
+                        idx, result, error = future.result()
+                        self._checkpoint_chunk(cache, idx, result, error)
+                        all_results[idx] = result if result else None
+                        completed_count = sum(1 for item in all_results if item)
+                        if progress_callback:
+                            progress_callback('extracting', 3 + int(completed_count / max(len(chunk_records), 1) * 85),
+                                f'FAST 大块 {completed_count}/{len(chunk_records)} 完成...',
+                                self._progress_detail(cache, volume_profile, resumed_from_cache))
+
+                    if should_cancel and should_cancel():
+                        cache["status"] = "cancelled"
+                        self._save_cache(cache)
+                        stop_requested = True
+                    elif should_pause and should_pause():
+                        cache["status"] = "paused"
+                        self._save_cache(cache)
+                        stop_requested = True
+
+                    if not stop_requested:
+                        submit_next_records()
             style_result[0] = future_style.result()
 
         successful = [r for r in all_results if r is not None]
+        failed_chunks = [
+            {"index": idx + 1, "preview": (chunk_records[idx].get("text") or "")[:120], "error": chunk_records[idx].get("error", "")}
+            for idx, result in enumerate(all_results)
+            if result is None
+        ]
+        cache.setdefault("diagnostics", {})["failed_chunks"] = failed_chunks
         if not successful:
-            raise ValueError("所有章节提取均失败: " + " | ".join(self.errors))
+            cache["status"] = "failed"
+            self._save_cache(cache)
+            raise ValueError("所有大块提取均失败: " + " | ".join(self.errors))
 
-        style_data = style_result[0] or {"writing_style": "", "reference_text": chunks[0][:2000] if chunks[0] else ""}
-
+        cancelled = bool(cache.get("status") == "cancelled" or (should_cancel and should_cancel()))
+        paused = bool(cache.get("status") == "paused" or (should_pause and should_pause()))
         if progress_callback:
-            progress_callback('merging', 88, f'正在合并 {len(successful)} 个章节结果...')
+            progress_callback('merging', 88, f'正在保存已提取的 {len(successful)}/{len(chunk_records)} 个大块结果...' if (cancelled or paused) else f'正在合并 {len(successful)}/{len(chunk_records)} 个大块结果...', self._progress_detail(cache, volume_profile, resumed_from_cache))
+        style_data = style_result[0] or {"writing_style": "", "reference_text": style_source[:2000] if style_source else ""}
         merged = self._merge_extractions(successful)
         merged["settings"] = self._normalize_settings(merged.get("settings") or {})
         merged["writing_style"] = style_data.get("writing_style", "")
         merged["reference_text"] = style_data.get("reference_text", "")
+        merged["extraction_diagnostics"] = {
+            "volume_profile": volume_profile,
+            "total_chunks": len(chunk_records),
+            "successful_chunks": len(successful),
+            "failed_chunks": failed_chunks,
+            "errors": list(self.errors),
+            **cache.get("diagnostics", {}),
+        }
 
         if progress_callback:
-            progress_callback(
-                'consolidating',
-                92,
-                '正在执行规则整合，保留全部已提取实体与事件...' if not self.USE_LLM_CONSOLIDATION else '正在整合修正所有提取结果（合并身份、修正时间线、丰富生平）...'
-            )
+            progress_callback('consolidating', 92, '正在执行规则整合，保留全部已提取实体与事件...', self._progress_detail(cache, volume_profile, resumed_from_cache))
         merged = self._consolidate_results(merged)
         merged = self._finalize_extraction(merged)
-        val_errors = self._validate_consolidated(merged)
-        if val_errors:
-            logger.warning(f"章节提取整合后验证: {len(val_errors)} 个问题")
-
-        logger.info(f"章节提取完成: {len(merged.get('entities', []))} 实体, {len(merged.get('events', []))} 事件 ({len(successful)}/{len(chunks)})")
+        merged["extraction_diagnostics"] = {**merged.get("extraction_diagnostics", {}), **cache.get("diagnostics", {})}
+        merged.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
+        if not (cancelled or paused):
+            if progress_callback:
+                progress_callback('validating', 94, '正在质量验证并补充明显遗漏...', self._progress_detail(cache, volume_profile, resumed_from_cache))
+            merged = self.validate_extraction(merged)
+            merged = self._finalize_extraction(merged)
+            merged["extraction_diagnostics"] = {**merged.get("extraction_diagnostics", {}), **cache.get("diagnostics", {})}
+            merged.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
+        if cancelled:
+            merged.setdefault("extraction_diagnostics", {})["cancelled"] = True
+            merged["cancelled"] = True
+            merged["cache_status"] = "cancelled"
+        if paused:
+            merged.setdefault("extraction_diagnostics", {})["paused"] = True
+            merged["paused"] = True
+            merged["cache_status"] = "paused"
+        cache["final_result"] = merged
+        cache["status"] = "cancelled" if cancelled else ("paused" if paused else ("completed" if not failed_chunks else "partial"))
+        self._save_cache(cache)
+        logger.info(f"提取{'中断保存' if cancelled else ('暂停保存' if paused else '完成')}: {len(merged.get('entities', []))} 实体, {len(merged.get('events', []))} 事件 ({len(successful)}/{len(chunk_records)})")
         return merged
+
+    def resume_from_cache(self, cache_key: str, progress_callback=None, should_cancel=None, should_pause=None) -> Dict[str, Any]:
+        """从已保存的提取缓存继续未完成块。"""
+        cache = self._load_cache(cache_key)
+        if not cache or not cache.get("chunks"):
+            raise ValueError("提取缓存不存在，无法继续任务")
+        chunks = cache.get("chunks") or []
+        text = "\n\n".join(record.get("text") or "" for record in chunks)
+        mode = str(cache.get("mode") or "fast").lower()
+        volume_profile = cache.get("profile") or self.get_text_volume_profile(len(text))
+        cache["status"] = "running"
+        for record in chunks:
+            if record.get("status") == "running":
+                record["status"] = "pending"
+        self._save_cache(cache)
+        return self._extract_chapters(
+            text,
+            progress_callback=progress_callback,
+            volume_profile=volume_profile,
+            extraction_mode=mode,
+            force_rebuild=False,
+            should_cancel=should_cancel,
+            should_pause=should_pause,
+        )
+
+    def _progress_detail(self, cache: Dict[str, Any], volume_profile: Dict[str, Any], resumed_from_cache: bool) -> Dict[str, Any]:
+        chunks = cache.get("chunks") or []
+        completed = sum(1 for item in chunks if item.get("status") == "completed")
+        failed = sum(1 for item in chunks if item.get("status") == "failed")
+        total_chars = max(1, int((volume_profile or {}).get("text_length") or 0))
+        completed_ranges = []
+        for item in chunks:
+            if item.get("status") == "completed":
+                char_range = item.get("char_range") or [0, 0]
+                completed_ranges.append([max(0, int(char_range[0] or 0)), max(0, int(char_range[-1] or 0))])
+        processed_chars = self._merged_range_length(completed_ranges)
+        current_index = cache.get("current_chunk_index")
+        current_record = chunks[current_index] if isinstance(current_index, int) and 0 <= current_index < len(chunks) else None
+        current_range = cache.get("current_chunk_char_range") or (current_record or {}).get("char_range") or [processed_chars, processed_chars]
+        if current_record and current_record.get("status") == "running":
+            processed_chars = max(processed_chars, int(current_range[0] or 0))
+        deep_discoveries = self._build_deep_discoveries(cache)
+        knowledge_stats = self._build_knowledge_stats(cache)
+        return {
+            "cache_key": cache.get("cache_key"),
+            "cache_status": cache.get("status"),
+            "resumed_from_cache": resumed_from_cache,
+            "completed_chunks": completed,
+            "failed_chunks": failed,
+            "total_chunks": len(chunks),
+            "processed_chars": processed_chars,
+            "total_chars": total_chars,
+            "processed_chars_label": self._format_char_count(processed_chars),
+            "total_chars_label": self._format_char_count(total_chars),
+            "context_window": volume_profile.get("context_window"),
+            "target_chunk_chars": volume_profile.get("target_chunk_chars"),
+            "volume_profile": volume_profile,
+            "deep_state": {
+                "current_chunk_index": current_index,
+                "current_chunk_title": cache.get("current_chunk_title") or self._current_chunk_title(current_record or {}),
+                "current_chunk_char_range": current_range,
+                "current_chunk_progress": 100 if current_record and current_record.get("status") == "completed" else (80 if current_record and current_record.get("status") == "running" else 0),
+                "rolling_summary_preview": (cache.get("rolling_summary") or "")[-500:],
+                "confirmed_entity_count": len(cache.get("confirmed_entities") or []),
+                "snapshot_stats": cache.get("snapshot_stats") or {},
+                "discoveries": deep_discoveries,
+                "knowledge_stats": knowledge_stats,
+            },
+        }
+
+    def _cache_result_fields(self, cache: Dict[str, Any], volume_profile: Dict[str, Any], resumed_from_cache: bool) -> Dict[str, Any]:
+        detail = self._progress_detail(cache, volume_profile, resumed_from_cache)
+        return {
+            "cache_key": cache.get("cache_key"),
+            "cache_status": cache.get("status"),
+            "resumed_from_cache": resumed_from_cache,
+            "completed_chunks": detail["completed_chunks"],
+            "failed_chunks": detail["failed_chunks"],
+            "processed_chars": detail["processed_chars"],
+            "total_chars": detail["total_chars"],
+            "context_window": volume_profile.get("context_window"),
+            "target_chunk_chars": volume_profile.get("target_chunk_chars"),
+            "deep_state": detail["deep_state"],
+        }
+
+    def _checkpoint_chunk(self, cache: Dict[str, Any], idx: int, result: Optional[Dict[str, Any]], error: str = "", deep_mode: bool = False, snapshot_stats: Optional[Dict[str, Any]] = None) -> None:
+        chunks = cache.get("chunks") or []
+        if idx < 0 or idx >= len(chunks):
+            return
+        record = chunks[idx]
+        if result:
+            record["status"] = "completed"
+            record["result"] = result
+            record["error"] = ""
+            cache.setdefault("partial_results", [])
+            existing_indexes = {item.get("index") for item in cache["partial_results"] if isinstance(item, dict)}
+            if idx not in existing_indexes:
+                cache["partial_results"].append({"index": idx, "result": result})
+            if deep_mode:
+                cache["last_completed_chunk"] = idx
+                cache["rolling_summary"] = self._update_rolling_summary(cache.get("rolling_summary") or "", result)
+                cache["confirmed_entities"] = self._update_confirmed_entities(cache.get("confirmed_entities") or [], result)
+                cache["snapshot_stats"] = snapshot_stats or {}
+                if result.get("entities"):
+                    cache.setdefault("diagnostics", {}).setdefault("entity_yield_by_chunk", []).append({"index": idx + 1, "entities": len(result.get("entities") or []), "events": len(result.get("events") or [])})
+        else:
+            record["status"] = "failed"
+            record["error"] = error or "提取失败"
+            cache.setdefault("diagnostics", {}).setdefault("failed_chunks", []).append({"index": idx + 1, "error": record["error"]})
+        completed = sum(1 for item in chunks if item.get("status") == "completed")
+        failed = sum(1 for item in chunks if item.get("status") == "failed")
+        cache["status"] = "completed" if completed == len(chunks) else ("partial" if completed or failed else "running")
+        self._save_cache(cache)
+
+    def _merged_range_length(self, ranges: List[List[int]]) -> int:
+        normalized = sorted((max(0, int(a)), max(0, int(b))) for a, b in ranges if int(b) > int(a))
+        if not normalized:
+            return 0
+        merged = []
+        for start, end in normalized:
+            if not merged or start > merged[-1][1]:
+                merged.append([start, end])
+            else:
+                merged[-1][1] = max(merged[-1][1], end)
+        return sum(end - start for start, end in merged)
+
+    def _format_char_count(self, value: int) -> str:
+        value = max(0, int(value or 0))
+        if value >= 10_000:
+            return f"{value / 10_000:.1f}万字"
+        return f"{value}字"
+
+    def _current_chunk_title(self, record: Dict[str, Any]) -> str:
+        if not record:
+            return "准备中"
+        titles = record.get("chapter_titles") or []
+        if titles:
+            return str(titles[-1]).strip() or f"文本块 {int(record.get('index') or 0) + 1}"
+        return f"文本块 {int(record.get('index') or 0) + 1}"
+
+    def _build_deep_discoveries(self, cache: Dict[str, Any]) -> List[str]:
+        partials = cache.get("partial_results") or []
+        latest = next((item.get("result") for item in reversed(partials) if isinstance(item, dict) and item.get("result")), None)
+        discoveries: List[str] = []
+        if isinstance(latest, dict):
+            for entity in (latest.get("entities") or [])[:3]:
+                if isinstance(entity, dict) and entity.get("name"):
+                    discoveries.append(f"新实体: {entity.get('name')} ({entity.get('type') or '其他'})")
+            for event in (latest.get("events") or [])[:2]:
+                if isinstance(event, dict) and event.get("name"):
+                    discoveries.append(f"事件更新: {event.get('name')}")
+            for item in ((latest.get("settings") or {}).get("items") or [])[:2]:
+                if isinstance(item, dict) and item.get("name"):
+                    discoveries.append(f"设定补充: {item.get('name')}")
+        return discoveries[:5]
+
+    def _build_knowledge_stats(self, cache: Dict[str, Any]) -> Dict[str, int]:
+        stats = {"人物": 0, "物品": 0, "势力": 0, "地点": 0, "事件": 0}
+        seen_entities = set()
+        seen_events = set()
+        for item in cache.get("partial_results") or []:
+            result = item.get("result") if isinstance(item, dict) else None
+            if not isinstance(result, dict):
+                continue
+            for entity in result.get("entities") or []:
+                if not isinstance(entity, dict):
+                    continue
+                name = str(entity.get("name") or "").strip()
+                if not name or name in seen_entities:
+                    continue
+                seen_entities.add(name)
+                entity_type = str(entity.get("type") or "其他")
+                if entity_type == "人物":
+                    stats["人物"] += 1
+                elif entity_type in {"物品", "能力"}:
+                    stats["物品"] += 1
+                elif entity_type in {"组织", "国家", "种族"}:
+                    stats["势力"] += 1
+                elif entity_type == "地点":
+                    stats["地点"] += 1
+            for event in result.get("events") or []:
+                if not isinstance(event, dict):
+                    continue
+                name = str(event.get("name") or "").strip()
+                if name and name not in seen_events:
+                    seen_events.add(name)
+                    stats["事件"] += 1
+        return stats
+
+    def _update_rolling_summary(self, previous: str, result: Dict[str, Any]) -> str:
+        names = [str(e.get("name") or "").strip() for e in result.get("entities") or [] if isinstance(e, dict)][:20]
+        events = [str(e.get("name") or "").strip() for e in result.get("events") or [] if isinstance(e, dict)][:12]
+        line = f"新增实体：{'、'.join([n for n in names if n])}；新增事件：{'、'.join([n for n in events if n])}。"
+        summary = (previous + "\n" + line).strip()
+        return summary[-int(getattr(Config, "DEEP_EXTRACTION_SUMMARY_MAX_CHARS", 4000)):]
+
+    def _update_confirmed_entities(self, current: List[Dict[str, Any]], result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        by_key = {self._normalize_identity_key(item.get("name")): item for item in current if isinstance(item, dict)}
+        for entity in result.get("entities") or []:
+            if not isinstance(entity, dict):
+                continue
+            key = self._normalize_identity_key(entity.get("name"))
+            if key:
+                by_key[key] = {"name": entity.get("name"), "type": entity.get("type"), "aliases": entity.get("aliases") or []}
+        return list(by_key.values())[-int(getattr(Config, "DEEP_EXTRACTION_ACTIVE_ENTITY_LIMIT", 80)):]
+
+    def _build_entity_snapshot(self, cache: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        entities = cache.get("confirmed_entities") or []
+        limit = int(getattr(Config, "DEEP_EXTRACTION_ACTIVE_ENTITY_LIMIT", 80))
+        selected = entities[-limit:]
+        omitted = max(0, len(entities) - len(selected))
+        lines = [f"- {item.get('name')}（{item.get('type') or '其他'}）" for item in selected if isinstance(item, dict)]
+        text = "\n".join(lines)
+        max_chars = int(getattr(Config, "DEEP_EXTRACTION_ENTITY_SNAPSHOT_MAX_CHARS", 10000))
+        if len(text) > max_chars:
+            text = text[-max_chars:]
+        return text, {"entity_count": len(selected), "snapshot_omitted_count": omitted}
+
+    def _build_deep_context(self, rolling_summary: str, snapshot: str) -> str:
+        parts = []
+        if rolling_summary:
+            parts.append(f"【滚动摘要】\n{rolling_summary}")
+        if snapshot:
+            parts.append(f"【已确认实体快照】\n{snapshot}")
+        return "\n\n".join(parts)
 
     # ==================== 章节感知切分 ====================
 
-    def _chapter_aware_split(self, text: str) -> List[str]:
-        """按章节标记切分文本，每 CHAPTERS_PER_CHUNK 章合并为一次 LLM 调用"""
+    def _chapter_aware_split(self, text: str, volume_profile: Optional[Dict[str, Any]] = None) -> List[str]:
+        """按章节标记切分文本，每 CHAPTERS_PER_CHUNK 章合并为一次 LLM 调用。"""
+        text = self._safe_text(text)
+        volume_profile = volume_profile or self.get_text_volume_profile(len(text))
+        chapters_per_chunk = int(volume_profile.get("chapters_per_chunk") or self.CHAPTERS_PER_CHUNK)
+        char_budget = int(volume_profile.get("chapter_chunk_char_budget") or self.CHAPTER_CHUNK_CHAR_BUDGET)
         chapter_starts = []
-        for match in re.finditer(self.CHAPTER_RE, text, re.MULTILINE):
-            pos = match.start()
-            start = pos if text[pos] == '\n' else pos
-            if text[start] == '\n':
-                start = start + 1
-            existing = {s for s, _ in chapter_starts}
-            if start not in existing:
-                chapter_starts.append((start, match.group().strip()))
+        seen_starts = set()
+        for match in re.finditer(self.CHAPTER_RE, text, re.MULTILINE | re.IGNORECASE):
+            start = match.start()
+            if start < len(text) and text[start] == '\n':
+                start += 1
+            if start in seen_starts:
+                continue
+            seen_starts.add(start)
+            chapter_starts.append((start, match.group().strip()))
 
         if not chapter_starts:
             logger.info("未检测到章节标记，使用等宽切分")
             return self._fallback_split(text)
 
         logger.info(
-            f"检测到 {len(chapter_starts)} 个章节标记，每段最多 {self.CHAPTERS_PER_CHUNK} 章且不超过 {self.CHAPTER_CHUNK_CHAR_BUDGET} 字"
+            f"检测到 {len(chapter_starts)} 个章节标记，每段最多 {chapters_per_chunk} 章且不超过 {char_budget} 字"
         )
 
-        chapter_segments = []
-        for idx, (start_pos, _) in enumerate(chapter_starts):
+        chapter_segments: List[Dict[str, Any]] = []
+        preface = text[:chapter_starts[0][0]].strip()
+        if preface:
+            chapter_segments.extend(self._split_oversized_record(preface, 0, len(preface), ["序言/前置信息"], volume_profile=volume_profile))
+
+        for idx, (start_pos, title) in enumerate(chapter_starts):
             end_pos = chapter_starts[idx + 1][0] if idx + 1 < len(chapter_starts) else len(text)
             chapter_text = text[start_pos:end_pos].strip()
-            if chapter_text:
-                chapter_segments.append(chapter_text)
-
-        chunks = []
-        current_parts: List[str] = []
-        current_len = 0
-        for chapter_text in chapter_segments:
-            chapter_len = len(chapter_text)
-            exceeds_chapter_limit = len(current_parts) >= self.CHAPTERS_PER_CHUNK
-            exceeds_char_budget = bool(current_parts) and current_len + chapter_len > self.CHAPTER_CHUNK_CHAR_BUDGET
-            if exceeds_chapter_limit or exceeds_char_budget:
-                chunk = "\n\n".join(current_parts).strip()
-                if chunk:
-                    chunks.append(chunk)
-                current_parts = [chapter_text]
-                current_len = chapter_len
+            if not chapter_text:
                 continue
+            chapter_segments.extend(self._split_oversized_record(chapter_text, start_pos, end_pos, [title], volume_profile=volume_profile))
 
-            current_parts.append(chapter_text)
-            current_len += chapter_len
-
-        if current_parts:
-            chunk = "\n\n".join(current_parts).strip()
-            if chunk:
-                chunks.append(chunk)
-
+        chunks = self._pack_segments_into_chunks(chapter_segments, volume_profile=volume_profile)
         avg_len = sum(len(c) for c in chunks) // max(len(chunks), 1)
-        logger.info(f"切分结果: {len(chunks)} 段 (平均 {avg_len} 字符)")
+        max_len = max((len(c) for c in chunks), default=0)
+        logger.info(f"切分结果: {len(chunks)} 段 (平均 {avg_len} 字符, 最大 {max_len} 字符)")
         return chunks
 
-    def _fallback_split(self, text: str) -> List[str]:
+    def _split_oversized_record(self, segment: str, start_pos: int, end_pos: int, titles: List[str], volume_profile: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """将单个超长章节/分部继续拆小，并保留精确字符范围。"""
+        volume_profile = volume_profile or self.get_text_volume_profile(len(segment or ""))
+        char_budget = int(volume_profile.get("chapter_chunk_char_budget") or self.CHAPTER_CHUNK_CHAR_BUDGET)
+        chunk_size = int(volume_profile.get("chunk_size") or self.CHUNK_SIZE)
+        chunk_overlap = int(volume_profile.get("chunk_overlap") or self.CHUNK_OVERLAP)
+        segment = self._safe_text(segment).strip()
+        if not segment:
+            return []
+        if len(segment) <= char_budget:
+            return [{"text": segment, "char_range": [start_pos, end_pos], "chapter_titles": titles}]
+
+        logger.info(
+            f"章节/分部过长 ({len(segment)} 字符)，按 {volume_profile.get('profile')} 策略继续以 {chunk_size} 字符切分"
+        )
+        chunks = self._fallback_split(segment, chunk_size=chunk_size, overlap=chunk_overlap)
+        records = []
+        cursor = 0
+        for sub_chunk in chunks:
+            found = segment.find(sub_chunk[: min(len(sub_chunk), 200)], cursor)
+            local_start = found if found >= 0 else cursor
+            local_end = local_start + len(sub_chunk)
+            cursor = max(local_end - chunk_overlap, local_start + 1)
+            records.append({
+                "text": sub_chunk,
+                "char_range": [start_pos + local_start, min(start_pos + local_end, end_pos)],
+                "chapter_titles": titles,
+            })
+        return records
+
+    def _pack_segments_into_chunks(self, segments: List[Any], volume_profile: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """将已安全切分的章节段合并为 prompt chunk，尽量生成少量上下文友好的大块。"""
+        total_len = sum(len((s.get("text") if isinstance(s, dict) else s) or "") for s in segments)
+        volume_profile = volume_profile or self.get_text_volume_profile(total_len)
+        chapters_per_chunk = int(volume_profile.get("chapters_per_chunk") or self.CHAPTERS_PER_CHUNK)
+        char_budget = int(volume_profile.get("chapter_chunk_char_budget") or self.CHAPTER_CHUNK_CHAR_BUDGET)
+        chunks: List[Dict[str, Any]] = []
+        current_parts: List[str] = []
+        current_titles: List[str] = []
+        current_start: Optional[int] = None
+        current_end: Optional[int] = None
+        current_len = 0
+
+        def flush_current():
+            nonlocal current_parts, current_titles, current_start, current_end, current_len
+            chunk = "\n\n".join(current_parts).strip()
+            if chunk:
+                chunks.append({
+                    "text": chunk,
+                    "char_range": [int(current_start or 0), int(current_end or current_start or 0)],
+                    "chapter_titles": current_titles[-8:],
+                })
+            current_parts = []
+            current_titles = []
+            current_start = None
+            current_end = None
+            current_len = 0
+
+        for raw_segment in segments:
+            if isinstance(raw_segment, dict):
+                segment = self._safe_text(raw_segment.get("text") or "").strip()
+                char_range = raw_segment.get("char_range") or [0, 0]
+                titles = [str(t).strip() for t in raw_segment.get("chapter_titles") or [] if str(t).strip()]
+            else:
+                segment = self._safe_text(raw_segment).strip()
+                char_range = [0, len(segment)]
+                titles = []
+            if not segment:
+                continue
+
+            segment_len = len(segment)
+            join_extra = 2 if current_parts else 0
+            exceeds_chapter_limit = len(current_titles) >= chapters_per_chunk
+            exceeds_char_budget = bool(current_parts) and current_len + join_extra + segment_len > char_budget
+            if exceeds_chapter_limit or exceeds_char_budget:
+                flush_current()
+                join_extra = 0
+
+            current_parts.append(segment)
+            current_titles.extend(t for t in titles if t not in current_titles)
+            current_start = int(char_range[0] or 0) if current_start is None else min(current_start, int(char_range[0] or 0))
+            current_end = int(char_range[-1] or 0) if current_end is None else max(current_end, int(char_range[-1] or 0))
+            current_len += join_extra + segment_len
+
+        if current_parts:
+            flush_current()
+
+        return chunks
+
+    def _fallback_split(self, text: str, chunk_size: Optional[int] = None, overlap: Optional[int] = None) -> List[str]:
         """等宽切分（无章节标记时的回退方案）"""
-        if len(text) <= self.CHUNK_SIZE:
+        chunk_size = int(chunk_size or self.CHUNK_SIZE)
+        overlap = int(overlap if overlap is not None else self.CHUNK_OVERLAP)
+        text = self._safe_text(text)
+        if len(text) <= chunk_size:
             return [text] if text.strip() else []
         chunks = []
         pos = 0
         while pos < len(text):
-            end = min(pos + self.CHUNK_SIZE, len(text))
+            end = min(pos + chunk_size, len(text))
             if end < len(text):
-                search_start = max(pos + self.CHUNK_SIZE // 2, pos)
+                search_start = max(pos + chunk_size // 2, pos)
                 chunk_text = text[search_start:end + 500]
                 best_break = -1
                 for sep in ['\n\n\n', '\n\n', '\n第', '。\n', '！\n', '？\n', '。', '！', '？']:
                     idx = chunk_text.rfind(sep)
                     if idx >= 0:
                         candidate = search_start + idx + len(sep)
-                        if candidate > pos + self.CHUNK_SIZE // 2:
+                        if candidate > pos + chunk_size // 2:
                             best_break = candidate
                             break
                 if best_break > 0:
@@ -1059,7 +1775,7 @@ class EnhancedWorldExtractor:
             chunk = text[pos:end].strip()
             if chunk:
                 chunks.append(chunk)
-            pos = max(end - self.CHUNK_OVERLAP, pos + 1)
+            pos = max(end - overlap, pos + 1)
         return chunks
 
     # ==================== 合并 ====================
@@ -1081,8 +1797,17 @@ class EnhancedWorldExtractor:
 
         for result in results:
             wi = result.get("world_info") or {}
-            if not merged_world_info.get("name") and wi.get("name"):
-                merged_world_info = wi
+            if isinstance(wi, dict) and wi:
+                if not merged_world_info:
+                    merged_world_info = {}
+                for key in ("name", "era", "anchor_time"):
+                    if not merged_world_info.get(key) and wi.get(key):
+                        merged_world_info[key] = wi.get(key)
+                if wi.get("description"):
+                    merged_world_info["description"] = self._merge_text(
+                        merged_world_info.get("description"),
+                        wi.get("description"),
+                    )
 
             for ent in result.get("entities") or []:
                 normalized_entity = self._normalize_entity(ent)
@@ -1491,6 +2216,7 @@ class EnhancedWorldExtractor:
     def extract_writing_style(self, text: str) -> Dict[str, str]:
         """从文本中分析提取文风特征"""
         try:
+            text = self._safe_text(text)
             sample = text[:3000]
             if len(text) > 3000:
                 sample += "\n...(文本过长，此处为开头片段)"
@@ -1522,11 +2248,24 @@ class EnhancedWorldExtractor:
                 max_tokens=4096,
             )
             if isinstance(result, dict) and result.get("supplement"):
+                extracted_data.setdefault("extraction_diagnostics", {})["quality_validation"] = {
+                    "quality": result.get("quality", ""),
+                    "suggestions": result.get("suggestions", ""),
+                    "supplement_entities": len((result.get("supplement") or {}).get("entities") or []),
+                    "supplement_events": len((result.get("supplement") or {}).get("events") or []),
+                }
                 s = result["supplement"]
                 if s.get("entities"):
                     extracted_data.setdefault("entities", []).extend(s["entities"])
                 if s.get("events"):
                     extracted_data.setdefault("events", []).extend(s["events"])
+            elif isinstance(result, dict):
+                extracted_data.setdefault("extraction_diagnostics", {})["quality_validation"] = {
+                    "quality": result.get("quality", ""),
+                    "suggestions": result.get("suggestions", ""),
+                    "supplement_entities": 0,
+                    "supplement_events": 0,
+                }
             return extracted_data
         except Exception as e:
             self._record_error("验证提取数据", e)

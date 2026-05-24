@@ -110,14 +110,20 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    LLM_API_TYPE = os.environ.get('LLM_API_TYPE', 'openai_compatible')
+    LLM_URL_MODE = os.environ.get('LLM_URL_MODE', 'base_url')
     # SubAgent LLM API：不填时按 Agent > Parser 回退
     SUBAGENT_LLM_API_KEY = os.environ.get('SUBAGENT_LLM_API_KEY', '')
     SUBAGENT_LLM_BASE_URL = os.environ.get('SUBAGENT_LLM_BASE_URL', '')
     SUBAGENT_LLM_MODEL_NAME = os.environ.get('SUBAGENT_LLM_MODEL_NAME', '')
+    SUBAGENT_LLM_API_TYPE = os.environ.get('SUBAGENT_LLM_API_TYPE', '')
+    SUBAGENT_LLM_URL_MODE = os.environ.get('SUBAGENT_LLM_URL_MODE', '')
     # 解析 Agent LLM API：不填时按 Agent > SubAgent 回退
     PARSER_LLM_API_KEY = os.environ.get('PARSER_LLM_API_KEY', '')
     PARSER_LLM_BASE_URL = os.environ.get('PARSER_LLM_BASE_URL', '')
     PARSER_LLM_MODEL_NAME = os.environ.get('PARSER_LLM_MODEL_NAME', '')
+    PARSER_LLM_API_TYPE = os.environ.get('PARSER_LLM_API_TYPE', '')
+    PARSER_LLM_URL_MODE = os.environ.get('PARSER_LLM_URL_MODE', '')
     LLM_THINKING_ENABLED = _parse_bool_env(os.environ.get('LLM_THINKING_ENABLED'), None)
     LLM_REASONING_EFFORT = _parse_reasoning_effort(os.environ.get('LLM_REASONING_EFFORT'))
     LLM_DEFAULT_CONTEXT_WINDOW = _parse_int_env('LLM_DEFAULT_CONTEXT_WINDOW', 128 * 1024)
@@ -130,6 +136,8 @@ class Config:
     EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
     EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
     EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+    EMBEDDING_API_TYPE = os.environ.get("EMBEDDING_API_TYPE", "openai_compatible")
+    EMBEDDING_URL_MODE = os.environ.get("EMBEDDING_URL_MODE", "base_url")
 
     @classmethod
     def get_llm_config(cls, role: str = 'agent') -> Dict[str, Any]:
@@ -146,16 +154,22 @@ class Config:
                 'api_key': cls.LLM_API_KEY or '',
                 'base_url': cls.LLM_BASE_URL or 'https://api.openai.com/v1',
                 'model_name': cls.LLM_MODEL_NAME or 'gpt-4o-mini',
+                'api_type': cls.LLM_API_TYPE or 'openai_compatible',
+                'url_mode': cls.LLM_URL_MODE or 'base_url',
             },
             'subagent': {
                 'api_key': cls.SUBAGENT_LLM_API_KEY or '',
                 'base_url': cls.SUBAGENT_LLM_BASE_URL or '',
                 'model_name': cls.SUBAGENT_LLM_MODEL_NAME or '',
+                'api_type': cls.SUBAGENT_LLM_API_TYPE or '',
+                'url_mode': cls.SUBAGENT_LLM_URL_MODE or '',
             },
             'parser': {
                 'api_key': cls.PARSER_LLM_API_KEY or '',
                 'base_url': cls.PARSER_LLM_BASE_URL or '',
                 'model_name': cls.PARSER_LLM_MODEL_NAME or '',
+                'api_type': cls.PARSER_LLM_API_TYPE or '',
+                'url_mode': cls.PARSER_LLM_URL_MODE or '',
             },
         }
 
@@ -173,6 +187,8 @@ class Config:
             'api_key': selected['api_key'],
             'base_url': selected['base_url'] or agent_defaults['base_url'] or 'https://api.openai.com/v1',
             'model_name': selected['model_name'] or agent_defaults['model_name'] or 'gpt-4o-mini',
+            'api_type': selected.get('api_type') or agent_defaults.get('api_type') or 'openai_compatible',
+            'url_mode': selected.get('url_mode') or agent_defaults.get('url_mode') or 'base_url',
             'explicitly_configured': bool(configs[normalized_role]['api_key']) if normalized_role in configs else False,
         }
 
@@ -184,12 +200,35 @@ class Config:
             "api_key": cls.EMBEDDING_API_KEY or llm_config['api_key'],
             "base_url": cls.EMBEDDING_BASE_URL or llm_config['base_url'],
             "model_name": cls.EMBEDDING_MODEL_NAME,
+            "api_type": cls.EMBEDDING_API_TYPE or "openai_compatible",
+            "url_mode": cls.EMBEDDING_URL_MODE or "base_url",
+            "explicitly_configured": bool(cls.EMBEDDING_API_KEY),
         }
-    
+
     # RAG 配置
     RAG_CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "800"))
     RAG_CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
+    RAG_LARGE_CHUNK_SIZE = int(os.environ.get("RAG_LARGE_CHUNK_SIZE", "1400"))
+    RAG_HUGE_CHUNK_SIZE = int(os.environ.get("RAG_HUGE_CHUNK_SIZE", "1800"))
     RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
+
+    # 大文本提取配置
+    EXTRACTION_MAX_WORKERS = int(os.environ.get("EXTRACTION_MAX_WORKERS", "12"))
+    EXTRACTION_HUGE_WORKERS = int(os.environ.get("EXTRACTION_HUGE_WORKERS", "10"))
+    EXTRACTION_MASSIVE_WORKERS = int(os.environ.get("EXTRACTION_MASSIVE_WORKERS", "12"))
+    EXTRACTION_DEFAULT_MODE = os.environ.get("EXTRACTION_DEFAULT_MODE", "fast")
+    EXTRACTION_TOKENIZER_ESTIMATE = _parse_float_env("EXTRACTION_TOKENIZER_ESTIMATE", 1.2)
+    EXTRACTION_TARGET_CONTEXT_RATIO = _parse_float_env("EXTRACTION_TARGET_CONTEXT_RATIO", 0.28)
+    EXTRACTION_OUTPUT_RESERVE_RATIO = _parse_float_env("EXTRACTION_OUTPUT_RESERVE_RATIO", 0.25)
+    EXTRACTION_MIN_CHUNK_CHARS = _parse_int_env("EXTRACTION_MIN_CHUNK_CHARS", 8000)
+    EXTRACTION_MAX_CHUNK_CHARS = _parse_int_env("EXTRACTION_MAX_CHUNK_CHARS", 220000)
+    EXTRACTION_CHUNK_PROFILE_VERSION = _parse_int_env("EXTRACTION_CHUNK_PROFILE_VERSION", 2)
+    EXTRACTION_CHECKPOINT_DIR = os.environ.get("EXTRACTION_CHECKPOINT_DIR", "extraction_cache")
+    DEEP_EXTRACTION_STATE_RESERVE_RATIO = _parse_float_env("DEEP_EXTRACTION_STATE_RESERVE_RATIO", 0.06)
+    DEEP_EXTRACTION_SUMMARY_MAX_CHARS = _parse_int_env("DEEP_EXTRACTION_SUMMARY_MAX_CHARS", 4000)
+    DEEP_EXTRACTION_ENTITY_SNAPSHOT_MAX_CHARS = _parse_int_env("DEEP_EXTRACTION_ENTITY_SNAPSHOT_MAX_CHARS", 10000)
+    DEEP_EXTRACTION_ACTIVE_ENTITY_LIMIT = _parse_int_env("DEEP_EXTRACTION_ACTIVE_ENTITY_LIMIT", 80)
+    DEEP_EXTRACTION_RECENT_CHUNKS = _parse_int_env("DEEP_EXTRACTION_RECENT_CHUNKS", 2)
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
@@ -231,12 +270,18 @@ class Config:
         cls.LLM_API_KEY = os.environ.get('LLM_API_KEY')
         cls.LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
         cls.LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+        cls.LLM_API_TYPE = os.environ.get('LLM_API_TYPE', 'openai_compatible')
+        cls.LLM_URL_MODE = os.environ.get('LLM_URL_MODE', 'base_url')
         cls.SUBAGENT_LLM_API_KEY = os.environ.get('SUBAGENT_LLM_API_KEY', '')
         cls.SUBAGENT_LLM_BASE_URL = os.environ.get('SUBAGENT_LLM_BASE_URL', '')
         cls.SUBAGENT_LLM_MODEL_NAME = os.environ.get('SUBAGENT_LLM_MODEL_NAME', '')
+        cls.SUBAGENT_LLM_API_TYPE = os.environ.get('SUBAGENT_LLM_API_TYPE', '')
+        cls.SUBAGENT_LLM_URL_MODE = os.environ.get('SUBAGENT_LLM_URL_MODE', '')
         cls.PARSER_LLM_API_KEY = os.environ.get('PARSER_LLM_API_KEY', '')
         cls.PARSER_LLM_BASE_URL = os.environ.get('PARSER_LLM_BASE_URL', '')
         cls.PARSER_LLM_MODEL_NAME = os.environ.get('PARSER_LLM_MODEL_NAME', '')
+        cls.PARSER_LLM_API_TYPE = os.environ.get('PARSER_LLM_API_TYPE', '')
+        cls.PARSER_LLM_URL_MODE = os.environ.get('PARSER_LLM_URL_MODE', '')
         cls.LLM_THINKING_ENABLED = _parse_bool_env(os.environ.get('LLM_THINKING_ENABLED'), None)
         cls.LLM_REASONING_EFFORT = _parse_reasoning_effort(os.environ.get('LLM_REASONING_EFFORT'))
         cls.LLM_DEFAULT_CONTEXT_WINDOW = _parse_int_env('LLM_DEFAULT_CONTEXT_WINDOW', 128 * 1024)
@@ -247,9 +292,16 @@ class Config:
         cls.EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
         cls.EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
         cls.EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+        cls.EMBEDDING_API_TYPE = os.environ.get("EMBEDDING_API_TYPE", "openai_compatible")
+        cls.EMBEDDING_URL_MODE = os.environ.get("EMBEDDING_URL_MODE", "base_url")
         cls.RAG_CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "800"))
         cls.RAG_CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
+        cls.RAG_LARGE_CHUNK_SIZE = int(os.environ.get("RAG_LARGE_CHUNK_SIZE", "1400"))
+        cls.RAG_HUGE_CHUNK_SIZE = int(os.environ.get("RAG_HUGE_CHUNK_SIZE", "1800"))
         cls.RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
+        cls.EXTRACTION_MAX_WORKERS = int(os.environ.get("EXTRACTION_MAX_WORKERS", "12"))
+        cls.EXTRACTION_HUGE_WORKERS = int(os.environ.get("EXTRACTION_HUGE_WORKERS", "10"))
+        cls.EXTRACTION_MASSIVE_WORKERS = int(os.environ.get("EXTRACTION_MASSIVE_WORKERS", "12"))
         cls.OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
         cls.REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
         cls.REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
@@ -265,6 +317,20 @@ class Config:
         return f"{text[:4]}...{text[-4:]}"
 
     @classmethod
+    def get_embedding_config_status(cls) -> Dict[str, Any]:
+        resolved = cls.get_embedding_config()
+        return {
+            'api_key_configured': bool(resolved.get('api_key')),
+            'api_key_masked': cls.mask_secret(resolved.get('api_key')),
+            'base_url': resolved.get('base_url') or '',
+            'model_name': resolved.get('model_name') or '',
+            'api_type': resolved.get('api_type') or 'openai_compatible',
+            'url_mode': resolved.get('url_mode') or 'base_url',
+            'resolved_from': resolved.get('resolved_from', 'embedding' if cls.EMBEDDING_API_KEY else 'agent'),
+            'explicitly_configured': resolved.get('explicitly_configured', bool(cls.EMBEDDING_API_KEY)),
+        }
+
+    @classmethod
     def get_llm_config_status(cls) -> Dict[str, Any]:
         cls.reload()
         agent_settings = cls.get_agent_settings_status(reload_first=False)
@@ -276,6 +342,8 @@ class Config:
                 'api_key_masked': cls.mask_secret(resolved['api_key']),
                 'base_url': resolved['base_url'],
                 'model_name': resolved['model_name'],
+                'api_type': resolved.get('api_type') or 'openai_compatible',
+                'url_mode': resolved.get('url_mode') or 'base_url',
                 'resolved_from': resolved['resolved_from'],
                 'explicitly_configured': resolved['explicitly_configured'],
             }
@@ -286,9 +354,12 @@ class Config:
             'api_key_masked': agent_llm['api_key_masked'],
             'base_url': agent_llm['base_url'],
             'model_name': agent_llm['model_name'],
+            'api_type': agent_llm['api_type'],
+            'url_mode': agent_llm['url_mode'],
             'agent_llm': agent_llm,
             'subagent_llm': role_status('subagent'),
             'parser_llm': role_status('parser'),
+            'embedding': cls.get_embedding_config_status(),
             **agent_settings,
         }
 
@@ -365,25 +436,99 @@ class Config:
         return cls.get_agent_settings_status(reload_first=False)
 
     @classmethod
+    def _validate_api_type(cls, api_type: Any) -> str:
+        cleaned_type = str(api_type or 'openai_compatible').strip().lower()
+        if cleaned_type not in {'openai_compatible', 'anthropic'}:
+            raise ValueError('api_type 只能是 openai_compatible 或 anthropic')
+        return cleaned_type
+
+    @classmethod
+    def _validate_url_mode(cls, url_mode: Any) -> str:
+        cleaned_mode = str(url_mode or 'base_url').strip().lower()
+        if cleaned_mode not in {'base_url', 'full_url'}:
+            raise ValueError('url_mode 只能是 base_url 或 full_url')
+        return cleaned_mode
+
+    @classmethod
     def save_llm_config(
         cls,
         api_key: Any = None,
         base_url: Any = None,
         model_name: Any = None,
+        role: str = 'agent',
+        api_type: Any = None,
+        url_mode: Any = None,
+    ) -> Dict[str, Any]:
+        updates: Dict[str, Any] = {}
+        normalized_role = str(role or 'agent').strip().lower()
+        key_map = {
+            'agent': ('LLM_API_KEY', 'LLM_BASE_URL', 'LLM_MODEL_NAME', 'LLM_API_TYPE', 'LLM_URL_MODE'),
+            'subagent': ('SUBAGENT_LLM_API_KEY', 'SUBAGENT_LLM_BASE_URL', 'SUBAGENT_LLM_MODEL_NAME', 'SUBAGENT_LLM_API_TYPE', 'SUBAGENT_LLM_URL_MODE'),
+            'parser': ('PARSER_LLM_API_KEY', 'PARSER_LLM_BASE_URL', 'PARSER_LLM_MODEL_NAME', 'PARSER_LLM_API_TYPE', 'PARSER_LLM_URL_MODE'),
+        }
+        if normalized_role not in key_map:
+            raise ValueError('role 只能是 agent、subagent 或 parser')
+
+        api_key_key, base_url_key, model_name_key, api_type_key, url_mode_key = key_map[normalized_role]
+
+        if api_key is not None:
+            cleaned_key = str(api_key).strip()
+            if not cleaned_key:
+                raise ValueError('LLM API Key 不能为空')
+            updates[api_key_key] = cleaned_key
+
+        if base_url is not None:
+            default_url = 'https://api.openai.com/v1' if normalized_role == 'agent' else ''
+            updates[base_url_key] = str(base_url).strip() or default_url
+
+        if model_name is not None:
+            default_model = 'gpt-4o-mini' if normalized_role == 'agent' else ''
+            updates[model_name_key] = str(model_name).strip() or default_model
+
+        if api_type is not None:
+            updates[api_type_key] = cls._validate_api_type(api_type)
+
+        if url_mode is not None:
+            updates[url_mode_key] = cls._validate_url_mode(url_mode)
+
+        if not updates:
+            return cls.get_llm_config_status()
+
+        _persist_env_updates(updates)
+        for key, value in updates.items():
+            os.environ[key] = str(value)
+
+        cls.reload()
+        return cls.get_llm_config_status()
+
+    @classmethod
+    def save_embedding_config(
+        cls,
+        api_key: Any = None,
+        base_url: Any = None,
+        model_name: Any = None,
+        api_type: Any = None,
+        url_mode: Any = None,
     ) -> Dict[str, Any]:
         updates: Dict[str, Any] = {}
 
         if api_key is not None:
             cleaned_key = str(api_key).strip()
             if not cleaned_key:
-                raise ValueError('LLM API Key 不能为空')
-            updates['LLM_API_KEY'] = cleaned_key
+                raise ValueError('Embedding API Key 不能为空')
+            updates['EMBEDDING_API_KEY'] = cleaned_key
 
         if base_url is not None:
-            updates['LLM_BASE_URL'] = str(base_url).strip() or 'https://api.openai.com/v1'
+            updates['EMBEDDING_BASE_URL'] = str(base_url).strip()
 
         if model_name is not None:
-            updates['LLM_MODEL_NAME'] = str(model_name).strip() or 'gpt-4o-mini'
+            updates['EMBEDDING_MODEL_NAME'] = str(model_name).strip() or 'text-embedding-3-small'
+
+        if api_type is not None:
+            updates['EMBEDDING_API_TYPE'] = cls._validate_api_type(api_type)
+
+        if url_mode is not None:
+            updates['EMBEDDING_URL_MODE'] = cls._validate_url_mode(url_mode)
 
         if not updates:
             return cls.get_llm_config_status()

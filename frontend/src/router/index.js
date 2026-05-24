@@ -29,6 +29,11 @@ const routes = [
     name: 'RagView',
     component: () => import('../views/RagView.vue'),
   },
+  {
+    path: '/settings/llm',
+    name: 'LlmConfig',
+    component: () => import('../views/LlmConfigView.vue'),
+  },
 ]
 
 const router = createRouter({

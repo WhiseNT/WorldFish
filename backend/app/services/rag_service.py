@@ -4,6 +4,7 @@
 支持：文档添加、文本索引、语义检索、Collection 管理
 """
 
+import hashlib
 import os
 import re
 import uuid
@@ -17,9 +18,48 @@ from chromadb.config import Settings as ChromaSettings
 from openai import OpenAI
 
 from ..config import Config
+from ..models.world import WorldManager
 from ..utils.logger import get_logger
 
 logger = get_logger("worldfish.rag")
+
+def get_rag_text_volume_profile(text_len: int) -> Dict[str, Any]:
+    """根据文本量为 RAG 选择切块策略。巨大文本适当增大块，降低索引成本。"""
+    text_len = max(0, int(text_len or 0))
+    if text_len <= 15_000:
+        profile = {
+            "profile": "short",
+            "rag_chunk_size": Config.RAG_CHUNK_SIZE,
+            "rag_chunk_overlap": Config.RAG_CHUNK_OVERLAP,
+        }
+    elif text_len <= 120_000:
+        profile = {
+            "profile": "medium",
+            "rag_chunk_size": max(Config.RAG_CHUNK_SIZE, 1000),
+            "rag_chunk_overlap": max(Config.RAG_CHUNK_OVERLAP, 120),
+        }
+    elif text_len <= 500_000:
+        profile = {
+            "profile": "long",
+            "rag_chunk_size": max(Config.RAG_LARGE_CHUNK_SIZE, 1400),
+            "rag_chunk_overlap": 160,
+        }
+    elif text_len <= 1_500_000:
+        profile = {
+            "profile": "huge",
+            "rag_chunk_size": max(Config.RAG_HUGE_CHUNK_SIZE, 1800),
+            "rag_chunk_overlap": 180,
+        }
+    else:
+        profile = {
+            "profile": "massive",
+            "rag_chunk_size": max(Config.RAG_HUGE_CHUNK_SIZE, 2200),
+            "rag_chunk_overlap": 220,
+        }
+    profile["text_length"] = text_len
+    profile["rag_chunk_preset"] = "novel"
+    return profile
+
 
 RAG_CHUNK_PRESETS = [
     {
@@ -37,7 +77,16 @@ RAG_CHUNK_PRESETS = [
 ]
 
 CHAPTER_HEADING_RE = re.compile(
-    r"(?m)^(?P<title>\s*(?:第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[章节卷部回]|Chapter\s+\d+|CHAPTER\s+\d+|Part\s+\d+|PART\s+\d+)[^\n]{0,80})$"
+    r"(?mi)^\s*(?:#{1,6}\s*)?(?P<title>"
+    r"(?:第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[章节卷部回篇集][^\n]{0,80})"
+    r"|(?:[零〇一二三四五六七八九十百千万两\d]+\s*[章节卷部回篇集][^\n]{0,80})"
+    r"|(?:卷\s*[零〇一二三四五六七八九十百千万两\d]+[^\n]{0,80})"
+    r"|(?:Chapter\s+\d+[^\n]{0,80})"
+    r"|(?:Part\s+\d+[^\n]{0,80})"
+    r"|(?:VOLUME\s*\d+[^\n]{0,80})"
+    r"|(?:三体\s*[ⅠⅡⅢIVXivx123一二三]+[^\n]{0,80})"
+    r"|(?:(?:序章|楔子|引子|尾声|终章|后记)[^\n]{0,80})"
+    r")\s*$"
 )
 
 ProgressCallback = Callable[[str, int, str, Optional[Dict[str, Any]]], None]
@@ -75,7 +124,14 @@ def _get_embedding_client() -> OpenAI:
 
 def _world_collection_name(world_id: str) -> str:
     """世界观对应的 Collection 名称。"""
-    return f"world_{world_id}"
+    world_id = str(world_id or "").strip()
+    if not WorldManager.is_valid_world_id(world_id):
+        raise ValueError(f"非法世界观 ID: {world_id}")
+    collection_name = f"world_{world_id}"
+    if len(collection_name) > 63:
+        digest = hashlib.sha256(world_id.encode("utf-8")).hexdigest()[:16]
+        collection_name = f"world_{digest}"
+    return collection_name
 
 
 @dataclass
@@ -121,7 +177,9 @@ class RagService:
     """
 
     def __init__(self, world_id: str):
-        self.world_id = world_id
+        if not WorldManager.is_valid_world_id(world_id):
+            raise ValueError(f"非法世界观 ID: {world_id}")
+        self.world_id = str(world_id).strip()
         self.collection_name = _world_collection_name(world_id)
         self._client = _get_chroma_client()
         self._embedding_client = _get_embedding_client()
@@ -269,6 +327,7 @@ class RagService:
         metadatas: Optional[List[Dict[str, Any]]] = None,
         source: str = "manual",
         progress_callback: Optional[ProgressCallback] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[str]:
         """批量添加文档到 RAG。
 
@@ -291,7 +350,17 @@ class RagService:
             meta.setdefault("indexed_at", datetime.now().isoformat())
 
         try:
+            if should_stop and should_stop():
+                self._emit_progress(progress_callback, "skipped", 100, "索引已暂停/中断，未写入向量数据库", {
+                    "total_chunks": len(texts),
+                })
+                return []
             embeddings = self._embed(texts, progress_callback=progress_callback)
+            if should_stop and should_stop():
+                self._emit_progress(progress_callback, "skipped", 100, "索引已暂停/中断，未写入向量数据库", {
+                    "total_chunks": len(texts),
+                })
+                return []
             self._emit_progress(progress_callback, "writing", 85, f"正在写入向量数据库：{len(texts)} 个文本块", {
                 "total_chunks": len(texts),
             })
@@ -320,6 +389,7 @@ class RagService:
         metadata: Optional[Dict[str, Any]] = None,
         chunk_preset: str = "default",
         progress_callback: Optional[ProgressCallback] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[str]:
         """将长文本切块后添加到 RAG。
 
@@ -333,40 +403,94 @@ class RagService:
         Returns:
             文档 ID 列表
         """
-        chunk_size = chunk_size or Config.RAG_CHUNK_SIZE
-        chunk_overlap = chunk_overlap or Config.RAG_CHUNK_OVERLAP
-        preset = str(chunk_preset or "default").strip().lower()
+        text_len = len(text or "")
+        rag_profile = get_rag_text_volume_profile(text_len)
+        chunk_size = chunk_size or rag_profile["rag_chunk_size"]
+        chunk_overlap = chunk_overlap if chunk_overlap is not None else rag_profile["rag_chunk_overlap"]
+        preset = str(chunk_preset or rag_profile["rag_chunk_preset"] or "default").strip().lower()
         if preset not in {item["id"] for item in RAG_CHUNK_PRESETS}:
             preset = "default"
+        base_meta = dict(metadata or {})
+        source_hash = base_meta.get("source_hash") or hashlib.sha256((text or "").encode("utf-8", errors="replace")).hexdigest()
 
-        self._emit_progress(progress_callback, "preprocessing", 5, f"正在预处理文本：{len(text or '')} 字符", {
+        if should_stop and should_stop():
+            self._emit_progress(progress_callback, "skipped", 100, "索引已暂停/中断，未开始写入向量数据库", {
+                "text_length": text_len,
+            })
+            return []
+
+        existing_doc_ids = self.find_document_ids_by_source_hash(source_hash, source=source)
+        if existing_doc_ids:
+            self._emit_progress(progress_callback, "done", 100, f"该文本已索引，跳过重复写入：{len(existing_doc_ids)} 个文本块", {
+                "total_chunks": len(existing_doc_ids),
+                "deduplicated": True,
+                "source_hash": source_hash,
+            })
+            logger.info(f"RAG [{self.world_id}]: source_hash 已存在，跳过重复索引 ({len(existing_doc_ids)} 文档)")
+            return existing_doc_ids
+
+        self._emit_progress(progress_callback, "preprocessing", 5, f"正在预处理文本：{text_len} 字符（{rag_profile['profile']} RAG策略，{chunk_size} 字/块）", {
             "chunk_preset": preset,
-            "text_length": len(text or ""),
+            "text_length": text_len,
+            "rag_volume_profile": rag_profile,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
         })
         chunks_with_meta = self._split_text_by_preset(text, preset, chunk_size, chunk_overlap)
         if not chunks_with_meta:
             return []
 
         chunks = [item[0] for item in chunks_with_meta]
+        if should_stop and should_stop():
+            self._emit_progress(progress_callback, "skipped", 100, "索引已暂停/中断，未写入向量数据库", {
+                "chunk_count": len(chunks),
+            })
+            return []
         self._emit_progress(progress_callback, "splitting", 18, f"切分完成：使用{self._preset_name(preset)}，生成 {len(chunks)} 个文本块", {
             "chunk_preset": preset,
             "chunk_count": len(chunks),
             "chapter_count": len({meta.get("chapter_index") for _, meta in chunks_with_meta if meta.get("chapter_index") is not None}),
+            "rag_volume_profile": rag_profile,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
         })
 
-        base_meta = dict(metadata or {})
+        cursor = 0
         metadatas = []
         for i, (chunk_text, chunk_meta) in enumerate(chunks_with_meta):
+            found = (text or "").find(chunk_text[: min(len(chunk_text), 200)], cursor)
+            start = found if found >= 0 else cursor
+            end = start + len(chunk_text)
+            cursor = max(cursor, end)
             metadatas.append({
                 **base_meta,
                 **chunk_meta,
+                "source": source,
+                "source_hash": source_hash,
+                "cache_key": base_meta.get("cache_key", ""),
+                "rag_profile": preset,
+                "rag_chunk_index": i,
+                "rag_chunk_count": len(chunks),
+                "char_range": [start, end],
+                "chapter_title": chunk_meta.get("chapter_title", ""),
+                "source_text_length": text_len,
+                "indexed_at": datetime.now().isoformat(),
                 "chunk_index": i,
                 "chunk_count": len(chunks),
                 "chunk_preset": preset,
+                "rag_volume_profile": rag_profile["profile"],
+                "rag_chunk_size": chunk_size,
+                "rag_chunk_overlap": chunk_overlap,
                 "text_length": len(chunk_text),
             })
 
-        return self.add_documents(texts=chunks, metadatas=metadatas, source=source, progress_callback=progress_callback)
+        return self.add_documents(
+            texts=chunks,
+            metadatas=metadatas,
+            source=source,
+            progress_callback=progress_callback,
+            should_stop=should_stop,
+        )
 
     def _preset_name(self, preset: str) -> str:
         for item in RAG_CHUNK_PRESETS:
@@ -546,6 +670,31 @@ class RagService:
             return self._collection.count()
         except Exception:
             return 0
+
+    def find_document_ids_by_source_hash(self, source_hash: str, source: str = "extraction") -> List[str]:
+        """按原文 hash 查找已有文档，用于避免重复索引同一份扫描输入。"""
+        source_hash = str(source_hash or "").strip()
+        if not source_hash:
+            return []
+        try:
+            result = self._collection.get(
+                where={"source_hash": source_hash},
+                include=["metadatas"],
+                limit=100000,
+            )
+        except Exception as e:
+            logger.warning(f"RAG [{self.world_id}]: 查询 source_hash 去重失败: {e}")
+            return []
+
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        if not source:
+            return list(ids)
+        matched = []
+        for doc_id, metadata in zip(ids, metadatas):
+            if not isinstance(metadata, dict) or metadata.get("source") == source:
+                matched.append(doc_id)
+        return matched
 
     def get_stats(self) -> Dict[str, Any]:
         """获取 RAG 统计信息。"""

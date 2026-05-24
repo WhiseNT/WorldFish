@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
+from .world import WorldManager
 
 
 # ============================================================
@@ -220,6 +221,15 @@ class AgentManager:
         os.makedirs(path, exist_ok=True)
         return path
 
+    @classmethod
+    def _world_scope_name(cls, world_id: str = "") -> str:
+        world_id = str(world_id or "").strip()
+        if not world_id:
+            return "_global"
+        if not WorldManager.is_valid_world_id(world_id):
+            raise ValueError(f"非法世界观 ID: {world_id}")
+        return world_id
+
     # ---- Session ----
 
     @classmethod
@@ -283,7 +293,7 @@ class AgentManager:
     @classmethod
     def _agent_md_file(cls, world_id: str) -> str:
         if world_id:
-            return os.path.join(Config.UPLOAD_FOLDER, "worlds", world_id, "agent.md")
+            return WorldManager._safe_join_world_path(world_id, "agent.md")
         return os.path.join(cls._ensure_dir(), "global_agent.md")
 
     @classmethod
@@ -305,7 +315,7 @@ class AgentManager:
 
     @classmethod
     def _memory_file(cls, world_id: str) -> str:
-        return os.path.join(cls._ensure_dir("memory"), f"{world_id or '_global'}.json")
+        return os.path.join(cls._ensure_dir("memory"), f"{cls._world_scope_name(world_id)}.json")
 
     @classmethod
     def get_memories(cls, world_id: str = "") -> Dict[str, Any]:
@@ -351,7 +361,7 @@ class AgentManager:
 
     @classmethod
     def _skills_file(cls, world_id: str = "") -> str:
-        return os.path.join(cls._ensure_dir("skills"), f"{world_id or '_global'}.json")
+        return os.path.join(cls._ensure_dir("skills"), f"{cls._world_scope_name(world_id)}.json")
 
     @classmethod
     def list_skills(cls, world_id: str = "") -> List[Skill]:

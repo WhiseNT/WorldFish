@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -529,6 +530,7 @@ class WorldManager:
     """文件持久化世界观仓库。"""
 
     WORLDS_DIR = os.path.join(Config.UPLOAD_FOLDER, "worlds")
+    WORLD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,120}$")
     _lock = threading.RLock()
 
     @classmethod
@@ -536,13 +538,33 @@ class WorldManager:
         os.makedirs(cls.WORLDS_DIR, exist_ok=True)
 
     @classmethod
-    def _world_dir(cls, world_id: str) -> str:
+    def is_valid_world_id(cls, world_id: str) -> bool:
+        world_id = str(world_id or "").strip()
+        return bool(world_id and cls.WORLD_ID_RE.fullmatch(world_id))
+
+    @classmethod
+    def _safe_world_id(cls, world_id: str) -> str:
+        world_id = str(world_id or "").strip()
+        if not cls.is_valid_world_id(world_id):
+            raise ValueError(f"非法世界观 ID: {world_id}")
+        return world_id
+
+    @classmethod
+    def _safe_join_world_path(cls, world_id: str, *parts: str) -> str:
         cls._ensure_base_dir()
-        return os.path.join(cls.WORLDS_DIR, world_id)
+        base_dir = os.path.abspath(cls.WORLDS_DIR)
+        target = os.path.abspath(os.path.join(base_dir, cls._safe_world_id(world_id), *parts))
+        if os.path.commonpath([base_dir, target]) != base_dir:
+            raise ValueError(f"非法世界观路径: {world_id}")
+        return target
+
+    @classmethod
+    def _world_dir(cls, world_id: str) -> str:
+        return cls._safe_join_world_path(world_id)
 
     @classmethod
     def _world_file(cls, world_id: str) -> str:
-        return os.path.join(cls._world_dir(world_id), "world.json")
+        return cls._safe_join_world_path(world_id, "world.json")
 
     @classmethod
     def create_world(
@@ -579,6 +601,8 @@ class WorldManager:
 
     @classmethod
     def get_world(cls, world_id: str) -> Optional[WorldSetting]:
+        if not cls.is_valid_world_id(world_id):
+            return None
         path = cls._world_file(world_id)
         if not os.path.exists(path):
             return None
@@ -653,6 +677,8 @@ class WorldManager:
         worlds = []
         if os.path.isdir(cls.WORLDS_DIR):
             for dirname in os.listdir(cls.WORLDS_DIR):
+                if not cls.is_valid_world_id(dirname):
+                    continue
                 world = cls.get_world(dirname)
                 if world:
                     worlds.append(world)
@@ -662,6 +688,8 @@ class WorldManager:
     @classmethod
     def delete_world(cls, world_id: str) -> bool:
         with cls._lock:
+            if not cls.is_valid_world_id(world_id):
+                return False
             world_dir = cls._world_dir(world_id)
             if not os.path.exists(world_dir):
                 return False

@@ -16,6 +16,7 @@
         <slot name="nav-center"></slot>
       </div>
       <div class="wf-navbar-right">
+        <router-link to="/settings/llm" class="wf-config-link">LLM 配置</router-link>
         <slot name="nav-right"></slot>
       </div>
     </nav>
@@ -102,6 +103,22 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
+}
+
+.wf-config-link {
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--wf-accent);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid var(--wf-border-light);
+  transition: all var(--transition-fast);
+}
+.wf-config-link:hover {
+  background: var(--wf-accent-muted);
+  border-color: var(--wf-accent);
+  color: var(--wf-accent-hover);
 }
 
 .wf-content {

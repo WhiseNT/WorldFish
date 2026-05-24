@@ -3,7 +3,7 @@
 扫描以下文本，穷举其中所有世界观数据。
 
 分块特有注意事项：
-- world_info 仅第一个分段填写（即当前是开头部分时填写），后续分段 world_info 返回空对象 {{}}
+- world_info 在开头部分应完整填写；后续分段若直接出现作品/世界名称、时代背景、主线时间锚点等全局信息，也要填写可确认字段，用于补全前文缺失信息
 - 同一人物的不同称呼要识别并用 aliases 记录
 - 只提取**当前文本段**能直接确认的信息；该实体在别的章节的经历不要推测
 - 任何在事件参与方、relationships.target、他人简介中被点名的实体都要单独输出
@@ -16,7 +16,7 @@
 
 返回 JSON（结构遵循 System Prompt 定义）：
 {{
-  "world_info": {{}},
+  "world_info": {{"name": "", "description": "", "era": "", "anchor_time": ""}},
   "entities": [...],
   "events": [...],
   "settings": {{"items": [...], "mapData": {{...}}, "calendars": [...]}}
