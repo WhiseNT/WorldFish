@@ -1,7 +1,7 @@
 <template>
   <div v-if="shouldShow" class="extract-floating-root">
     <button v-if="minimized" class="extract-mini-btn" :class="statusClass" @click="minimized = false" title="世界观解析任务">
-      <span class="extract-mini-icon">⧉</span>
+      <span class="extract-mini-icon"><SvgIcon name="grid" :size="20" /></span>
       <span class="extract-mini-pulse" v-if="isActiveTask"></span>
     </button>
 
@@ -11,7 +11,7 @@
           <div class="extract-kicker">世界观解析任务</div>
           <h3>{{ taskTitle }}</h3>
         </div>
-        <button class="extract-icon-btn" @click="minimized = true">−</button>
+        <button class="extract-icon-btn" @click="minimized = true" title="最小化"><SvgIcon name="minus" :size="15" /></button>
       </header>
 
       <div class="extract-body">
@@ -58,7 +58,7 @@
         <div class="extract-actions">
           <button v-if="canPause" class="extract-action-btn" @click="pauseTask" :disabled="busy">暂停</button>
           <button v-if="canResume" class="extract-action-btn primary" @click="resumeTask" :disabled="busy">继续</button>
-          <button v-if="canCancel" class="extract-action-btn danger" @click="cancelTask" :disabled="busy">中断并保存</button>
+          <button v-if="canCancel" class="extract-action-btn danger" @click="cancelTask" :disabled="busy">强制中止</button>
           <button class="extract-action-btn" @click="openScanPanel">打开扫描面板</button>
           <button class="extract-action-btn" @click="goWorldBuilder">查看世界观</button>
           <button v-if="canDelete" class="extract-action-btn danger" @click="deleteTask" :disabled="busy">删除扫描</button>
@@ -72,9 +72,11 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { worldApi } from '../api/world'
+import SvgIcon from './ui/SvgIcon.vue'
 
 const LAST_TASK_KEY = 'worldfish:lastExtractTaskId'
 const TASK_DELETED_EVENT = 'worldfish:extract-task-deleted'
+const TASK_SYNC_EVENT = 'worldfish:extract-task-sync'
 const minimized = ref(true)
 const currentTask = ref(null)
 const busy = ref(false)
@@ -98,8 +100,8 @@ const statusLabel = computed(() => ({
   running: '运行中',
   pause_requested: '暂停中',
   paused: '已暂停',
-  cancel_requested: '中断保存中',
-  cancelled: '已中断，可继续',
+  cancel_requested: '强制中止中',
+  cancelled: '已强制中止，可继续',
   stale: '上次意外暂停，可继续',
   failed: '失败',
   completed: '完成',
@@ -129,12 +131,33 @@ function handleExternalTaskDeleted(event) {
   clearTimeout(timer)
 }
 
+function handleTaskSync(event) {
+  const taskId = event.detail?.taskId
+  if (!taskId) return
+  localStorage.setItem(LAST_TASK_KEY, taskId)
+  currentTask.value = normalizeTask({
+    ...currentTask.value,
+    task_id: taskId,
+    world_id: event.detail?.worldId || currentTask.value?.world_id,
+    extraction_mode: event.detail?.extractionMode || currentTask.value?.extraction_mode,
+    status: event.detail?.status || 'running',
+    stage: event.detail?.stage || 'starting',
+    progress: event.detail?.progress || currentTask.value?.progress || 0,
+    message: event.detail?.message || '提取任务已启动',
+    detail: event.detail?.detail || currentTask.value?.detail || {},
+  })
+  minimized.value = false
+  clearTimeout(timer)
+  schedule(250)
+}
+
 async function loadInitialTask() {
   const lastTaskId = localStorage.getItem(LAST_TASK_KEY)
   if (lastTaskId) {
     try {
       const progress = await worldApi.getExtractProgress(lastTaskId)
       currentTask.value = normalizeTask(progress)
+      minimized.value = false
       schedule()
       return
     } catch (e) {
@@ -147,6 +170,7 @@ async function loadInitialTask() {
     if (task) {
       currentTask.value = normalizeTask(task)
       localStorage.setItem(LAST_TASK_KEY, task.task_id)
+      minimized.value = false
       schedule()
     }
   } catch (e) {
@@ -158,6 +182,7 @@ function normalizeTask(task) {
   return {
     ...task,
     task_id: task.task_id,
+    world_id: task.world_id,
     status: task.status || task.stage,
     detail: task.detail || {},
     progress: task.progress || 0,
@@ -168,7 +193,7 @@ async function refreshCurrentTask() {
   if (!currentTask.value?.task_id) return
   try {
     const res = await worldApi.getExtractProgress(currentTask.value.task_id)
-    currentTask.value = normalizeTask(res)
+    currentTask.value = normalizeTask({ ...res, world_id: res.world_id || currentTask.value?.world_id })
     if (['completed', 'failed'].includes(status.value)) {
       clearStoredTaskId(currentTask.value.task_id)
     }
@@ -234,10 +259,12 @@ function goWorldBuilder() {
 
 onMounted(() => {
   window.addEventListener(TASK_DELETED_EVENT, handleExternalTaskDeleted)
+  window.addEventListener(TASK_SYNC_EVENT, handleTaskSync)
   loadInitialTask()
 })
 onBeforeUnmount(() => {
   window.removeEventListener(TASK_DELETED_EVENT, handleExternalTaskDeleted)
+  window.removeEventListener(TASK_SYNC_EVENT, handleTaskSync)
   clearTimeout(timer)
 })
 </script>
@@ -261,10 +288,15 @@ onBeforeUnmount(() => {
   cursor: pointer;
   box-shadow: var(--shadow-lg);
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .extract-mini-icon {
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .extract-mini-pulse {
@@ -433,6 +465,7 @@ onBeforeUnmount(() => {
   color: var(--wf-text-primary);
   padding: 7px 10px;
   cursor: pointer;
+  min-height: 32px;
 }
 
 .extract-action-btn.primary {

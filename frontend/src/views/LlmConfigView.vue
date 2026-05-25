@@ -2,7 +2,7 @@
   <div class="llm-config-page">
     <header class="config-hero">
       <div>
-        <button class="back-link" @click="goBack">← 返回</button>
+        <button class="back-link" @click="goBack"><SvgIcon name="arrow-left" :size="15" /> 返回</button>
         <h1>LLM 配置中心</h1>
         <p>分别配置主 Agent、SubAgent、解析 Agent 与 RAG 向量化服务。</p>
       </div>
@@ -35,9 +35,11 @@
 
     <TransitionGroup name="toast" tag="div" class="toast-stack">
       <div v-for="toast in toasts" :key="toast.id" class="toast-card" :class="toast.type">
-        <span class="toast-icon">{{ toast.type === 'error' ? '!' : '✓' }}</span>
+        <span class="toast-icon">
+          <SvgIcon :name="toast.type === 'error' ? 'info' : 'check'" :size="14" />
+        </span>
         <span>{{ toast.text }}</span>
-        <button type="button" @click="dismissToast(toast.id)">×</button>
+        <button type="button" @click="dismissToast(toast.id)" class="icon-only" title="关闭提示"><SvgIcon name="close" :size="13" /></button>
       </div>
     </TransitionGroup>
 
@@ -173,11 +175,13 @@
 
 <script>
 import { worldApi } from '../api/world'
+import SvgIcon from '../components/ui/SvgIcon.vue'
 
 const emptyForm = () => ({ api_key: '', api_type: 'openai_compatible', url_mode: 'base_url', base_url: '', model_name: '' })
 
 export default {
   name: 'LlmConfigView',
+  components: { SvgIcon },
   data() {
     return {
       loading: false,

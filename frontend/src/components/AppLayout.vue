@@ -8,9 +8,7 @@
           </svg>
           <span>首页</span>
         </router-link>
-        <router-link to="/" class="wf-brand">
-          <img src="/worldfish_logo.svg" alt="WorldFish" class="wf-brand-logo" />
-        </router-link>
+
       </div>
       <div class="wf-navbar-center">
         <slot name="nav-center"></slot>
@@ -74,23 +72,6 @@
   background: rgba(255, 255, 255, 0.08);
   color: var(--wf-text-primary);
   border-color: rgba(255, 255, 255, 0.1);
-}
-
-.wf-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  text-decoration: none;
-}
-
-.wf-brand-logo {
-  height: 32px;
-  width: auto;
-  display: block;
-  transition: opacity var(--transition-fast);
-}
-.wf-brand:hover .wf-brand-logo {
-  opacity: 0.85;
 }
 
 .wf-navbar-center {

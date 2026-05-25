@@ -32,13 +32,19 @@ from app.services.enhanced_world_extractor import EnhancedWorldExtractor
 from app.utils.file_parser import FileParser
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
-logger = get_logger('mirofish.api.world_build')
+logger = get_logger('worldfish.api.world_build')
 
 # 提取任务进度存储
 _extraction_tasks = {}
 _tasks_lock = threading.Lock()
 _tasks_loaded = False
 _running_threads = set()
+_VALID_SCAN_SOURCES = {'input', 'rag', 'input_and_rag'}
+
+
+def _normalize_scan_source(value):
+    scan_source = str(value or 'input').strip().lower()
+    return scan_source if scan_source in _VALID_SCAN_SOURCES else 'input'
 
 
 def _now_iso():
@@ -93,6 +99,19 @@ def _load_task_result(task_id, task=None):
     except Exception as exc:
         logger.warning(f'读取提取任务结果失败 [{task_id}]: {exc}')
         return None
+
+
+def _delete_task_result_file(task_id, task=None):
+    task = task or {}
+    candidates = [_task_result_path(task_id)]
+    if task.get('result_file'):
+        candidates.append(os.path.join(_task_dir(), os.path.basename(str(task.get('result_file') or ''))))
+    for path in candidates:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception as exc:
+            logger.warning(f'删除提取任务结果文件失败 [{task_id}]: {exc}')
 
 
 def _persist_task(task_id):
@@ -236,6 +255,9 @@ def extract_world():
         text = None
         uploaded_filenames = []
         direct_json_data = None
+        request_data = request.get_json(silent=True) or {}
+        if not isinstance(request_data, dict):
+            request_data = {}
 
         # 处理文件上传（multipart/form-data）
         uploaded_files = request.files.getlist('files') if request.files else []
@@ -255,9 +277,7 @@ def extract_world():
                     logger.warning(f"不支持的文件格式: {filename} ({ext})")
                     continue
 
-                import uuid
-                import time
-                safe_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{filename}"
+                safe_name = f"{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}_{filename}"
                 file_path = os.path.join(Config.UPLOAD_FOLDER, safe_name)
                 file.save(file_path)
                 logger.info(f"文件已保存: {filename} ({os.path.getsize(file_path)} bytes)")
@@ -316,23 +336,70 @@ def extract_world():
 
         # 普通 JSON 请求
         if not text and direct_json_data is None:
-            data = request.get_json(silent=True) or {}
-            text = data.get('text', '').strip()
+            text = str(request_data.get('text') or '').strip()
             # 支持直接 POST JSON 数据
-            if not text and isinstance(data, dict) and (
-                'world_info' in data or 'entities' in data or 'events' in data or 'settings' in data
+            if not text and (
+                'world_info' in request_data or 'entities' in request_data or 'events' in request_data or 'settings' in request_data
             ):
-                direct_json_data = data
+                direct_json_data = request_data
 
-        if not text and direct_json_data is None:
-            logger.warning(f"提取请求无有效内容: has_files={len(uploaded_files) > 0}, has_text={bool(text)}, has_json={direct_json_data is not None}")
+        if request.form:
+            request_data.update(dict(request.form))
+
+        scan_source = _normalize_scan_source(request_data.get('scan_source'))
+        world_id = str(request_data.get('world_id') or '').strip()
+        uses_rag_source = scan_source in {'rag', 'input_and_rag'}
+        requires_input_source = scan_source in {'input', 'input_and_rag'}
+
+        input_text = str(text or '').strip()
+        rag_scan_payload = None
+        rag_scan_text = ''
+
+        if requires_input_source and not input_text and direct_json_data is None:
+            logger.warning(
+                f"提取请求无有效输入: scan_source={scan_source}, has_files={len(uploaded_files) > 0}, has_text={bool(input_text)}, has_json={direct_json_data is not None}"
+            )
+            return jsonify({
+                'success': False,
+                'message': '请提供文本内容或上传文件（支持 PDF、Markdown、TXT、JSON 格式）'
+            }), 400
+
+        if uses_rag_source:
+            world = WorldManager.get_world(world_id) if world_id else None
+            if not world:
+                return jsonify({
+                    'success': False,
+                    'message': '请先创建或保存世界观，因为知识库是按世界观绑定的。'
+                }), 400
+
+            from app.services.rag_service import RagService
+
+            rag_scan_payload = RagService(world_id).export_documents_for_scan()
+            rag_scan_text = str((rag_scan_payload or {}).get('text') or '').strip()
+            if not rag_scan_text:
+                return jsonify({
+                    'success': False,
+                    'message': '当前世界观知识库为空，无法扫描。'
+                }), 400
+
+        scan_text_parts = []
+        if input_text:
+            scan_text_parts.append(input_text)
+        if rag_scan_text:
+            scan_text_parts.append(rag_scan_text)
+        scan_text = '\n\n'.join(part for part in scan_text_parts if part).strip()
+
+        if not scan_text and direct_json_data is None:
+            logger.warning(
+                f"提取请求无有效内容: scan_source={scan_source}, has_files={len(uploaded_files) > 0}, has_text={bool(input_text)}, has_json={direct_json_data is not None}"
+            )
             return jsonify({
                 'success': False,
                 'message': '请提供文本内容或上传文件（支持 PDF、Markdown、TXT、JSON 格式）'
             }), 400
 
         # 如果只有 JSON 数据没有文本，直接返回，无需 LLM
-        if direct_json_data is not None and not text:
+        if direct_json_data is not None and not scan_text and scan_source == 'input':
             resp = {
                 'success': True,
                 'extracted_data': direct_json_data
@@ -348,14 +415,6 @@ def extract_world():
                 'message': 'LLM API Key 未配置，请至少配置 Agent/SubAgent/解析 Agent 中的一组 LLM API。'
             }), 400
 
-        # 捕获请求数据供后台线程使用（JSON 或 form 中的 world_id）
-        request_data = request.get_json(silent=True) or {}
-        if not isinstance(request_data, dict):
-            request_data = {}
-        # 也合并 form 数据
-        if request.form:
-            request_data.update(dict(request.form))
-
         extraction_mode = str(request_data.get('extraction_mode') or Config.EXTRACTION_DEFAULT_MODE or 'fast').strip().lower()
         if extraction_mode not in {'fast', 'deep'}:
             extraction_mode = 'fast'
@@ -367,7 +426,8 @@ def extract_world():
         with _tasks_lock:
             _extraction_tasks[task_id] = {
                 'task_id': task_id,
-                'world_id': request_data.get('world_id', '').strip(),
+                'world_id': world_id,
+                'scan_source': scan_source,
                 'status': 'running',
                 'stage': 'starting',
                 'progress': 0,
@@ -380,7 +440,9 @@ def extract_world():
                 'cancel_requested': False,
                 'pause_requested': False,
                 'source_files': uploaded_filenames,
-                'text_length': len(text or ''),
+                'text_length': len(scan_text or ''),
+                'input_text_length': len(input_text or ''),
+                'rag_scan_document_count': int((rag_scan_payload or {}).get('document_count') or 0),
                 'created_at': _now_iso(),
                 'updated_at': _now_iso(),
                 'started_at': _now_iso(),
@@ -438,15 +500,23 @@ def extract_world():
                 progress_cb('preparing', 5, '正在初始化...')
 
                 extractor = EnhancedWorldExtractor()
-                text_len = len(text) if text else 0
+                text_len = len(scan_text) if scan_text else 0
                 volume_profile = extractor.get_text_volume_profile(text_len)
-                cache_key = extractor.build_cache_key(text or '', extraction_mode, volume_profile)
-                source_hash = hashlib.sha256((text or '').encode('utf-8', errors='replace')).hexdigest()
+                cache_key = extractor.build_cache_key(scan_text or '', extraction_mode, volume_profile)
+                source_hash = hashlib.sha256((scan_text or '').encode('utf-8', errors='replace')).hexdigest()
+                input_source_hash = hashlib.sha256((input_text or '').encode('utf-8', errors='replace')).hexdigest() if input_text else ''
                 progress_cb(
                     'preparing',
                     6,
                     f"文本 {text_len} 字符，采用 {extraction_mode.upper()} 扫描：上下文 {volume_profile['context_window']}，目标 {volume_profile['target_chunk_chars']} 字/块",
-                    {'volume_profile': volume_profile, 'cache_key': cache_key, 'context_window': volume_profile.get('context_window'), 'target_chunk_chars': volume_profile.get('target_chunk_chars')},
+                    {
+                        'volume_profile': volume_profile,
+                        'cache_key': cache_key,
+                        'context_window': volume_profile.get('context_window'),
+                        'target_chunk_chars': volume_profile.get('target_chunk_chars'),
+                        'scan_source': scan_source,
+                        'rag_scan_document_count': int((rag_scan_payload or {}).get('document_count') or 0),
+                    },
                 )
 
                 def should_cancel():
@@ -458,30 +528,30 @@ def extract_world():
                         return bool(_extraction_tasks.get(task_id, {}).get('pause_requested'))
 
                 # ── 启动 RAG 索引（与 LLM 提取并行）──
-                world_id = request_data.get('world_id', '').strip()
                 emb_config = Config.get_embedding_config()
-                if world_id and text and emb_config.get('api_key'):
+                if world_id and input_text and emb_config.get('api_key') and scan_source in {'input', 'input_and_rag'}:
                     def _do_rag():
                         try:
                             if should_cancel() or should_pause():
                                 _rag_result[0] = {'rag_indexed': False, 'rag_skipped': True, 'rag_skip_reason': '扫描已暂停或中断'}
                                 rag_progress_cb('skipped', 100, '扫描已暂停/中断，跳过 RAG 索引')
                                 return
-                            from ..services.rag_service import RagService
+                            from app.services.rag_service import RagService
                             rag = RagService(world_id)
                             doc_ids = rag.add_text_chunks(
-                                text=text,
+                                text=input_text,
                                 chunk_size=volume_profile['rag_chunk_size'],
                                 chunk_overlap=volume_profile['rag_chunk_overlap'],
                                 source="extraction",
                                 metadata={
                                     "filename": ", ".join(uploaded_filenames) if uploaded_filenames else "direct_text",
                                     "volume_profile": volume_profile['profile'],
-                                    "source_text_length": text_len,
-                                    "source_hash": source_hash,
+                                    "source_text_length": len(input_text),
+                                    "source_hash": input_source_hash,
                                     "cache_key": cache_key,
                                     "rag_profile": volume_profile.get('rag_profile', 'novel'),
                                     "extraction_mode": extraction_mode,
+                                    "scan_source": scan_source,
                                 },
                                 chunk_preset=volume_profile['rag_chunk_preset'],
                                 progress_callback=rag_progress_cb,
@@ -505,6 +575,8 @@ def extract_world():
                     _rag_thread = threading.Thread(target=_do_rag, daemon=True)
                     _rag_thread.start()
                     progress_cb('indexing', 7, '正在并行执行 LLM 提取与小说章节向量索引...', {'rag_progress': {'stage': 'queued', 'progress': 0, 'message': 'RAG 索引已排队'}})
+                elif scan_source == 'rag':
+                    _rag_result[0] = {'rag_indexed': False, 'rag_skipped': True, 'rag_skip_reason': '仅扫描已有知识库，未重复索引'}
                 elif not world_id:
                     logger.info("RAG 索引跳过: 未提供 world_id")
                 elif not emb_config.get('api_key'):
@@ -515,7 +587,7 @@ def extract_world():
 
                 # LLM 提取（与 RAG 并行进行中）
                 result = extractor.extract_from_text(
-                    text,
+                    scan_text,
                     progress_callback=progress_cb,
                     extraction_mode=extraction_mode,
                     force_rebuild=force_rebuild,
@@ -524,6 +596,10 @@ def extract_world():
                 )
                 result.setdefault('extraction_diagnostics', {})['volume_profile'] = volume_profile
                 result['extraction_mode'] = extraction_mode
+                result['scan_source'] = scan_source
+                if rag_scan_payload:
+                    result['rag_scan_document_count'] = int(rag_scan_payload.get('document_count') or 0)
+                    result['rag_scan_text_length'] = int(rag_scan_payload.get('text_length') or 0)
 
                 # 合并直接导入的 JSON 数据
                 if direct_json_data is not None:
@@ -537,6 +613,25 @@ def extract_world():
                     if direct_json_data.get('settings', {}).get('calendars'):
                         result.setdefault('settings', {}).setdefault('calendars', []).extend(
                             direct_json_data['settings']['calendars'])
+
+                if result.get('force_cancelled'):
+                    with _tasks_lock:
+                        task_ref = _extraction_tasks.get(task_id, {})
+                        task_ref.update({
+                            'status': 'cancelled',
+                            'stage': 'cancelled',
+                            'progress': int(task_ref.get('progress', 0)),
+                            'message': '扫描已强制中止，已保留 checkpoint，可继续或删除。',
+                            'done': True,
+                            'result': None,
+                            'result_file': None,
+                            'result_summary': None,
+                            'finished_at': _now_iso(),
+                        })
+                        _persist_task(task_id)
+                    _delete_task_result_file(task_id, _extraction_tasks.get(task_id, {}))
+                    _running_threads.discard(task_id)
+                    return
 
                 # 等待 RAG 索引线程（通常已提前完成）
                 if _rag_thread and _rag_thread.is_alive():
@@ -646,7 +741,7 @@ def delete_extract_task(task_id):
 
 @world_build_bp.route('/extract/<task_id>/cancel', methods=['POST'])
 def cancel_extract(task_id):
-    """请求中断提取任务；已完成的块会由后台线程保存为部分成果。"""
+    """请求强制中止提取任务；保留 checkpoint，但不再等待合并部分成果。"""
     _ensure_tasks_loaded()
     with _tasks_lock:
         task = _extraction_tasks.get(task_id)
@@ -658,18 +753,18 @@ def cancel_extract(task_id):
             task['status'] = 'cancelled'
             task['stage'] = 'cancelled'
             task['done'] = True
-            task['message'] = '浠诲姟宸蹭腑鏂紝鍙互瀹夊叏鍒犻櫎'
+            task['message'] = '扫描已强制中止，可继续或删除。'
             task['finished_at'] = task.get('finished_at') or _now_iso()
             _persist_task(task_id)
-            return jsonify({'success': True, 'message': '浠诲姟宸蹭腑鏂紝鍙互瀹夊叏鍒犻櫎', 'done': True, 'stage': task.get('stage'), 'status': task.get('status')})
+            return jsonify({'success': True, 'message': '扫描已强制中止，可继续或删除。', 'done': True, 'stage': task.get('stage'), 'status': task.get('status')})
         if task.get('done') and status not in {'paused', 'stale'}:
             return jsonify({'success': True, 'message': '任务已结束', 'done': True, 'stage': task.get('stage'), 'status': task.get('status')})
         task['cancel_requested'] = True
         task['status'] = 'cancel_requested'
         task['stage'] = 'cancel_requested'
-        task['message'] = '正在中断提取并保存当前成果...'
+        task['message'] = '正在强制中止当前扫描...'
         _persist_task(task_id)
-    return jsonify({'success': True, 'message': '已请求中断，当前块完成后将保存部分成果'})
+    return jsonify({'success': True, 'message': '已请求强制中止，将尽快结束当前扫描并保留 checkpoint'})
 
 
 @world_build_bp.route('/extract/<task_id>/pause', methods=['POST'])
@@ -727,6 +822,23 @@ def _run_resume_task(task_id):
         if not cache_key:
             raise ValueError('任务缺少 cache_key，无法继续')
         result = extractor.resume_from_cache(cache_key, progress_callback=progress_cb, should_cancel=should_cancel, should_pause=should_pause)
+        if result.get('force_cancelled'):
+            with _tasks_lock:
+                task = _extraction_tasks.get(task_id, {})
+                task.update({
+                    'status': 'cancelled',
+                    'stage': 'cancelled',
+                    'progress': int(task.get('progress', 0)),
+                    'message': '扫描已强制中止，已保留 checkpoint，可继续或删除。',
+                    'done': True,
+                    'result': None,
+                    'result_file': None,
+                    'result_summary': None,
+                    'finished_at': _now_iso(),
+                })
+                _persist_task(task_id)
+            _delete_task_result_file(task_id, _extraction_tasks.get(task_id, {}))
+            return
         with _tasks_lock:
             task = _extraction_tasks.get(task_id, {})
             cancelled = bool(result.get('cancelled') or task.get('cancel_requested'))
@@ -793,6 +905,7 @@ def extract_progress(task_id):
     resp = {
         'success': True,
         'task_id': task_id,
+        'world_id': task.get('world_id'),
         'status': task.get('status') or task.get('stage'),
         'stage': task['stage'],
         'progress': task['progress'],

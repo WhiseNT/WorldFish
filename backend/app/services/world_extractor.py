@@ -5,7 +5,7 @@
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
 
-logger = get_logger('mirofish.service.world_extractor')
+logger = get_logger('worldfish.service.world_extractor')
 
 
 class WorldExtractor:

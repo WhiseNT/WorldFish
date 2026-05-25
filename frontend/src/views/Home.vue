@@ -16,7 +16,8 @@
         </p>
         <div class="hero-actions">
           <router-link to="/world-builder" class="btn btn-primary hero-btn-primary">
-            构建世界观 →
+            <span>构建世界观</span>
+            <SvgIcon name="arrow-right" :size="16" />
           </router-link>
           <button class="btn btn-secondary hero-btn-secondary" @click="scrollToWorlds">
             已有世界观
@@ -36,7 +37,8 @@
       <div class="section-top">
         <h2 class="section-title">你的世界观</h2>
         <router-link to="/world-builder" class="btn btn-primary btn-sm">
-          + 新建
+          <SvgIcon name="plus" :size="14" />
+          <span>新建</span>
         </router-link>
       </div>
 
@@ -54,7 +56,7 @@
 
       <!-- Empty -->
       <div v-else-if="worlds.length === 0" class="empty-state">
-        <div class="empty-icon">🌍</div>
+        <div class="empty-icon"><SvgIcon name="world" :size="42" :stroke-width="1.6" /></div>
         <h3>还没有世界观</h3>
         <p>开始构建你的第一个世界观，AI 将帮你从文本中提取角色、组织、事件和设定。</p>
         <router-link to="/world-builder" class="btn btn-primary">
@@ -87,7 +89,8 @@
               知识库
             </router-link>
             <router-link :to="'/simulation/new?worldId=' + world.id" class="btn btn-primary btn-sm">
-              开始推演 →
+              <span>开始推演</span>
+              <SvgIcon name="arrow-right" :size="14" />
             </router-link>
           </div>
         </div>
@@ -106,6 +109,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { worldApi } from '../api/world'
+import SvgIcon from '../components/ui/SvgIcon.vue'
 
 const worlds = ref([])
 const loading = ref(true)

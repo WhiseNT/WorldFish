@@ -706,6 +706,102 @@ class RagService:
             "has_documents": doc_count > 0,
         }
 
+    def export_documents_for_scan(self, limit: int = 100000) -> Dict[str, Any]:
+        """导出当前知识库文本，作为世界观扫描输入。"""
+        total = self.count()
+        if total <= 0:
+            return {"text": "", "document_count": 0, "text_length": 0}
+
+        def _coerce_int(value: Any, default: int = 0) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _parse_char_range(value: Any) -> Tuple[int, int]:
+            if isinstance(value, (list, tuple)) and len(value) >= 2:
+                return _coerce_int(value[0], 0), _coerce_int(value[1], 0)
+            if isinstance(value, str):
+                matches = re.findall(r"\d+", value)
+                if len(matches) >= 2:
+                    return _coerce_int(matches[0], 0), _coerce_int(matches[1], 0)
+            return 0, 0
+
+        fetch_limit = max(1, min(int(limit or total), total))
+        page_size = min(500, fetch_limit)
+        records = []
+        offset = 0
+        fetched = 0
+        try:
+            while fetched < fetch_limit:
+                batch_size = min(page_size, fetch_limit - fetched)
+                docs = self.list_documents(limit=batch_size, offset=offset)
+                if not docs:
+                    break
+                for index, doc in enumerate(docs, start=fetched):
+                    text = str(doc.text or "").strip()
+                    if not text:
+                        continue
+                    metadata = doc.metadata if isinstance(doc.metadata, dict) else {}
+                    char_start, char_end = _parse_char_range(metadata.get("char_range"))
+                    records.append({
+                        "doc_id": doc.doc_id,
+                        "text": text,
+                        "metadata": metadata,
+                        "source_hash": str(metadata.get("source_hash") or ""),
+                        "source": str(metadata.get("source") or "rag"),
+                        "source_label": str(metadata.get("filename") or metadata.get("source_label") or metadata.get("source") or "rag").strip(),
+                        "source_text_length": _coerce_int(metadata.get("source_text_length"), len(text)),
+                        "chapter_title": str(metadata.get("chapter_title") or "").strip(),
+                        "chapter_index": _coerce_int(metadata.get("chapter_index"), 0),
+                        "chunk_index": _coerce_int(
+                            metadata.get("rag_chunk_index")
+                            if metadata.get("rag_chunk_index") is not None
+                            else metadata.get("chunk_index"),
+                            index,
+                        ),
+                        "char_start": char_start,
+                        "char_end": char_end,
+                    })
+                batch_count = len(docs)
+                fetched += batch_count
+                offset += batch_count
+                if batch_count < batch_size:
+                    break
+        except Exception as e:
+            logger.error(f"导出 RAG 扫描文本失败 [{self.world_id}]: {e}", exc_info=True)
+            return {"text": "", "document_count": 0, "text_length": 0, "error": str(e)}
+
+        records.sort(key=lambda item: (
+            item["source_text_length"],
+            item["source_hash"],
+            item["chunk_index"],
+            item["chapter_index"],
+            item["char_start"],
+            item["doc_id"],
+        ))
+
+        parts = []
+        for idx, record in enumerate(records, start=1):
+            title_bits = [f"RAG文档 {idx}"]
+            if record["source_label"]:
+                title_bits.append(f"来源:{record['source_label']}")
+            if record["chapter_title"]:
+                title_bits.append(f"章节:{record['chapter_title']}")
+            elif record["chapter_index"] > 0:
+                title_bits.append(f"章节序号:{record['chapter_index'] + 1}")
+            if record["char_end"] > record["char_start"]:
+                title_bits.append(f"位置:{record['char_start']}-{record['char_end']}")
+            parts.append(f"【{' | '.join(title_bits)}】\n{record['text']}")
+
+        text = "\n\n".join(parts)
+        return {
+            "text": text,
+            "document_count": len(records),
+            "text_length": len(text),
+            "total_count": total,
+        }
+
     def list_documents(self, limit: int = 100, offset: int = 0) -> List[RagDocument]:
         """列出 Collection 中的文档（分页）。"""
         try:

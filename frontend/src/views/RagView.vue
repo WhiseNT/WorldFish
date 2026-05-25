@@ -27,7 +27,7 @@
 
     <!-- No world selected -->
     <div v-if="!selectedWorldId" class="empty-state">
-      <div class="empty-icon">📚</div>
+      <div class="empty-icon"><SvgIcon name="book" :size="42" :stroke-width="1.6" /></div>
       <h3>选择世界观以管理知识库</h3>
       <p>RAG 知识库为每个世界观建立独立的向量索引，基于 Embedding 实现语义检索。</p>
     </div>
@@ -85,7 +85,7 @@
               @drop.prevent="onFileDrop"
               @click="fileInput?.click()"
             >
-              <div class="upload-icon">📁</div>
+              <div class="upload-icon"><SvgIcon name="folder" :size="38" :stroke-width="1.6" /></div>
               <p v-if="pendingFiles.length === 0">点击或拖拽文件到此处上传</p>
               <p class="upload-hint">支持 PDF、Markdown、TXT 文件</p>
             </div>
@@ -99,9 +99,11 @@
             />
             <div v-if="pendingFiles.length > 0" class="upload-file-list">
               <div v-for="(f, i) in pendingFiles" :key="i" class="upload-file-item">
-                <span class="upload-file-name">📄 {{ f.name }}</span>
+                <span class="upload-file-name"><SvgIcon name="file" :size="15" /> {{ f.name }}</span>
                 <span class="upload-file-size">{{ formatSize(f.size) }}</span>
-                <button class="upload-file-remove" @click="removeFile(i)">×</button>
+                <button class="upload-file-remove" @click="removeFile(i)" title="移除文件">
+                  <SvgIcon name="close" :size="13" />
+                </button>
               </div>
             </div>
           </div>
@@ -240,6 +242,7 @@ import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { worldApi } from '../api/world'
 import { ragApi } from '../api/rag'
+import SvgIcon from '../components/ui/SvgIcon.vue'
 
 const route = useRoute()
 

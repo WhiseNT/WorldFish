@@ -9,6 +9,7 @@ from app.config import Config
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
 from app.prompts import load_prompt
+import copy
 from datetime import datetime
 import hashlib
 import json
@@ -16,6 +17,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
@@ -23,6 +25,8 @@ logger = get_logger('worldfish.service.enhanced_world_extractor')
 
 # 每线程独立的 LLMClient，避免共享阻塞
 _thread_local = threading.local()
+_cache_file_locks: Dict[str, threading.Lock] = {}
+_cache_file_locks_guard = threading.Lock()
 
 
 class EnhancedWorldExtractor:
@@ -183,6 +187,92 @@ class EnhancedWorldExtractor:
             return value.decode('utf-8', errors='replace')
         text = str(value or '')
         return text.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
+
+    def _is_high_confidence_noise_line(self, line: str) -> bool:
+        stripped = str(line or '').strip()
+        if not stripped:
+            return False
+        normalized = stripped.lower()
+        if re.fullmatch(r'[=\-_*#~·•—─]{4,}', stripped):
+            return True
+        if normalized in {'目录', '目录：', 'contents', 'table of contents'}:
+            return True
+        if re.match(r'^\s*(?:第\s*[零〇一二三四五六七八九十百千万\d]+\s*[章节卷部篇回]|chapter\s*\d+|part\s*\d+).{0,80}(?:\.{2,}|…{2,}|\s{2,})\d+\s*$', stripped, re.IGNORECASE):
+            return True
+
+        high_confidence_noise = (
+            '版权所有', '版权归', '侵权必究', '免责声明', '未经授权', '仅供学习交流', '严禁用于商业用途',
+            '请于下载后', '免费电子书', '广告合作', '扫码', '公众号', '微信读书', '本书来自', '最新章节请访问',
+            'app下载', '下载地址', '支持正版', '手机访问', '书友群',
+        )
+        if len(stripped) <= 180 and any(token in stripped for token in high_confidence_noise):
+            return True
+        if re.search(r'(https?://|www\.)\S+', stripped) and any(token in stripped for token in ('下载', '阅读', '版权', '公众号')):
+            return True
+        return False
+
+    def _preclean_extraction_text(self, text: str) -> str:
+        raw_text = self._safe_text(text)
+        if not raw_text:
+            return ''
+
+        normalized = raw_text.replace('\r\n', '\n').replace('\r', '\n')
+        cleaned_lines: List[str] = []
+        removed_noise = 0
+
+        for raw_line in normalized.split('\n'):
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if self._is_high_confidence_noise_line(stripped):
+                removed_noise += 1
+                continue
+            if not stripped:
+                if cleaned_lines and cleaned_lines[-1] == '':
+                    continue
+                cleaned_lines.append('')
+                continue
+            cleaned_lines.append(stripped)
+
+        cleaned_text = re.sub(r'\n{3,}', '\n\n', '\n'.join(cleaned_lines).strip())
+        if removed_noise:
+            logger.info(f'预清理移除 {removed_noise} 行高置信噪声')
+        return cleaned_text or normalized.strip()
+
+    @staticmethod
+    def _empty_style_payload() -> Dict[str, str]:
+        return {'writing_style': '', 'reference_text': ''}
+
+    @staticmethod
+    def _truncate_preserving_boundaries(text: Any, max_chars: int) -> str:
+        normalized = str(text or '').strip()
+        max_chars = int(max_chars or 0)
+        if max_chars <= 0 or len(normalized) <= max_chars:
+            return normalized
+
+        search_start = max(1, int(max_chars * 0.7))
+        boundary = -1
+        for marker in ('\n\n', '\n', '。', '！', '？', '；'):
+            marker_index = normalized.rfind(marker, search_start, max_chars + 1)
+            if marker_index >= 0:
+                marker_end = marker_index if marker.startswith('\n') else marker_index + len(marker)
+                boundary = max(boundary, marker_end)
+        if boundary <= 0:
+            boundary = max_chars
+        return normalized[:boundary].rstrip() + '……'
+
+    def _limit_entity_intro(self, entity: Dict[str, Any]) -> None:
+        if not isinstance(entity, dict):
+            return
+        if str(entity.get('type') or '').strip() != '人物':
+            return
+        attributes = entity.get('attributes') if isinstance(entity.get('attributes'), dict) else None
+        if not attributes:
+            return
+        intro = str(attributes.get('简介') or '').strip()
+        if not intro:
+            return
+        max_chars = int(getattr(Config, 'EXTRACTION_ENTITY_INTRO_MAX_CHARS', 1200) or 1200)
+        attributes['简介'] = self._truncate_preserving_boundaries(intro, max_chars)
 
     def _has_meaningful_content(self, data: Dict[str, Any]) -> bool:
         if not isinstance(data, dict):
@@ -791,6 +881,8 @@ class EnhancedWorldExtractor:
             finalized.get("settings") or {},
         )
         self._canonicalize_entity_links(finalized.get("entities") or [], finalized.get("events") or [])
+        for entity in finalized.get("entities") or []:
+            self._limit_entity_intro(entity)
         finalized["writing_style"] = str(data.get("writing_style") or "").strip()
         finalized["reference_text"] = str(data.get("reference_text") or "")
         if isinstance(data.get("extraction_diagnostics"), dict):
@@ -990,6 +1082,15 @@ class EnhancedWorldExtractor:
         safe_key = re.sub(r"[^a-fA-F0-9_-]", "", cache_key)[:96]
         return os.path.join(self._cache_dir(), f"{safe_key}.json")
 
+    def _cache_file_lock(self, cache_key: str) -> threading.Lock:
+        key = re.sub(r"[^a-fA-F0-9_-]", "", str(cache_key or ""))[:96] or "default"
+        with _cache_file_locks_guard:
+            lock = _cache_file_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                _cache_file_locks[key] = lock
+            return lock
+
     def _load_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
         path = self._cache_path(cache_key)
         if not os.path.exists(path):
@@ -1002,12 +1103,23 @@ class EnhancedWorldExtractor:
             return None
 
     def _save_cache(self, cache: Dict[str, Any]) -> None:
+        cache_key = cache.get("cache_key") or ""
         cache["updated_at"] = datetime.now().isoformat()
-        path = self._cache_path(cache.get("cache_key") or "")
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(cache, handle, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        payload = copy.deepcopy(cache)
+        path = self._cache_path(cache_key)
+        lock = self._cache_file_lock(cache_key)
+        with lock:
+            tmp_path = f"{path}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, path)
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
 
     def _build_chunk_records(self, text: str, chunks: List[Any]) -> List[Dict[str, Any]]:
         records = []
@@ -1069,7 +1181,7 @@ class EnhancedWorldExtractor:
 
     def extract_from_text(self, text: str, progress_callback=None, extraction_mode: str = None, force_rebuild: bool = False, should_cancel=None, should_pause=None) -> Dict[str, Any]:
         """从文本提取世界观信息（统一大块切分 + Fast/Deep 缓存续传）。"""
-        text = self._safe_text(text)
+        text = self._preclean_extraction_text(text)
         mode = str(extraction_mode or getattr(Config, "EXTRACTION_DEFAULT_MODE", "fast") or "fast").lower()
         if mode not in {"fast", "deep"}:
             mode = "fast"
@@ -1089,48 +1201,15 @@ class EnhancedWorldExtractor:
         return self._extract_chapters(text, progress_callback, volume_profile=volume_profile, extraction_mode=mode, force_rebuild=force_rebuild, should_cancel=should_cancel, should_pause=should_pause)
 
     def _extract_short_text(self, text: str, progress_callback=None) -> Dict[str, Any]:
-        """短文本提取：主提取与文风分析并行，节省一次 LLM 往返"""
+        """短文本提取：仅执行结构化提取，暂停文风分析。"""
         self.errors = []
         try:
-            # 主提取和文风分析互不依赖，并行执行
             if progress_callback:
-                progress_callback('extracting', 10, '正在提取世界观信息 + 分析文风...')
+                progress_callback('extracting', 10, '正在提取世界观信息...')
 
-            extraction_result = [None]
-            style_result = [None]
-            errors = []
-
-            def do_extract():
-                try:
-                    return self._extract_from_chunk(text, chunk_index=0)
-                except Exception as e:
-                    errors.append(e)
-                    return None
-
-            def do_style():
-                try:
-                    return self.extract_writing_style(text)
-                except Exception as e:
-                    self._record_error("文风分析", e)
-                    return {"writing_style": "", "reference_text": text[:2000] if text else ""}
-
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                future_extract = executor.submit(do_extract)
-                future_style = executor.submit(do_style)
-
-                for future in as_completed([future_extract, future_style]):
-                    if future == future_extract:
-                        extraction_result[0] = future.result()
-                        if progress_callback:
-                            progress_callback('extracting', 50, '世界观提取完成，等待文风分析...')
-                    else:
-                        style_result[0] = future.result()
-
-            if errors or extraction_result[0] is None:
-                raise ValueError("世界观提取失败，请检查 LLM 配置。详细错误：" + " | ".join(str(e) for e in errors))
-
-            result = extraction_result[0]
-            style_data = style_result[0] or {"writing_style": "", "reference_text": text[:2000] if text else ""}
+            result = self._extract_from_chunk(text, chunk_index=0)
+            if result is None:
+                raise ValueError('世界观提取失败，请检查 LLM 配置。')
 
             if progress_callback:
                 progress_callback('finalizing', 85, '正在整理结果...')
@@ -1140,8 +1219,8 @@ class EnhancedWorldExtractor:
                 "entities": result["entities"],
                 "events": result["events"],
                 "settings": self._normalize_settings(result.get("settings") or {}),
-                "writing_style": style_data.get("writing_style", ""),
-                "reference_text": style_data.get("reference_text", ""),
+                "writing_style": "",
+                "reference_text": "",
             }
 
             if progress_callback:
@@ -1211,16 +1290,6 @@ class EnhancedWorldExtractor:
             final.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
             return final
 
-        style_result = [None]
-        style_source = next((record.get("text") for record in chunk_records if record.get("text")), text[:2000])
-
-        def do_style():
-            try:
-                return self.extract_writing_style(style_source)
-            except Exception as e:
-                self._record_error("文风分析", e)
-                return {"writing_style": "", "reference_text": style_source[:2000] if style_source else ""}
-
         def process_record(record: Dict[str, Any], context_prefix: str = "") -> Tuple[int, Optional[Dict[str, Any]], str]:
             idx = int(record.get("index") or 0)
             chunk = record.get("text") or ""
@@ -1251,8 +1320,7 @@ class EnhancedWorldExtractor:
         pending_records = [record for record in chunk_records if record.get("status") != "completed"]
         completed_count = completed_initial
 
-        with ThreadPoolExecutor(max_workers=(1 if mode == "deep" else min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records)))) + 1) as executor:
-            future_style = executor.submit(do_style)
+        with ThreadPoolExecutor(max_workers=(1 if mode == "deep" else min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records))))) as executor:
             if mode == "deep":
                 for record in pending_records:
                     if should_cancel and should_cancel():
@@ -1330,7 +1398,6 @@ class EnhancedWorldExtractor:
 
                     if not stop_requested:
                         submit_next_records()
-            style_result[0] = future_style.result()
 
         successful = [r for r in all_results if r is not None]
         failed_chunks = [
@@ -1339,16 +1406,20 @@ class EnhancedWorldExtractor:
             if result is None
         ]
         cache.setdefault("diagnostics", {})["failed_chunks"] = failed_chunks
+        cancelled = bool(cache.get("status") == "cancelled" or (should_cancel and should_cancel()))
+        paused = bool(cache.get("status") == "paused" or (should_pause and should_pause()))
+        if cancelled:
+            cache["status"] = "cancelled"
+            self._save_cache(cache)
+            return self._build_force_cancel_result(cache, volume_profile, resumed_from_cache)
         if not successful:
             cache["status"] = "failed"
             self._save_cache(cache)
             raise ValueError("所有大块提取均失败: " + " | ".join(self.errors))
 
-        cancelled = bool(cache.get("status") == "cancelled" or (should_cancel and should_cancel()))
-        paused = bool(cache.get("status") == "paused" or (should_pause and should_pause()))
         if progress_callback:
             progress_callback('merging', 88, f'正在保存已提取的 {len(successful)}/{len(chunk_records)} 个大块结果...' if (cancelled or paused) else f'正在合并 {len(successful)}/{len(chunk_records)} 个大块结果...', self._progress_detail(cache, volume_profile, resumed_from_cache))
-        style_data = style_result[0] or {"writing_style": "", "reference_text": style_source[:2000] if style_source else ""}
+        style_data = self._empty_style_payload()
         merged = self._merge_extractions(successful)
         merged["settings"] = self._normalize_settings(merged.get("settings") or {})
         merged["writing_style"] = style_data.get("writing_style", "")
@@ -1472,6 +1543,27 @@ class EnhancedWorldExtractor:
             "target_chunk_chars": volume_profile.get("target_chunk_chars"),
             "deep_state": detail["deep_state"],
         }
+
+    def _build_force_cancel_result(self, cache: Dict[str, Any], volume_profile: Dict[str, Any], resumed_from_cache: bool) -> Dict[str, Any]:
+        chunks = cache.get("chunks") or []
+        diagnostics = cache.get("diagnostics", {})
+        result = {
+            "cancelled": True,
+            "force_cancelled": True,
+            "cache_status": "cancelled",
+            "extraction_diagnostics": {
+                "cancelled": True,
+                "force_cancelled": True,
+                "volume_profile": volume_profile,
+                "total_chunks": len(chunks),
+                "successful_chunks": sum(1 for item in chunks if item.get("status") == "completed"),
+                "failed_chunks": diagnostics.get("failed_chunks") or [],
+                "errors": list(self.errors),
+                **diagnostics,
+            },
+        }
+        result.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
+        return result
 
     def _checkpoint_chunk(self, cache: Dict[str, Any], idx: int, result: Optional[Dict[str, Any]], error: str = "", deep_mode: bool = False, snapshot_stats: Optional[Dict[str, Any]] = None) -> None:
         chunks = cache.get("chunks") or []

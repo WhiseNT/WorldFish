@@ -15,7 +15,7 @@ from .logger import get_logger
 
 
 DEEPSEEK_V4_MODELS = {"deepseek-v4-pro", "deepseek-v4-flash"}
-logger = get_logger("mirofish.llm_client")
+logger = get_logger("worldfish.llm_client")
 
 
 def is_deepseek_v4_model(model: str) -> bool:

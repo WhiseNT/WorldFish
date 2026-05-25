@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from app.utils.logger import get_logger
 
-logger = get_logger('mirofish.service.timeline_manager')
+logger = get_logger('worldfish.service.timeline_manager')
 
 
 class TimelineManager:
@@ -118,10 +118,12 @@ class TimelineManager:
         ).strip()
         time_range = str(payload.get("timeRange") or payload.get("time_range") or "").strip()
         end_time = str(payload.get("endYear") or payload.get("end_time") or "").strip()
+        no_end_time = bool(payload.get("noEndTime") or payload.get("no_end_time"))
+
         if not time_range and base_time:
             if end_time:
                 time_range = f"{base_time} ~ {end_time}"
-            elif payload.get("noEndTime") or payload.get("no_end_time"):
+            elif no_end_time:
                 time_range = f"{base_time} ~ 无"
 
         unit = str(payload.get("unit") or "年").strip() or "年"
@@ -145,6 +147,8 @@ class TimelineManager:
             "type": calendar_type,
             "baseTime": base_time,
             "timeRange": time_range,
+            "endYear": end_time,
+            "noEndTime": no_end_time,
             "unit": unit,
             "ratio": ratio,
             "calendarType": calendar_kind,

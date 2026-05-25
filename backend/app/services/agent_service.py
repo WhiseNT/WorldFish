@@ -26,7 +26,7 @@ from ..services.agent_tools import (
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 
-logger = get_logger("mirofish.agent_service")
+logger = get_logger("worldfish.agent_service")
 
 # ============================================================
 # 系统 Prompt
@@ -50,8 +50,9 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个世界观构建与管理的智能助手 
 ## 工作原则
 1. **主动了解**：先读取当前世界观数据，了解全貌再提出建议
 2. **先确认后操作**：修改/删除前先向用户确认
-3. **提供选项**：当有多个可行方案时，使用 plan_options 工具
-4. **结构化展示**：用清晰格式展示信息
+3. **删除必须显式授权**：只有当用户明确要求“删除/移除/清理某对象”时，才能调用 delete_* 工具。修改、纠错、重命名、合并内容时，必须优先使用 update_*，不得用删旧建新代替更新。
+4. **提供选项**：当有多个可行方案时，使用 plan_options 工具
+5. **结构化展示**：用清晰格式展示信息
 
 ## 🔴 诚实原则（最高优先级）
 - **只回答知识库和世界观数据中实际存在的内容**
@@ -118,6 +119,85 @@ class AgentResponseChunk:
     type: str  # "text" | "tool_call" | "tool_result" | "context" | "usage" | "user_prompt" | "done"
     content: str = ""
     data: Any = None
+
+
+def _with_world_id(result_data: Any, world_id: str) -> Any:
+    """为结构化工具结果补充世界观 ID，避免前端或调试层误把资源 ID 当成 world_id。"""
+    normalized_world_id = str(world_id or "").strip()
+    if not normalized_world_id or not isinstance(result_data, dict):
+        return result_data
+
+    existing_world_id = str(result_data.get("world_id") or "").strip()
+    if existing_world_id == normalized_world_id:
+        return result_data
+
+    return {
+        **result_data,
+        "world_id": normalized_world_id,
+    }
+
+
+DESTRUCTIVE_TOOL_RULES = {
+    "delete_entity": {
+        "target": "实体",
+        "preferred_update": "update_entity",
+    },
+    "delete_event": {
+        "target": "事件",
+        "preferred_update": "update_event",
+    },
+    "delete_calendar": {
+        "target": "历法",
+        "preferred_update": "update_calendar",
+    },
+}
+
+DELETE_REQUEST_PATTERNS = [
+    re.compile(r"(?:请|帮我|麻烦|直接|把|将)?(?:删除|删掉|移除|去掉|清除|清掉|清理|remove|delete)", re.IGNORECASE),
+    re.compile(r"把.{0,40}删(?:掉)?", re.IGNORECASE),
+]
+
+DELETE_BLOCK_PATTERNS = [
+    re.compile(r"(?:不要|别|不能|不该|不应|禁止).{0,12}(?:删除|删掉|删|移除|去掉|清除|清理)", re.IGNORECASE),
+    re.compile(r"(?:为什么|怎么|似乎|好像).{0,40}(?:删除|删掉|删了|移除|去掉)", re.IGNORECASE),
+    re.compile(r"(?:直接给|把).{0,40}删了", re.IGNORECASE),
+]
+
+
+def _recent_user_text(session: AgentSession, limit: int = 3) -> str:
+    texts: List[str] = []
+    for message in reversed(session.messages or []):
+        if getattr(message, "role", "") != "user":
+            continue
+        content = str(getattr(message, "content", "") or "").strip()
+        if not content:
+            continue
+        texts.append(content)
+        if len(texts) >= limit:
+            break
+    texts.reverse()
+    return "\n".join(texts)
+
+
+def _has_explicit_delete_authorization(session: AgentSession) -> bool:
+    recent_user_text = _recent_user_text(session)
+    if not recent_user_text:
+        return False
+
+    if any(pattern.search(recent_user_text) for pattern in DELETE_BLOCK_PATTERNS):
+        return False
+
+    return any(pattern.search(recent_user_text) for pattern in DELETE_REQUEST_PATTERNS)
+
+
+def _build_delete_guard_result(tool_name: str) -> ToolCallResult:
+    rule = DESTRUCTIVE_TOOL_RULES.get(tool_name, {})
+    target = rule.get("target", "对象")
+    preferred_update = rule.get("preferred_update", "update_*")
+    return ToolCallResult(
+        False,
+        f"未检测到用户对{target}的明确删除授权，已阻止调用 {tool_name}。如果当前需求只是修改、纠错、重命名或合并信息，请改用 {preferred_update}；只有用户明确要求删除时才能删除。必要时先用 ask_user 确认。",
+    )
 
 
 class AgentService:
@@ -642,7 +722,10 @@ class AgentService:
                             except json.JSONDecodeError:
                                 args = {}
                             try:
-                                result = tool.execute(world_id=world_id, **args)
+                                if tool_name in DESTRUCTIVE_TOOL_RULES and not _has_explicit_delete_authorization(session):
+                                    result = _build_delete_guard_result(tool_name)
+                                else:
+                                    result = tool.execute(world_id=world_id, **args)
                             except Exception as e:
                                 logger.error(f"工具执行失败 [{tool_name}]: {e}")
                                 result = ToolCallResult(False, f"工具执行失败: {str(e)}")
@@ -657,13 +740,16 @@ class AgentService:
                         else:
                             result_content = f"[{tool_name}] ❌\n{result.content}"
 
+                        result_data = _with_world_id(result.data, world_id)
+
                         yield AgentResponseChunk(
                             type="tool_result",
                             content=result_content,
                             data={
                                 "name": tool_name,
                                 "success": result.success,
-                                "result": result.data,
+                                "world_id": str(world_id or "").strip(),
+                                "result": result_data,
                             },
                         )
 

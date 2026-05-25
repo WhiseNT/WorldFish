@@ -2,7 +2,7 @@
   <div class="language-switcher" ref="switcherRef">
     <button class="switcher-trigger" @click="toggleDropdown">
       {{ currentLabel }}
-      <span class="caret">{{ open ? '▲' : '▼' }}</span>
+      <SvgIcon class="caret" :name="open ? 'chevron-up' : 'chevron-down'" :size="12" />
     </button>
     <ul v-if="open" class="switcher-dropdown">
       <li
@@ -22,6 +22,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { availableLocales } from '@/i18n/index.js'
+import SvgIcon from './ui/SvgIcon.vue'
 
 const { locale } = useI18n()
 const open = ref(false)
@@ -66,58 +67,64 @@ onUnmounted(() => {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Light theme (default - for white header backgrounds) */
 .switcher-trigger {
-  background: transparent;
-  color: #333;
-  border: 1px solid #CCC;
-  padding: 4px 12px;
-  font-family: 'JetBrains Mono', monospace;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--wf-text-secondary);
+  border: 1px solid var(--wf-border-light);
+  padding: 5px 12px;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: border-color 0.2s, opacity 0.2s;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
 }
 
 .switcher-trigger:hover {
-  border-color: #999;
+  border-color: var(--wf-accent);
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
 }
 
 .caret {
-  font-size: 0.6rem;
+  color: currentColor;
 }
 
 .switcher-dropdown {
   position: absolute;
   top: 100%;
   right: 0;
-  margin-top: 4px;
-  background: #FFFFFF;
-  border: 1px solid #DDD;
+  margin-top: 6px;
+  background: rgba(17, 17, 19, 0.98);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-md);
   list-style: none;
-  padding: 4px 0;
+  padding: 4px;
   min-width: 100%;
   z-index: 1000;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(12px);
 }
 
 .switcher-option {
   padding: 6px 12px;
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
-  color: #333;
+  color: var(--wf-text-secondary);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .switcher-option:hover {
-  background: #F0F0F0;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--wf-text-primary);
 }
 
 .switcher-option.active {
-  color: var(--orange, #FF4500);
+  color: var(--wf-accent);
+  background: var(--wf-accent-muted);
 }
 
 

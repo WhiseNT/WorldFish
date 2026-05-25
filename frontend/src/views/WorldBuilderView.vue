@@ -44,7 +44,7 @@
           @click="activeTab = 'basic'"
           class="tab-btn"
         >
-          <span class="tab-icon">📋</span>
+          <SvgIcon class="tab-icon" name="list" :size="16" />
           <span class="tab-label">基本信息</span>
         </button>
         <button 
@@ -52,7 +52,7 @@
           @click="activeTab = 'entities'"
           class="tab-btn"
         >
-          <span class="tab-icon">🧬</span>
+          <SvgIcon class="tab-icon" name="dna" :size="16" />
           <span class="tab-label">核心实体与事件</span>
         </button>
         <button 
@@ -60,7 +60,7 @@
           @click="activeTab = 'settings'"
           class="tab-btn"
         >
-          <span class="tab-icon">⚙️</span>
+          <SvgIcon class="tab-icon" name="settings" :size="16" />
           <span class="tab-label">设定管理</span>
         </button>
         <button 
@@ -68,7 +68,7 @@
           @click="activeTab = 'evolutions'"
           class="tab-btn"
         >
-          <span class="tab-icon">🌀</span>
+          <SvgIcon class="tab-icon" name="swirl" :size="16" />
           <span class="tab-label">推演记录</span>
         </button>
         <button 
@@ -76,7 +76,7 @@
           @click="activeTab = 'timeline'"
           class="tab-btn"
         >
-          <span class="tab-icon">⏰</span>
+          <SvgIcon class="tab-icon" name="clock" :size="16" />
           <span class="tab-label">时间线</span>
         </button>
         <button 
@@ -84,7 +84,7 @@
           @click="activeTab = 'map'"
           class="tab-btn"
         >
-          <span class="tab-icon">🗺️</span>
+          <SvgIcon class="tab-icon" name="map" :size="16" />
           <span class="tab-label">地图</span>
         </button>
       </div>
@@ -171,7 +171,7 @@
         <div class="ai-extract-section">
           <div class="section-header">
             <h2 class="section-title">AI世界观提取</h2>
-            <p class="section-description">粘贴世界观描述文本或上传文件，AI将自动提取关键信息</p>
+            <p class="section-description">上传文件、输入文本，或直接扫描当前世界观已索引的知识库内容</p>
           </div>
           <div class="extract-toolbar">
             <div class="llm-status-chip" :class="{ 'is-ready': hasLlmConfig, 'is-missing': !hasLlmConfig }">
@@ -184,8 +184,34 @@
             </button>
           </div>
 
+          <div class="form-section extraction-source-section">
+            <div class="section-header compact-header">
+              <h3 class="section-title small-title">扫描来源</h3>
+              <span class="llm-status-chip">同一界面支持输入与知识库联合扫描</span>
+            </div>
+            <div class="type-selector">
+              <button type="button" class="type-btn" :class="{ active: extractScanSource === 'input' }" @click="extractScanSource = 'input'; extractError = ''">
+                上传/输入文本
+                <span>保持当前行为，上传文件或直接粘贴文本后进行扫描</span>
+              </button>
+              <button type="button" class="type-btn" :class="{ active: extractScanSource === 'rag' }" @click="extractScanSource = 'rag'; extractError = ''">
+                已有 RAG 知识库
+                <span>不上传新内容，直接扫描当前世界观已索引的知识库</span>
+              </button>
+              <button type="button" class="type-btn" :class="{ active: extractScanSource === 'input_and_rag' }" @click="extractScanSource = 'input_and_rag'; extractError = ''">
+                上传/输入 + 知识库
+                <span>把新上传/输入内容与已有知识库一起扫描，只索引新内容</span>
+              </button>
+            </div>
+            <p class="extract-source-note" :class="{ 'is-warning': extractUsesRagSource && !worldId }">{{ extractSourceNotice }}</p>
+            <div class="extract-guidance">
+              <p class="extract-guidance-item">文风分析已暂停以节省 token。</p>
+              <p class="extract-guidance-item">人物简介会限长，但阶段成长、实力变化、性格变化、关键转折会完整保留。</p>
+            </div>
+          </div>
+
           <!-- 文件上传区域 -->
-          <div class="form-group form-group-full">
+          <div v-if="extractNeedsManualInput" class="form-group form-group-full">
             <label class="form-label">上传文件让 AI 解读（支持 PDF、Markdown、TXT）</label>
             <div
               class="file-drop-zone"
@@ -203,7 +229,7 @@
                 @change="handleFileSelect"
               />
               <div class="file-drop-content">
-                <span class="file-drop-icon">📄</span>
+                <span class="file-drop-icon"><SvgIcon name="file" :size="38" :stroke-width="1.6" /></span>
                 <span>拖拽文件到此处或</span>
                 <button type="button" class="btn btn-secondary file-browse-btn" @click="$refs.fileInput.click()">
                   选择文件
@@ -216,9 +242,12 @@
               <div v-for="(file, index) in selectedFiles" :key="index" class="selected-file-item">
                 <span class="file-name">{{ file.name }}</span>
                 <span class="file-size">({{ formatFileSize(file.size) }})</span>
-                <button class="file-remove-btn" @click="removeFile(index)">×</button>
+                <button class="file-remove-btn" @click="removeFile(index)" title="移除文件"><SvgIcon name="close" :size="13" /></button>
               </div>
             </div>
+          </div>
+          <div v-else class="extract-source-note">
+            当前模式将直接扫描当前世界观绑定的 RAG 知识库内容，不需要上传文件或填写文本。
           </div>
 
           <!-- JSON 直接导入 -->
@@ -253,7 +282,7 @@
             </div>
           </div>
 
-          <div class="form-group form-group-full">
+          <div v-if="extractNeedsManualInput" class="form-group form-group-full">
             <label class="form-label">或直接输入世界观文本</label>
             <textarea
               v-model="extractText"
@@ -265,17 +294,25 @@
           <div class="extract-action-row">
             <button
               @click="extractWorldInfo(false)"
-              :disabled="isExtracting || (!extractText && selectedFiles.length === 0)"
+              :disabled="!canExtractWorld"
               class="btn btn-primary extract-btn"
             >
               {{ isExtracting ? '提取中...' : '提取世界观信息' }}
             </button>
             <button
               @click="extractWorldInfo(true)"
-              :disabled="isExtracting || (!extractText && selectedFiles.length === 0)"
+              :disabled="!canExtractWorld"
               class="btn btn-primary extract-btn"
             >
               重新完整扫描
+            </button>
+            <button
+              v-if="extractTaskId && !showExtractScanModal"
+              type="button"
+              @click="openExtractScanPanel()"
+              class="btn btn-secondary extract-btn"
+            >
+              打开扫描窗口
             </button>
           </div>
 
@@ -306,7 +343,7 @@
                 {{ isPausingExtract ? '暂停中...' : '暂停' }}
               </button>
               <button type="button" class="btn btn-secondary" :disabled="isCancellingExtract" @click="cancelExtraction">
-                {{ isCancellingExtract ? '正在中断...' : '中断并保存' }}
+                {{ isCancellingExtract ? '正在中止...' : '强制中止' }}
               </button>
             </div>
           </div>
@@ -320,7 +357,7 @@
                   <h3>{{ scanModalTitle }}</h3>
                   <div class="scan-title-actions">
                     <span>{{ extractProgress.progress || 0 }}%</span>
-                    <button type="button" class="scan-close-btn" @click="closeExtractScanPanel">×</button>
+                    <button type="button" class="scan-close-btn" @click="closeExtractScanPanel" title="关闭扫描窗口"><SvgIcon name="close" :size="14" /></button>
                   </div>
                 </div>
                 <div class="progress-bar-container deep-main-bar">
@@ -357,7 +394,10 @@
               </div>
 
               <div class="deep-scan-section">
-                <h4>{{ extractionMode === 'deep' ? '📖 实时发现实体' : '📦 快速扫描进度' }}</h4>
+                <h4>
+                  <SvgIcon :name="extractionMode === 'deep' ? 'book' : 'box'" :size="16" />
+                  {{ extractionMode === 'deep' ? '实时发现实体' : '快速扫描进度' }}
+                </h4>
                 <ul v-if="deepDiscoveries.length" class="deep-discovery-list">
                   <li v-for="(item, index) in deepDiscoveries" :key="index">{{ item }}</li>
                 </ul>
@@ -365,7 +405,10 @@
               </div>
 
               <div class="deep-scan-section">
-                <h4>{{ extractionMode === 'deep' ? '🧠 模型思考摘要' : '🧠 扫描摘要' }}</h4>
+                <h4>
+                  <SvgIcon name="brain" :size="16" />
+                  {{ extractionMode === 'deep' ? '模型思考摘要' : '扫描摘要' }}
+                </h4>
                 <p class="deep-summary">{{ deepThinkingSummary }}</p>
               </div>
 
@@ -381,7 +424,7 @@
                     {{ isResumingExtract ? '继续中...' : '继续' }}
                   </button>
                   <button v-if="canCancelExtract" type="button" class="btn btn-secondary" :disabled="isCancellingExtract" @click="cancelExtraction">
-                    {{ isCancellingExtract ? '正在中断...' : '中断并保存当前成果' }}
+                    {{ isCancellingExtract ? '正在中止...' : '强制中止当前扫描' }}
                   </button>
                   <button v-if="canDeleteExtract" type="button" class="btn btn-danger" :disabled="isDeletingExtractTask" @click="deleteExtractionTask">
                     {{ isDeletingExtractTask ? '删除中...' : '删除扫描' }}
@@ -416,7 +459,7 @@
           <div class="dialog-content llm-config-dialog">
             <div class="dialog-header">
               <h2 class="dialog-title">配置 LLM 提取服务</h2>
-              <button class="close-btn" @click="closeLlmConfigDialog">×</button>
+              <button class="close-btn" @click="closeLlmConfigDialog" title="关闭"><SvgIcon name="close" :size="16" /></button>
             </div>
             <div class="dialog-body">
               <div class="form-group">
@@ -474,7 +517,7 @@
             <p class="section-description">实体会自动映射到设定管理中的对应设定项，成长阶段也会随实体一起存储。</p>
           </div>
           <div class="overview-header collapsible-header" @click="showEntitiesExpanded = !showEntitiesExpanded">
-            <span class="collapse-arrow">{{ showEntitiesExpanded ? '▼' : '▶' }}</span>
+            <SvgIcon class="collapse-arrow" :name="showEntitiesExpanded ? 'chevron-down' : 'chevron-right'" :size="14" />
             <h3 class="overview-title">核心实体 ({{ entities.length }})</h3>
             <span class="enabled-count">已启用 {{ enabledEntityCount }}</span>
           </div>
@@ -496,9 +539,14 @@
                   <span class="entity-card-name">{{ d.entity.name }}</span>
                   <span class="entity-card-type">{{ d.entity.type || '未分类' }}</span>
                 </div>
-                <button type="button" class="entity-setting-link" @click.stop="openLinkedSetting(d.entity)">
-                  {{ d.hasSetting ? '查看对应设定' : '生成对应设定' }}
-                </button>
+                <div class="entity-card-actions">
+                  <button type="button" class="entity-setting-link" @click.stop="openLinkedSetting(d.entity)">
+                    {{ d.hasSetting ? '查看对应设定' : '生成对应设定' }}
+                  </button>
+                  <button type="button" class="entity-delete-link" @click.stop="deleteEntity(d.entity.id)">
+                    删除实体
+                  </button>
+                </div>
               </div>
 
               <div v-if="d.simpleKeys.length > 0" class="entity-card-attrs">
@@ -585,7 +633,7 @@
             <p class="section-description">事件中的关联实体可以直接跳转到它们在设定管理中的条目。</p>
           </div>
           <div class="overview-header collapsible-header" @click="showEventsExpanded = !showEventsExpanded">
-            <span class="collapse-arrow">{{ showEventsExpanded ? '▼' : '▶' }}</span>
+            <SvgIcon class="collapse-arrow" :name="showEventsExpanded ? 'chevron-down' : 'chevron-right'" :size="14" />
             <h3 class="overview-title">关键事件 ({{ events.length }})</h3>
             <span class="enabled-count">已启用 {{ enabledEventCount }}</span>
           </div>
@@ -639,20 +687,30 @@
                 <div class="tree-children">
                   <div v-for="category in settingCategories" :key="category.id" class="tree-node">
                     <div class="tree-item category-item" :class="{ active: activeCategory === category.id }" @click="toggleCategory(category.id)">
-                      <span class="expand-icon">{{ category.expanded ? '▼' : '▶' }}</span>
-                      <span class="category-icon">{{ category.icon }}</span>
+                      <SvgIcon class="expand-icon" :name="category.expanded ? 'chevron-down' : 'chevron-right'" :size="13" />
+                      <SvgIcon class="category-icon" :name="category.icon" :size="15" />
                       <span class="category-name">{{ category.name }}</span>
                     </div>
                     <div v-if="category.expanded" class="tree-children">
                       <div v-for="collection in getCollectionsByCategory(category.id)" :key="collection.id" class="tree-node">
-                        <div class="tree-item collection-item" @click="toggleCollection(collection.id)">
-                          <span class="expand-icon">{{ collection.expanded ? '▼' : '▶' }}</span>
-                          <span class="collection-icon">📁</span>
+                        <div
+                          class="tree-item collection-item"
+                          :class="{ active: activeSettingCollection && activeSettingCollection.id === collection.id }"
+                          @click="openSettingCollection(collection)"
+                        >
+                          <SvgIcon class="expand-icon" @click.stop="toggleCollectionExpand(collection.id)" :name="collection.expanded ? 'chevron-down' : 'chevron-right'" :size="13" />
+                          <SvgIcon class="collection-icon" name="folder" :size="15" />
                           <span class="collection-name">{{ collection.name }}</span>
                         </div>
                         <div v-if="collection.expanded" class="tree-children">
-                          <div v-for="setting in getSettingsByCollection(collection.id)" :key="setting.id" class="tree-item setting-item">
-                            <span class="setting-icon">📄</span>
+                          <div
+                            v-for="setting in getSettingsByCollection(collection.id)"
+                            :key="setting.id"
+                            class="tree-item setting-item"
+                            :class="{ active: activeSidebarSettingId === setting.id || currentSetting?.id === setting.id }"
+                            @click="openSidebarSetting(setting)"
+                          >
+                            <SvgIcon class="setting-icon" name="file" :size="14" />
                             <span class="setting-name">{{ setting.name }}</span>
                           </div>
                         </div>
@@ -676,9 +734,13 @@
                 >
               </div>
               <div class="header-actions">
-                <button class="btn btn-secondary my-proposals-btn">我的提案</button>
-                <button class="btn btn-primary new-setting-btn" @click="openNewSettingDialog">+ 新建设定</button>
+                <button class="btn btn-primary new-setting-btn" @click="openNewSettingDialog"><SvgIcon name="plus" :size="15" /> 新建设定</button>
               </div>
+            </div>
+
+            <div v-if="activeSettingCollection" class="settings-filter-bar">
+              <span class="settings-filter-chip">当前设定集：{{ activeSettingCollection.name }}</span>
+              <button type="button" class="settings-filter-clear" @click="clearActiveCollectionFilter">显示当前分类全部设定</button>
             </div>
             
             <div class="settings-list">
@@ -747,225 +809,232 @@
       </div>
 
       <!-- 时间线 -->
-      <div v-if="activeTab === 'timeline'" class="tab-pane timeline-section">
-        <div class="timeline-header">
-          <div class="header-info">
-            <span class="timeline-eyebrow">Chronology Atlas</span>
+      <div v-if="activeTab === 'timeline'" class="tab-pane timeline-section timeline-workspace">
+        <div class="timeline-hero-panel">
+          <div class="timeline-hero-copy">
+            <span class="timeline-eyebrow">Chronology Workspace</span>
             <h3 class="header-title">世界时间线</h3>
-            <p class="header-description">主轴焦点：{{ timelineFocusLabel }}；锚点：{{ timelinePrimaryLabel }}。远离主线的背景时间不会拉宽主轴。</p>
+            <p class="header-description">
+              用故事线、历法和诊断三种视图理解世界历史。旧版历法、事件日期、实体阶段会自动兼容并转换为可读时间点。
+            </p>
           </div>
-          <div class="header-actions">
-            <div class="zoom-controls">
-              <button class="btn btn-secondary zoom-btn" @click="zoomOut">
-                <span>−</span>
-              </button>
-              <span class="zoom-level">{{ Math.round(zoomLevel * 100) }}%</span>
-              <button class="btn btn-secondary zoom-btn" @click="zoomIn">
-                <span>+</span>
-              </button>
+          <div class="timeline-actions">
+            <div class="timeline-view-tabs" role="tablist" aria-label="时间线视图">
+              <button type="button" :class="{ active: timelineViewMode === 'story' }" @click="timelineViewMode = 'story'"><SvgIcon name="timeline-node" :size="14" />故事线</button>
+              <button type="button" :class="{ active: timelineViewMode === 'calendar' }" @click="timelineViewMode = 'calendar'"><SvgIcon name="clock" :size="14" />历法</button>
+              <button type="button" :class="{ active: timelineViewMode === 'diagnostics' }" @click="timelineViewMode = 'diagnostics'"><SvgIcon name="info" :size="14" />诊断</button>
             </div>
-            <button class="btn btn-secondary calendar-edit-btn" @click="openCalendarEdit">历法编辑</button>
-          </div>
-        </div>
-
-        <div class="timeline-status-grid">
-          <div class="timeline-status-card is-primary">
-            <span class="status-label">主轴</span>
-            <strong>{{ timelinePrimaryLabel }}</strong>
-            <small>{{ timelineRangeLabels.start }} - {{ timelineRangeLabels.end }}</small>
-          </div>
-          <div class="timeline-status-card">
-            <span class="status-label">历法</span>
-            <strong>{{ timelineDiagnostics.usableCalendars }} / {{ timelineDiagnostics.totalCalendars }}</strong>
-            <small>可定位 / 已提取</small>
-          </div>
-          <div class="timeline-status-card">
-            <span class="status-label">事件锚点</span>
-            <strong>{{ timelineDiagnostics.eventAnchors }}</strong>
-            <small>显示 {{ timelineDiagnostics.visibleEvents }} 条</small>
-          </div>
-          <div class="timeline-status-card">
-            <span class="status-label">背景时间</span>
-            <strong>{{ timelineDiagnostics.backgroundItems }}</strong>
-            <small>未纳入主轴显示</small>
-          </div>
-        </div>
-
-        <div class="timeline-insights">
-          <div class="timeline-insight-card timeline-chronology-card">
-            <div class="insight-header">
-              <span class="insight-kicker">纪元 / 纪年骨架</span>
-              <span class="insight-count">{{ timelineEraSummaries.length }} 纪元 · {{ timelineYearSummaries.length }} 纪年</span>
-            </div>
-            <div v-if="calendarSummaries.length > 0" class="chronology-columns">
-              <div class="chronology-column">
-                <div class="chronology-column-title">纪元</div>
-                <button
-                  v-for="calendar in timelineEraSummaries"
-                  :key="calendar.id"
-                  type="button"
-                  class="calendar-summary-row is-era"
-                  @click="showCalendarDetail(calendar)"
-                >
-                  <span class="summary-name">{{ calendar.name }}</span>
-                  <span class="summary-meta">{{ calendar.timeRange || calendar.baseTime || '未定义区间' }}</span>
-                </button>
-                <div v-if="timelineEraSummaries.length === 0" class="timeline-empty-hint">没有可展示的纪元。</div>
-              </div>
-              <div class="chronology-column">
-                <div class="chronology-column-title">纪年</div>
-                <button
-                  v-for="calendar in timelineYearSummaries"
-                  :key="calendar.id"
-                  type="button"
-                  class="calendar-summary-row is-year"
-                  @click="showCalendarDetail(calendar)"
-                >
-                  <span class="summary-name">{{ calendar.name }}</span>
-                  <span class="summary-meta">{{ calendar.timeRange || calendar.baseTime || '未定义区间' }}</span>
-                </button>
-                <div v-if="timelineYearSummaries.length === 0" class="timeline-empty-hint">没有可展示的纪年。</div>
-              </div>
-            </div>
-            <div v-else class="timeline-empty-hint">尚未定义历法体系，请先在“历法编辑”中创建至少一条历法。</div>
-          </div>
-
-          <div class="timeline-insight-card timeline-quality-card">
-            <div class="insight-header">
-              <span class="insight-kicker">数据诊断</span>
-              <span class="insight-count">{{ timelineDiagnostics.noisyCalendars }} 项待清理</span>
-            </div>
-            <div v-if="timelineIssueCalendars.length > 0" class="timeline-issue-list">
-              <div v-for="issue in timelineIssueCalendars" :key="issue.id" class="timeline-issue-row">
-                <span class="issue-name">{{ issue.name }}</span>
-                <span class="issue-reason">{{ issue.issue }}</span>
-              </div>
-            </div>
-            <div v-else class="timeline-empty-hint">当前历法数据可以直接渲染。</div>
-          </div>
-        </div>
-        
-        <!-- 横向时间轴 -->
-        <div class="timeline-container" ref="timelineContainer" @wheel="handleWheel" :style="{ height: timelineHeight }">
-          <div class="timeline-canvas" ref="timelineCanvas" :style="timelineCanvasStyle">
-            <div class="timeline-title">
-              <span>世界基准时间轴</span>
-            </div>
-            <div class="timeline-axis">
-              <div class="timeline-line"></div>
-              <div
-                v-for="gap in timelineCompressedGaps"
-                :key="gap.label"
-                class="timeline-compressed-gap"
-                :style="{ left: gap.position + '%' }"
-              >//<span>{{ gap.label }}</span></div>
-              <div
-                v-for="tick in timelineTicks"
-                :key="tick.label"
-                class="timeline-tick"
-                :style="{ left: tick.position + '%' }"
-              >
-                <span>{{ tick.label }}</span>
-              </div>
-              <div class="timeline-axis-range">
-                <span class="axis-range-label">{{ timelineRangeLabels.start }}</span>
-                <span class="axis-range-label">{{ timelineRangeLabels.end }}</span>
-              </div>
-            </div>
-
-            <div class="timeline-lane-title" :style="{ top: timelineCalendarTop - 30 + 'px' }">纪元与纪年</div>
-            <div class="timeline-band-layer" :style="{ top: timelineCalendarTop + 'px', height: timelineCalendarHeight + 'px' }">
-              <div v-if="calendarTimelineItems.length === 0" class="timeline-empty-lane">暂无历法区间，点击“历法编辑”创建后会显示在这里。</div>
-              <div 
-                v-for="(calendar, index) in calendarTimelineItems" 
-                :key="calendar.id"
-                class="timeline-band calendar-band"
-                :class="[`is-${calendar.kind}`, { 'is-low-confidence': calendar.issue }]"
-                :style="getCalendarBandStyle(calendar, index)"
-                @click="showCalendarDetail(calendar.source || calendar)"
-              >
-                <div class="band-name">{{ calendar.name }}</div>
-                <div class="band-caption">{{ calendar.caption }}</div>
-              </div>
-            </div>
-
-            <div class="timeline-lane-title" :style="{ top: timelineEventTop - 30 + 'px' }">关键事件</div>
-            <div class="timeline-point-layer" :style="{ top: timelineEventTop + 'px', height: timelineEventHeight + 'px' }">
-              <div v-if="timelineEventItems.length === 0" class="timeline-empty-lane">暂无可定位事件。</div>
-              <button
-                v-for="(event, index) in timelineEventItems"
-                :key="event.id"
-                type="button"
-                class="timeline-point-event"
-                :style="getTimelineEventStyle(event, index)"
-                :title="`${event.label} · ${event.name}`"
-                :aria-label="`${event.label} ${event.name}`"
-                @click="selectEvent(event.source)"
-              >
-                <span class="event-dot"></span>
-                <span class="event-popover">
-                  <strong>{{ event.name }}</strong>
-                  <small>{{ event.label }} · {{ event.entities.slice(0, 2).join(' / ') || event.dateText }}</small>
-                </span>
-              </button>
-            </div>
-
-            <div class="timeline-lane-title" :style="{ top: timelineStageTop - 30 + 'px' }">实体阶段</div>
-            <div class="timeline-stage-layer" :style="{ top: timelineStageTop + 'px', height: timelineStageHeight + 'px' }">
-              <div v-if="timelineStageItems.length === 0" class="timeline-empty-lane">暂无可定位实体阶段。</div>
-              <div
-                v-for="(stage, index) in timelineStageItems"
-                :key="stage.id"
-                class="timeline-stage-chip"
-                :style="getTimelineStageStyle(stage, index)"
-                :title="`${stage.label} · ${stage.entityName} · ${stage.name}`"
-              >
-                <span class="stage-pulse"></span>
-                <span class="stage-name">{{ stage.entityName }} · {{ stage.name }}</span>
-              </div>
-            </div>
-
-      <div
-              v-if="timelineAnchor"
-              class="anchor-time-marker"
-              :style="{ left: getAnchorTimePosition() + '%' }"
-              @click="scrollToPosition(getAnchorTimePosition())"
-            >
-              <div class="anchor-label">锚定时间: {{ timelinePrimaryLabel }}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="timeline-context-grid">
-          <section class="timeline-context-panel">
-            <div class="context-panel-header">
-              <span>事件锚点</span>
-              <strong>{{ timelineDiagnostics.visibleEvents }}</strong>
-            </div>
-            <button
-              v-for="event in timelineEventItems.slice(0, 12)"
-              :key="`ctx-${event.id}`"
-              type="button"
-              class="context-event-row"
-              @click="selectEvent(event.source)"
-            >
-              <span class="context-year">{{ event.label }}</span>
-              <span class="context-title">{{ event.name }}</span>
-              <span class="context-meta">{{ event.entities.slice(0, 3).join(' / ') || event.dateText }}</span>
+            <button class="btn btn-secondary calendar-edit-btn" @click="openCalendarEdit">
+              <SvgIcon name="clock" :size="15" />
+              历法编辑
             </button>
-          </section>
+          </div>
+        </div>
 
-          <section class="timeline-context-panel">
-            <div class="context-panel-header">
-              <span>实体阶段</span>
-              <strong>{{ timelineDiagnostics.visibleStages }}</strong>
-            </div>
-            <div v-for="stage in timelineStageItems.slice(0, 12)" :key="`ctx-${stage.id}`" class="context-stage-row">
-              <span class="context-year">{{ stage.label }}</span>
-              <span class="context-title">{{ stage.entityName }}</span>
-              <span class="context-meta">{{ stage.name }} · {{ stage.era }}</span>
-            </div>
-          </section>
+        <div class="timeline-overview-grid">
+          <div class="timeline-overview-card is-primary">
+            <span>覆盖范围</span>
+            <strong>{{ timelineOverviewStats.range }}</strong>
+            <small>按可解析数据自动推断</small>
+          </div>
+          <div class="timeline-overview-card">
+            <span>故事事件</span>
+            <strong>{{ timelineOverviewStats.events }}</strong>
+            <small>{{ timelineOverviewStats.totalEvents }} 条原始事件</small>
+          </div>
+          <div class="timeline-overview-card">
+            <span>实体阶段</span>
+            <strong>{{ timelineOverviewStats.stages }}</strong>
+            <small>{{ timelineOverviewStats.totalStages }} 个原始阶段</small>
+          </div>
+          <div class="timeline-overview-card" :class="{ 'has-warning': timelineOverviewStats.unresolved > 0 }">
+            <span>待修复</span>
+            <strong>{{ timelineOverviewStats.unresolved }}</strong>
+            <small>无法定位或低置信数据</small>
+          </div>
+        </div>
+
+        <div class="timeline-filter-row">
+          <div class="timeline-search-box">
+            <SvgIcon name="search" :size="16" />
+            <input v-model="timelineSearchQuery" placeholder="搜索事件、实体、历法或描述..." />
+          </div>
+          <div class="timeline-filter-chips">
+            <button type="button" :class="{ active: timelineTypeFilter === 'all' }" @click="timelineTypeFilter = 'all'"><SvgIcon name="grid" :size="13" />全部</button>
+            <button type="button" :class="{ active: timelineTypeFilter === 'event' }" @click="timelineTypeFilter = 'event'"><SvgIcon name="bolt" :size="13" />事件</button>
+            <button type="button" :class="{ active: timelineTypeFilter === 'stage' }" @click="timelineTypeFilter = 'stage'"><SvgIcon name="user" :size="13" />阶段</button>
+            <button type="button" :class="{ active: timelineTypeFilter === 'calendar' }" @click="timelineTypeFilter = 'calendar'"><SvgIcon name="clock" :size="13" />历法</button>
+          </div>
+        </div>
+
+        <div class="timeline-workspace-layout">
+          <main class="timeline-main-panel">
+            <section v-if="timelineViewMode === 'story'" class="timeline-story-view">
+              <div v-if="chronologyGroups.length === 0" class="timeline-empty-state">
+                <SvgIcon name="clock" :size="38" />
+                <h4>暂无可定位时间点</h4>
+                <p>请为事件填写明确年份，或在实体阶段中填写时期。无法解析的数据会出现在“诊断”视图。</p>
+              </div>
+              <article v-for="group in chronologyGroups" :key="group.key" class="chronology-group">
+                <div class="chronology-year-rail">
+                  <span class="chronology-year">{{ group.label }}</span>
+                  <span class="chronology-count">{{ group.items.length }} 项</span>
+                </div>
+                <div class="chronology-card-stack">
+                  <button
+                    v-for="item in group.items"
+                    :key="item.id"
+                    type="button"
+                    class="chronology-card"
+                    :class="[`is-${item.type}`, { selected: selectedTimelineItemId === item.id, 'is-low-confidence': item.confidence === 'low' }]"
+                    @click="selectTimelineItem(item)"
+                  >
+                    <span class="chronology-hover-card">
+                      <strong>{{ item.title }}</strong>
+                      <small>{{ item.subtitle || getTimelineItemTypeLabel(item.type) }}</small>
+                      <em>{{ item.description || item.rawText || item.label }}</em>
+                    </span>
+                    <span class="chronology-card-icon"><SvgIcon :name="getTimelineItemIcon(item.type)" :size="17" /></span>
+                    <span class="chronology-card-body">
+                      <span class="chronology-card-kicker">{{ getTimelineItemTypeLabel(item.type) }} · {{ item.label }}</span>
+                      <strong>{{ item.title }}</strong>
+                      <small>{{ item.subtitle }}</small>
+                    </span>
+                    <span class="chronology-confidence" :class="`is-${item.confidence}`">{{ getTimelineConfidenceLabel(item.confidence) }}</span>
+                  </button>
+                </div>
+              </article>
+            </section>
+
+            <section v-else-if="timelineViewMode === 'calendar'" class="timeline-calendar-view">
+              <div class="calendar-graphic-panel">
+                <div class="calendar-graphic-header">
+                  <div>
+                    <strong>纪元 / 纪年图形轴</strong>
+                    <p>滚轮移动时间轴，按住 Ctrl + 滚轮缩放。开始/结束时间均按纯数字年份渲染。</p>
+                  </div>
+                  <span class="calendar-axis-meter">
+                    <SvgIcon name="timeline-node" :size="14" />
+                    {{ chronologyCalendarItems.length }} 条历法 · {{ Math.round(calendarGraphicZoom * 100) }}%
+                  </span>
+                </div>
+                <div v-if="chronologyCalendarItems.length === 0" class="timeline-empty-state compact">
+                  <SvgIcon name="clock" :size="34" />
+                  <h4>暂无可图形化渲染的历法</h4>
+                  <p>请在“历法编辑”里补充名称、基准时间或时间范围。</p>
+                </div>
+                <div
+                  v-else
+                  class="calendar-graphic-stage"
+                  :style="{ height: calendarGraphicHeight + 'px' }"
+                  @wheel="handleCalendarGraphicWheel"
+                  tabindex="0"
+                  aria-label="纪元和纪年图形时间轴，滚轮平移，按住 Ctrl 滚轮缩放"
+                >
+                  <div class="calendar-graphic-axis">
+                    <div class="calendar-axis-line"></div>
+
+                    <span
+                      v-for="tick in calendarGraphicTicks"
+                      :key="`calendar-tick-${tick.label}`"
+                      class="calendar-axis-tick"
+                      :style="{ left: getCalendarGraphicPosition(tick.year) + '%' }"
+                    >{{ tick.label }}</span>
+                  </div>
+                  <div
+                    v-for="row in calendarGraphicRows"
+                    :key="row.id"
+                    class="calendar-graphic-row"
+                    :style="{ top: row.top + 'px' }"
+                  >
+                    <button
+                      v-for="segment in row.items"
+                      :key="`graphic-${segment.item.id}`"
+                      type="button"
+                      class="calendar-graphic-band"
+                      :class="getCalendarGraphicBandClass(segment)"
+                      :style="getCalendarGraphicBandStyle(segment)"
+                      @click="selectTimelineItem(segment.item)"
+                    >
+                      <span class="calendar-band-title">{{ segment.item.title }}</span>
+                      <span class="calendar-band-range">{{ segment.item.label }}</span>
+                      <span class="calendar-band-duration">{{ segment.durationLabel }}</span>
+                      <span class="calendar-band-hover-card">
+                        <strong>{{ segment.item.title }}</strong>
+                        <small>{{ segment.item.label }} · {{ segment.durationLabel }}</small>
+                        <em>{{ segment.item.subtitle }}</em>
+                        <em v-if="segment.item.description">{{ segment.item.description }}</em>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="calendar-view-columns">
+                <div class="calendar-view-column">
+                  <div class="calendar-view-title">纪元</div>
+                  <button
+                    v-for="item in chronologyCalendarItems.filter(calendar => calendar.kind === 'era')"
+                    :key="item.id"
+                    type="button"
+                    class="calendar-line-card"
+                    :class="{ selected: selectedTimelineItemId === item.id }"
+                    @click="selectTimelineItem(item)"
+                  >
+                    <span class="calendar-line-name">{{ item.title }}</span>
+                    <span class="calendar-line-range">{{ item.label }} · {{ item.subtitle }}</span>
+                  </button>
+                  <div v-if="chronologyCalendarItems.filter(calendar => calendar.kind === 'era').length === 0" class="timeline-empty-hint">暂无纪元。</div>
+                </div>
+                <div class="calendar-view-column">
+                  <div class="calendar-view-title">纪年</div>
+                  <button
+                    v-for="item in chronologyCalendarItems.filter(calendar => calendar.kind === 'year')"
+                    :key="item.id"
+                    type="button"
+                    class="calendar-line-card"
+                    :class="{ selected: selectedTimelineItemId === item.id }"
+                    @click="selectTimelineItem(item)"
+                  >
+                    <span class="calendar-line-name">{{ item.title }}</span>
+                    <span class="calendar-line-range">{{ item.label }} · {{ item.subtitle }}</span>
+                  </button>
+                  <div v-if="chronologyCalendarItems.filter(calendar => calendar.kind === 'year').length === 0" class="timeline-empty-hint">暂无纪年。</div>
+                </div>
+              </div>
+            </section>
+
+            <section v-else class="timeline-diagnostics-view">
+              <div class="diagnostics-header-card">
+                <SvgIcon name="info" :size="20" />
+                <div>
+                  <strong>时间解析诊断</strong>
+                  <p>这些条目不会丢失，只是暂时无法放到故事线中。补充明确年份或历法基准后会自动进入时间线。</p>
+                </div>
+              </div>
+              <div v-if="timelineUnresolvedItems.length === 0" class="timeline-empty-state compact">
+                <SvgIcon name="check" :size="34" />
+                <h4>没有需要修复的时间数据</h4>
+                <p>当前事件、阶段和历法都可以被新版时间线识别。</p>
+              </div>
+              <button
+                v-for="item in timelineUnresolvedItems"
+                :key="item.id"
+                type="button"
+                class="diagnostic-row"
+                :class="`is-${item.type}`"
+                @click="selectTimelineItem(item)"
+              >
+                <span class="diagnostic-icon"><SvgIcon :name="getTimelineItemIcon(item.type)" :size="16" /></span>
+                <span class="diagnostic-main">
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ item.reason }}</small>
+                </span>
+                <span class="diagnostic-raw">{{ item.rawText || '无时间文本' }}</span>
+              </button>
+            </section>
+          </main>
+
         </div>
       </div>
 
@@ -1024,7 +1093,7 @@
         <div class="dialog-content calendar-edit-dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">历法编辑</h2>
-            <button class="close-btn" @click="cancelCalendarEdit">×</button>
+            <button class="close-btn" @click="cancelCalendarEdit" title="关闭"><SvgIcon name="close" :size="16" /></button>
           </div>
           
           <div class="calendar-edit-content">
@@ -1056,8 +1125,8 @@
                     <td>{{ calendar.ratio }}</td>
                     <td>{{ calendar.calendarType }}</td>
                     <td class="action-buttons">
-                      <button class="btn btn-secondary edit-btn" @click="editCalendar(calendar)">✏️</button>
-                      <button class="btn btn-danger delete-btn" @click="deleteCalendar(calendar.id)">🗑️</button>
+                      <button class="btn btn-secondary edit-btn icon-only" @click="editCalendar(calendar)" title="编辑历法"><SvgIcon name="edit" :size="14" /></button>
+                      <button class="btn btn-danger delete-btn icon-only" @click="deleteCalendar(calendar.id)" title="删除历法"><SvgIcon name="trash" :size="14" /></button>
                     </td>
                   </tr>
                 </tbody>
@@ -1069,24 +1138,26 @@
               <div class="info-section">
                 <h4 class="info-subtitle">历法类型：</h4>
                 <ul class="info-list">
-                  <li>• 纪元：用于记录世界大事件的历法体系</li>
-                  <li>• 纪年：用于记录政权或朝代的历法</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 纪元：用于记录世界大事件的历法体系</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 纪年：用于记录政权或朝代的历法</li>
                 </ul>
               </div>
               <div class="info-section">
                 <h4 class="info-subtitle">时间单位：</h4>
                 <ul class="info-list">
-                  <li>• 可自定义时间单位名称和符号</li>
-                  <li>• 比例系数表示该单位与基准年的关系</li>
-                  <li>• 如：1纪元 = 2基准年，则比例系数为2</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 可自定义时间单位名称和符号</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 比例系数表示该单位与基准年的关系</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 如：1纪元 = 2基准年，则比例系数为2</li>
                 </ul>
               </div>
               <div class="info-section">
                 <h4 class="info-subtitle">年份规则：</h4>
                 <ul class="info-list">
-                  <li>• 纪元历法之间不能重叠</li>
-                  <li>• 纪元首尾相接不算重叠</li>
-                  <li>• 仅第一个纪元可设置无开始时间</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 纪元历法之间不能重叠</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 纪元首尾相接不算重叠</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 仅第一个纪元可设置无开始时间</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 仅最后一个纪元可设置无结束时间</li>
+                  <li><SvgIcon name="timeline-node" :size="13" /> 所有纪年历法可设置无结束时间</li>
                 </ul>
               </div>
             </div>
@@ -1105,7 +1176,7 @@
         <div class="dialog-content calendar-detail-dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">编辑历法</h2>
-            <button class="close-btn" @click="cancelCalendarDetailEdit">×</button>
+            <button class="close-btn" @click="cancelCalendarDetailEdit" title="关闭"><SvgIcon name="close" :size="16" /></button>
           </div>
           
           <div class="calendar-detail-content">
@@ -1125,13 +1196,13 @@
             
             <div class="form-row">
             <div class="form-group">
-              <label class="form-label">* 本历法基准年份</label>
-              <input type="text" v-model="currentCalendar.startYear" class="form-input" placeholder="如：危机纪元0年">
+              <label class="form-label">* 开始时间</label>
+              <input type="number" step="1" v-model.number="currentCalendar.startYear" class="form-input" placeholder="仅输入数字，如：0">
             </div>
               <div class="form-group">
                 <label class="form-label">结束年份</label>
                 <div class="end-year-input">
-                  <input type="text" v-model="currentCalendar.endYear" class="form-input" :disabled="currentCalendar.noEndTime">
+                  <input type="number" step="1" v-model.number="currentCalendar.endYear" class="form-input" placeholder="仅输入数字" :disabled="currentCalendar.noEndTime">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="currentCalendar.noEndTime">
                     无结束时间
@@ -1184,7 +1255,7 @@
         <div class="dialog-content new-setting-dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">创建新设定提案</h2>
-            <button class="close-btn" @click="closeNewSettingDialog">×</button>
+            <button class="close-btn" @click="closeNewSettingDialog" title="关闭"><SvgIcon name="close" :size="16" /></button>
           </div>
           
           <div class="new-setting-content">
@@ -1253,7 +1324,7 @@
                   <div class="alias-list" v-if="newSetting.aliases.length > 0">
                     <span v-for="(alias, index) in newSetting.aliases" :key="index" class="alias-tag">
                       {{ alias }}
-                      <button class="remove-alias" @click="removeAlias(index)">×</button>
+                      <button class="remove-alias" @click="removeAlias(index)" title="移除别名"><SvgIcon name="close" :size="13" /></button>
                     </span>
                   </div>
                 </div>
@@ -1305,8 +1376,8 @@
           
           <div class="dialog-footer">
             <button class="btn btn-secondary cancel-btn" @click="closeNewSettingDialog">取消</button>
-            <button class="btn btn-secondary save-draft-btn">💾 保存提案</button>
-            <button class="btn btn-primary submit-btn" @click="saveNewSetting">→ 提交提案</button>
+            <button class="btn btn-secondary save-draft-btn"><SvgIcon name="save" :size="15" /> 保存提案</button>
+            <button class="btn btn-primary submit-btn" @click="saveNewSetting"><SvgIcon name="arrow-right" :size="15" /> 提交提案</button>
           </div>
         </div>
       </div>
@@ -1316,7 +1387,7 @@
         <div class="dialog-content setting-detail-dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">{{ currentSetting.name }} - 详情</h2>
-            <button class="close-btn" @click="closeSettingDetail">×</button>
+            <button class="close-btn" @click="closeSettingDetail" title="关闭"><SvgIcon name="close" :size="16" /></button>
           </div>
           
           <div class="setting-detail-content">
@@ -1394,6 +1465,13 @@
           </div>
           
           <div class="dialog-footer">
+            <button
+              v-if="currentSetting && currentSetting.settingType === 'setting'"
+              class="btn btn-danger delete-btn"
+              @click="deleteCurrentSetting"
+            >
+              删除设定
+            </button>
             <button class="btn btn-secondary cancel-btn" @click="closeSettingDetail">取消</button>
             <button class="btn btn-primary save-btn" @click="saveSettingDetail">保存</button>
           </div>
@@ -1405,7 +1483,7 @@
         <div class="dialog-content setting-selector-dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">选择设定</h2>
-            <button class="close-btn" @click="closeSettingSelector">×</button>
+            <button class="close-btn" @click="closeSettingSelector" title="关闭"><SvgIcon name="close" :size="16" /></button>
           </div>
           
           <div class="setting-selector-content">
@@ -1456,17 +1534,20 @@ import { projectApi } from '../api/project'
 import { generateOntologyFromProject } from '../api/graph'
 import service from '../api/index'
 import WorldMapEditor from '../components/map/WorldMapEditor.vue'
+import SvgIcon from '../components/ui/SvgIcon.vue'
 
 const LAST_EXTRACT_TASK_KEY = 'worldfish:lastExtractTaskId'
 const EXTRACT_TASK_DELETED_EVENT = 'worldfish:extract-task-deleted'
+const EXTRACT_TASK_SYNC_EVENT = 'worldfish:extract-task-sync'
+const WORLD_UPDATED_EVENT = 'worldfish:world-updated'
 
 const SETTING_CATEGORY_OPTIONS = [
-  { id: 'character', name: '角色', icon: '👤' },
-  { id: 'item', name: '物品', icon: '📦' },
-  { id: 'organization', name: '组织', icon: '🏢' },
-  { id: 'geography', name: '地理', icon: '🌍' },
-  { id: 'ability', name: '能力', icon: '⚡' },
-  { id: 'other', name: '其他', icon: '📋' }
+      { id: 'character', name: '角色', icon: 'user' },
+      { id: 'item', name: '物品', icon: 'box' },
+      { id: 'organization', name: '组织', icon: 'building' },
+      { id: 'geography', name: '地理', icon: 'world' },
+      { id: 'ability', name: '能力', icon: 'bolt' },
+      { id: 'other', name: '其他', icon: 'list' }
 ]
 
 const createDefaultMapData = () => ({
@@ -1922,6 +2003,14 @@ const normalizeTimelineText = (value) => String(value || '')
   .replace(/\s+/g, ' ')
   .trim()
 
+const normalizeCalendarNumber = (value, fallback = 0) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const text = String(value ?? '').trim()
+  if (/^[-+]?\d+(?:\.\d+)?$/.test(text)) return Number(text)
+  const parsed = parseTimelineYear(text)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
 const normalizeCalendarRatio = (value) => {
   let text = String(value || '1').trim()
   text = text.replace(/^×\s*/i, '').replace(/^x\s*/i, '').trim()
@@ -2134,9 +2223,15 @@ const extractTimelineYears = (value, options = {}) => {
 }
 
 const parseTimelineYear = (value, options = {}) => {
-  const text = String(value || '').trim()
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  const text = String(value ?? '').trim()
   if (!text) {
     return null
+  }
+  if (/^[-+]?\d+(?:\.\d+)?$/.test(text)) {
+    return Number(text)
   }
 
   const years = extractTimelineYears(text, options)
@@ -2235,11 +2330,12 @@ const buildCalendarTimelineItem = (calendar = {}, index = 0, timelineContext = {
   if (!Number.isFinite(end) && Number.isFinite(parsedRange?.end)) {
     end = parsedRange.end
   }
-  if (!Number.isFinite(end) && parsedRange?.openEnded && Number.isFinite(anchorYear) && anchorYear > start) {
+  const isOpenEnded = Boolean(parsedRange?.openEnded || calendar.noEndTime || /^\s*(无|至今|现在|ongoing|present)\s*$/i.test(rangeEndText))
+  if (!Number.isFinite(end) && isOpenEnded && Number.isFinite(anchorYear) && anchorYear > start) {
     end = anchorYear
   }
   if (!Number.isFinite(end)) {
-    end = start + 1
+    end = isOpenEnded ? start : start + 1
   }
 
   const rangeStart = Math.min(start, end)
@@ -2250,6 +2346,7 @@ const buildCalendarTimelineItem = (calendar = {}, index = 0, timelineContext = {
     caption: `${inferCalendarTimelineType(calendar)} · ${calendar.timeRange || calendar.baseTime || '未定义区间'}${ownRef?.confidence === 'low' ? ' · 未换算' : ''}`,
     start: rangeStart,
     end: rangeEnd,
+    openEnded: isOpenEnded,
     kind: inferCalendarTimelineType(calendar) === '纪年' ? 'year' : 'era',
     issue: ownRef?.confidence === 'low' ? '缺少客观基准年' : issue,
     confidence: ownRef?.confidence || startResolved?.confidence || 'medium',
@@ -2502,15 +2599,19 @@ const normalizeSettingsForUi = (settings = []) => {
 const normalizeCalendarsForUi = (calendars = []) => calendars
   .filter(calendar => calendar && typeof calendar === 'object')
   .map((calendar, index) => {
-    const startYear = String(calendar.baseTime || calendar.startYear || '').trim()
-    const endYear = String(calendar.endYear || '').trim()
+    const startYearValue = normalizeCalendarNumber(calendar.startYear ?? calendar.baseTime, 0)
+    const endYearValue = calendar.noEndTime ? '' : normalizeCalendarNumber(calendar.endYear, startYearValue + 1)
+    const startYear = Number.isFinite(startYearValue) ? startYearValue : 0
+    const endYear = endYearValue === '' ? '' : (Number.isFinite(endYearValue) ? endYearValue : startYear + 1)
     const rawRange = String(calendar.timeRange || '').trim()
-    const timeRange = rawRange || (startYear ? `${startYear} ~ ${endYear || '无'}` : '')
+    const timeRange = `${startYear} ~ ${endYear === '' ? '无' : endYear}`
     const normalizedCalendar = {
       ...calendar,
       id: calendar.id || createLocalId('calendar', index),
       name: String(calendar.name || '').trim(),
       rawType: String(calendar.type || '').trim(),
+      startYear,
+      endYear,
       baseTime: startYear,
       timeRange,
       unit: String(calendar.unit || '年').trim() || '年',
@@ -3097,7 +3198,7 @@ const mergeCalendarsByName = (currentCalendars = [], incomingCalendars = []) => 
 
 export default {
   name: 'WorldBuilderView',
-  components: { WorldMapEditor },
+  components: { WorldMapEditor, SvgIcon },
   data() {
     return {
       worldId: '',
@@ -3134,6 +3235,7 @@ export default {
         reference_text: ''
       },
       extractText: '',
+      extractScanSource: 'input',
       extractionMode: 'fast',
       isExtracting: false,
       extractProgress: { stage: '', progress: 0, message: '', detail: {}, ragProgress: null },
@@ -3181,8 +3283,16 @@ export default {
       selectedEvent: null,
       timelineContainer: null,
       timelineCanvas: null,
+      timelineViewMode: 'calendar',
+      selectedTimelineItemId: '',
+      timelineSearchQuery: '',
+      timelineTypeFilter: 'all',
+      calendarGraphicZoom: 1,
+      calendarGraphicCenter: 0,
       // 设定管理
       activeCategory: 'character',
+      activeCollectionId: '',
+      activeCollectionSnapshot: null,
       settingsSearchQuery: '',
       settingCategories: createDefaultSettingCategories(),
       settings: createDefaultSettings(),
@@ -3198,10 +3308,12 @@ export default {
         newAlias: ''
       },
       currentSetting: null,
+      activeSidebarSettingId: '',
       showSettingDetail: false,
       showSettingSelector: false,
       selectedSettings: [],
       selectedCategoryFilter: 'all',
+      agentWorldRefreshTimer: null,
       showCalendarEdit: false,
       showCalendarDetailEdit: false,
       currentCalendar: null,
@@ -3265,6 +3377,147 @@ export default {
         .sort((a, b) => a.start - b.start || a.end - b.end)
         .slice(0, 48)
     },
+    calendarGraphicRange() {
+      const years = []
+      this.chronologyCalendarItems.forEach(item => {
+        if (Number.isFinite(item.start)) years.push(item.start)
+        if (Number.isFinite(item.end) && !item.openEnded) years.push(item.end)
+      })
+      if (!years.length) return { min: -50, max: 50, span: 100, fullMin: -50, fullMax: 50, fullSpan: 100 }
+      let min = Math.min(...years)
+      let max = Math.max(...years)
+      if (min === max) {
+        min -= 50
+        max += 50
+      }
+      const baseSpan = Math.max(max - min, 1)
+      const padding = Math.max(baseSpan * 0.18, 80)
+      min -= padding
+      max += padding
+      const fullSpan = Math.max(max - min, 1)
+      const zoom = Math.max(0.4, Math.min(8, this.calendarGraphicZoom || 1))
+      const visibleSpan = Math.max(1, fullSpan / zoom)
+      const center = Number.isFinite(this.calendarGraphicCenter) && this.calendarGraphicCenter !== 0
+        ? this.calendarGraphicCenter
+        : (min + max) / 2
+      const rangeMin = center - visibleSpan / 2
+      const rangeMax = center + visibleSpan / 2
+      return { min: rangeMin, max: rangeMax, span: visibleSpan, fullMin: min, fullMax: max, fullSpan }
+    },
+    calendarGraphicRangeLabels() {
+      return {
+        start: `${formatTimelineYear(Math.round(this.calendarGraphicRange.min))}年`,
+        end: `${formatTimelineYear(Math.round(this.calendarGraphicRange.max))}年`,
+      }
+    },
+    calendarGraphicTicks() {
+      const range = this.calendarGraphicRange
+      const roughStep = range.span / 5
+      const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(roughStep, 1))))
+      const normalized = roughStep / magnitude
+      const step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude
+      const first = Math.ceil(range.min / step) * step
+      const ticks = []
+      for (let year = first; year <= range.max + step * 0.1; year += step) {
+        const rounded = Math.round(year)
+        ticks.push({ year: rounded, label: `${formatTimelineYear(rounded)}年`, position: this.getCalendarGraphicPosition(rounded) })
+      }
+      return ticks.filter(tick => tick.position >= -2 && tick.position <= 102).slice(0, 12)
+    },
+    visibleCalendarGraphicItems() {
+      const range = this.calendarGraphicRange
+      return this.chronologyCalendarItems.filter(item => {
+        const start = Number.isFinite(item.start) ? item.start : item.year
+        const end = item.openEnded ? range.max : (Number.isFinite(item.end) ? item.end : start)
+        return end >= range.min && start <= range.max
+      })
+    },
+    calendarGraphicRows() {
+      const rowHeight = 68
+      const topOffset = 84
+      const tolerance = 0.0001
+      const rows = []
+      const items = [...this.visibleCalendarGraphicItems]
+        .sort((a, b) => this.getTimelineTypeOrder(a.kind === 'era' ? 'calendar' : 'stage') - this.getTimelineTypeOrder(b.kind === 'era' ? 'calendar' : 'stage') || a.start - b.start || a.end - b.end)
+
+      items.forEach((item) => {
+        const start = Number.isFinite(item.start) ? item.start : item.year
+        const end = item.openEnded ? this.calendarGraphicRange.max : (Number.isFinite(item.end) ? item.end : start + 1)
+        const clampedStart = Math.max(start, this.calendarGraphicRange.min)
+        const clampedEnd = Math.min(end, this.calendarGraphicRange.max)
+        const rawLeft = this.getCalendarGraphicPosition(start)
+        const rawRight = this.getCalendarGraphicPosition(end)
+        const left = this.getCalendarGraphicPosition(clampedStart)
+        const right = this.getCalendarGraphicPosition(clampedEnd)
+        const visibleLeft = Math.max(0, Math.min(100, Math.min(left, right)))
+        const visibleRight = Math.max(0, Math.min(100, Math.max(left, right)))
+        const duration = Math.max(0, Math.round(end - start))
+        const segment = {
+          item,
+          start,
+          end,
+          left: visibleLeft,
+          width: Math.max(0, visibleRight - visibleLeft),
+          rawLeft,
+          rawRight,
+          clippedStart: rawLeft < 0,
+          clippedEnd: rawRight > 100,
+          duration,
+          durationLabel: item.openEnded ? '持续至未来' : (duration > 0 ? `持续 ${duration} 年` : '瞬时节点'),
+          connectedPrev: false,
+          connectedNext: false,
+        }
+
+        let row = rows.find(candidate => {
+          if (candidate.kind !== item.kind) return false
+          return start + tolerance >= candidate.lastEnd
+        })
+
+        if (!row) {
+          row = { id: `calendar-row-${rows.length}`, kind: item.kind, top: topOffset + rows.length * rowHeight, lastEnd: -Infinity, items: [] }
+          rows.push(row)
+        }
+
+        const prev = row.items[row.items.length - 1]
+        if (prev && Math.abs(prev.end - start) <= tolerance) {
+          prev.connectedNext = true
+          segment.connectedPrev = true
+        }
+        row.items.push(segment)
+        row.lastEnd = Math.max(row.lastEnd, end)
+      })
+
+      return rows
+    },
+    calendarGraphicHeight() {
+      return Math.max(this.calendarGraphicRows.length, 1) * 68 + 134
+    },
+    chronologyCalendarItems() {
+      return this.calendarTimelineItems.map((calendar) => ({
+        id: `calendar:${calendar.id}`,
+        type: 'calendar',
+        kind: calendar.kind,
+        year: calendar.start,
+        start: calendar.start,
+        end: calendar.end,
+        openEnded: Boolean(calendar.openEnded),
+        label: calendar.openEnded ? `${formatTimelineYear(Math.round(calendar.start))}年 - 至今` : `${formatTimelineYear(Math.round(calendar.start))}年 - ${formatTimelineYear(Math.round(calendar.end))}年`,
+        durationLabel: calendar.openEnded ? '持续至未来' : `持续 ${Math.max(0, Math.round(calendar.end - calendar.start))} 年`,
+        title: calendar.name,
+        subtitle: calendar.caption,
+        description: calendar.source?.description || calendar.caption || '',
+        confidence: calendar.confidence || (calendar.issue ? 'low' : 'medium'),
+        reason: calendar.issue || '',
+        source: calendar.source || calendar,
+        rawText: calendar.source?.timeRange || calendar.source?.baseTime || calendar.caption,
+        meta: [
+          { label: '类型', value: calendar.kind === 'era' ? '纪元' : '纪年' },
+          { label: '原始区间', value: calendar.source?.timeRange || '未填写' },
+          { label: '基准时间', value: calendar.source?.baseTime || '未填写' },
+          { label: '单位 / 比例', value: `${calendar.source?.unit || '年'} / ${calendar.source?.ratio || '×1'}` },
+        ],
+      }))
+    },
     calendarTimelineLayout() {
       return this.calculateSpanLayout(this.calendarTimelineItems)
     },
@@ -3272,6 +3525,25 @@ export default {
       return (this.events || [])
         .map((event, index) => buildTimelineEventItem(event, index, this.timelineContext))
         .filter(Boolean)
+    },
+    chronologyEventItems() {
+      return this.timelineEventAnchors.map(event => ({
+        id: `event:${event.id}`,
+        type: 'event',
+        year: event.year,
+        label: event.label,
+        title: event.name,
+        subtitle: event.entities.length ? `关联：${event.entities.slice(0, 3).join(' / ')}` : (event.rawDateText || '未关联实体'),
+        description: event.description,
+        confidence: event.confidence || 'medium',
+        source: event.source,
+        rawText: event.rawDateText,
+        meta: [
+          { label: '来源字段', value: event.rawDateText || 'date / estimated_date' },
+          { label: '关联实体', value: event.entities.join('、') || '无' },
+          { label: '换算历法', value: event.calendarName || '未指定' },
+        ],
+      }))
     },
     timelineEventItems() {
       const groupedByYear = new Map()
@@ -3360,6 +3632,26 @@ export default {
       })
       return stages
     },
+    chronologyStageItems() {
+      return this.timelineStageAnchors.map(stage => ({
+        id: `stage:${stage.id}`,
+        type: 'stage',
+        year: stage.year,
+        label: stage.label,
+        title: `${stage.entityName} · ${stage.name}`,
+        subtitle: `${stage.entityType || '实体'}阶段`,
+        description: stage.description,
+        confidence: stage.confidence || 'medium',
+        source: stage.source,
+        rawText: stage.era,
+        meta: [
+          { label: '实体', value: stage.entityName },
+          { label: '阶段', value: stage.name },
+          { label: '原始时期', value: stage.era || '未填写' },
+          { label: '换算历法', value: stage.calendarName || '未指定' },
+        ],
+      }))
+    },
     timelineStageItems() {
       return [...this.timelineStageAnchors]
         .filter(stage => this.isInsideFocusWindow(stage.year, 1.25))
@@ -3368,6 +3660,55 @@ export default {
     },
     timelineStageLayout() {
       return this.calculatePointLayout(this.timelineStageItems, 4.8, 8)
+    },
+    chronologyItems() {
+      return [
+        ...this.chronologyEventItems,
+        ...this.chronologyStageItems,
+        ...this.chronologyCalendarItems,
+      ].filter(item => Number.isFinite(item.year))
+        .sort((a, b) => a.year - b.year || this.getTimelineTypeOrder(a.type) - this.getTimelineTypeOrder(b.type) || a.title.localeCompare(b.title, 'zh-Hans-CN'))
+    },
+    filteredChronologyItems() {
+      const query = String(this.timelineSearchQuery || '').trim().toLowerCase()
+      return this.chronologyItems.filter(item => {
+        if (this.timelineTypeFilter !== 'all' && item.type !== this.timelineTypeFilter) return false
+        if (!query) return true
+        const haystack = [
+          item.title,
+          item.subtitle,
+          item.description,
+          item.label,
+          item.rawText,
+          ...(item.meta || []).map(meta => `${meta.label} ${meta.value}`),
+        ].join('\n').toLowerCase()
+        return haystack.includes(query)
+      })
+    },
+    chronologyGroups() {
+      const groups = []
+      const byYear = new Map()
+      this.filteredChronologyItems.forEach(item => {
+        const year = Math.round(item.year)
+        if (!byYear.has(year)) {
+          byYear.set(year, {
+            key: `year:${year}`,
+            year,
+            label: `${formatTimelineYear(year)}年`,
+            items: [],
+          })
+        }
+        byYear.get(year).items.push(item)
+      })
+      Array.from(byYear.values()).sort((a, b) => a.year - b.year).forEach(group => {
+        group.items.sort((a, b) => this.getTimelineTypeOrder(a.type) - this.getTimelineTypeOrder(b.type) || a.title.localeCompare(b.title, 'zh-Hans-CN'))
+        groups.push(group)
+      })
+      return groups
+    },
+    timelineSelectedItem() {
+      if (!this.selectedTimelineItemId) return null
+      return [...this.chronologyItems, ...this.timelineUnresolvedItems].find(item => item.id === this.selectedTimelineItemId) || null
     },
     timelineIssueCalendars() {
       return this.calendars
@@ -3384,6 +3725,72 @@ export default {
         .filter(Boolean)
         .slice(0, TIMELINE_ISSUE_LIMIT)
     },
+    timelineUnresolvedItems() {
+      const items = []
+      ;(this.events || []).forEach((event, index) => {
+        const rawText = getTimelineEventDateText(event)
+        const resolved = resolveTimelineExpression(rawText, this.timelineContext)
+        if (!Number.isFinite(resolved?.year)) {
+          items.push({
+            id: `unresolved-event:${event.id || index}`,
+            type: 'event',
+            title: event.name || '未命名事件',
+            subtitle: '事件时间无法定位',
+            description: event.description || '',
+            rawText,
+            confidence: 'low',
+            reason: rawText ? '无法从事件时间中解析出年份或可换算历法。' : '事件没有填写 date 或 estimated_date。',
+            source: event,
+            meta: [
+              { label: '原始时间', value: rawText || '未填写' },
+              { label: '关联实体', value: (event.entities || []).join('、') || '无' },
+            ],
+          })
+        }
+      })
+      ;(this.entities || []).forEach((entity) => {
+        ;(entity.stages || []).forEach((stage, index) => {
+          const rawText = String(stage?.era || '').trim()
+          const resolved = resolveTimelineExpression(rawText, this.timelineContext)
+          if (!Number.isFinite(resolved?.year)) {
+            items.push({
+              id: `unresolved-stage:${entity.id || entity.name}:${stage.id || index}`,
+              type: 'stage',
+              title: `${entity.name || '未命名实体'} · ${stage.name || '阶段'}`,
+              subtitle: '实体阶段无法定位',
+              description: stage.description || '',
+              rawText,
+              confidence: 'low',
+              reason: rawText ? '无法从阶段时期中解析出年份或可换算历法。' : '阶段没有填写 era / 时期。',
+              source: { entity, stage },
+              meta: [
+                { label: '实体', value: entity.name || '未命名实体' },
+                { label: '原始时期', value: rawText || '未填写' },
+              ],
+            })
+          }
+        })
+      })
+      this.timelineIssueCalendars.forEach(issue => {
+        const calendar = this.calendars.find(item => String(item.id || '') === String(issue.id || '')) || issue
+        items.push({
+          id: `unresolved-calendar:${issue.id}`,
+          type: 'calendar',
+          title: issue.name || '未命名历法',
+          subtitle: '历法数据需要补充',
+          description: calendar.description || '',
+          rawText: calendar.timeRange || calendar.baseTime || '',
+          confidence: 'low',
+          reason: issue.issue,
+          source: calendar,
+          meta: [
+            { label: '时间范围', value: calendar.timeRange || '未填写' },
+            { label: '基准时间', value: calendar.baseTime || '未填写' },
+          ],
+        })
+      })
+      return items
+    },
     timelineBackgroundItems() {
       const items = []
       this.timelineEventAnchors.forEach(event => {
@@ -3396,6 +3803,23 @@ export default {
         if (!this.isInsideFocusWindow(calendar.start, 1.5) && !this.isInsideFocusWindow(calendar.end, 1.5)) items.push({ type: 'calendar', year: calendar.start, label: calendar.name })
       })
       return items
+    },
+    timelineOverviewStats() {
+      const years = this.chronologyItems.map(item => item.year).filter(Number.isFinite)
+      const min = years.length ? Math.min(...years) : null
+      const max = years.length ? Math.max(...years) : null
+      const totalStages = (this.entities || []).reduce((sum, entity) => sum + ((entity.stages || []).length), 0)
+      return {
+        range: Number.isFinite(min) && Number.isFinite(max)
+          ? `${formatTimelineYear(Math.round(min))}年 - ${formatTimelineYear(Math.round(max))}年`
+          : '未定位',
+        events: this.chronologyEventItems.length,
+        totalEvents: (this.events || []).length,
+        stages: this.chronologyStageItems.length,
+        totalStages,
+        calendars: this.chronologyCalendarItems.length,
+        unresolved: this.timelineUnresolvedItems.length,
+      }
     },
     timelineDiagnostics() {
       return {
@@ -3538,11 +3962,24 @@ export default {
     timelineStageHeight() {
       return Math.max(this.getLayoutRowCount(this.timelineStageLayout), 1) * TIMELINE_STAGE_ROW_HEIGHT + 16
     },
+    activeSettingCollection() {
+      if (this.activeCollectionId) {
+        const collection = this.settings.find(setting => setting.settingType === 'collection' && setting.id === this.activeCollectionId)
+        if (collection) {
+          return collection
+        }
+      }
+
+      return this.findCollectionBySnapshot(this.activeCollectionSnapshot)
+    },
     filteredSettings() {
       const query = String(this.settingsSearchQuery || '').trim().toLowerCase()
+      const activeCollection = this.activeSettingCollection
+
       return this.settings.filter(setting => {
         if (setting.settingType !== 'setting') return false
-        if (!query && setting.category !== this.activeCategory) return false
+        if (activeCollection && setting.collectionId !== activeCollection.id) return false
+        if (!activeCollection && !query && setting.category !== this.activeCategory) return false
         if (!query) return true
 
         const searchableText = [
@@ -3569,25 +4006,7 @@ export default {
       })
     },
     currentSettingLinkedEntity() {
-      if (!this.currentSetting) {
-        return null
-      }
-
-      const linkedEntityId = String(this.currentSetting.linkedEntityId || '').trim()
-      const currentSettingName = String(this.currentSetting.name || '').trim()
-
-      return this.entities.find((entity) => {
-        if (!entity || typeof entity !== 'object') {
-          return false
-        }
-
-        const entityId = String(entity.id || '').trim()
-        if (linkedEntityId && entityId === linkedEntityId) {
-          return true
-        }
-
-        return currentSettingName && String(entity.name || '').trim() === currentSettingName
-      }) || null
+      return this.findEntityForSetting(this.currentSetting)
     },
     currentSettingStructuredSections() {
       if (!this.currentSettingLinkedEntity) {
@@ -3625,6 +4044,31 @@ export default {
     },
     extractionDiagnostics() {
       return this.extractedData?.extraction_diagnostics || {}
+    },
+    extractUsesRagSource() {
+      return this.extractScanSource === 'rag' || this.extractScanSource === 'input_and_rag'
+    },
+    extractNeedsManualInput() {
+      return this.extractScanSource !== 'rag'
+    },
+    canExtractWorld() {
+      if (this.isExtracting) return false
+      if (this.extractUsesRagSource && !this.worldId) return false
+      if (!this.extractNeedsManualInput) return !!this.worldId
+      return !!this.extractText.trim() || this.selectedFiles.length > 0
+    },
+    extractSourceNotice() {
+      if (this.extractScanSource === 'rag') {
+        return this.worldId
+          ? '当前模式会直接扫描当前世界观已索引的知识库内容，不会重复写回知识库。'
+          : '请先创建或保存世界观，因为知识库是按世界观绑定的。'
+      }
+      if (this.extractScanSource === 'input_and_rag') {
+        return this.worldId
+          ? '将把新上传或输入的内容与当前世界观知识库一起扫描；只有新内容会写入知识库。'
+          : '请先创建或保存世界观，因为知识库是按世界观绑定的。'
+      }
+      return '当前模式会扫描新上传或输入的内容，并可继续将新内容并行写入当前世界观知识库。'
     },
     hasExtractionFailures() {
       return Array.isArray(this.extractionDiagnostics.failed_chunks) && this.extractionDiagnostics.failed_chunks.length > 0
@@ -3667,8 +4111,8 @@ export default {
         extracting: '解析中',
         pause_requested: '正在暂停',
         paused: '已暂停',
-        cancel_requested: '正在中断并保存',
-        cancelled: '已中断并保存',
+        cancel_requested: '正在强制中止',
+        cancelled: '已强制中止',
         stale: '意外中断，可继续',
         done: '已完成',
         completed: '已完成',
@@ -3677,9 +4121,9 @@ export default {
       }[this.extractStatus] || '准备中'
     },
     scanModalTitle() {
-      if (this.isCancellingExtract || this.extractStatus === 'cancel_requested') return '正在中断并保存...'
+      if (this.isCancellingExtract || this.extractStatus === 'cancel_requested') return '正在强制中止...'
       if (this.extractStatus === 'paused') return '扫描已暂停'
-      if (this.extractStatus === 'cancelled') return '扫描已中断'
+      if (this.extractStatus === 'cancelled') return '扫描已强制中止'
       if (this.extractStatus === 'stale') return '扫描意外中断'
       return this.extractionMode === 'deep' ? '深度扫描中...' : '快速扫描中...'
     },
@@ -3745,6 +4189,23 @@ export default {
     }
   },
   watch: {
+    '$route.query.extractTaskId': {
+      async handler(taskId) {
+        if (!taskId) return
+        if (taskId === this.extractTaskId) {
+          if (this.$route?.query?.showExtractPanel === '1') {
+            this.openExtractScanPanel({ syncRoute: false })
+          }
+          return
+        }
+        await this.restoreExtractTaskFromRoute()
+      }
+    },
+    '$route.query.showExtractPanel'(value) {
+      if (value === '1' && this.$route?.query?.extractTaskId === this.extractTaskId) {
+        this.openExtractScanPanel({ syncRoute: false })
+      }
+    },
     entities: {
       handler() { this._chunkBuildEntityItems() },
     },
@@ -3769,6 +4230,22 @@ export default {
     }
   },
   methods: {
+    getTimelineTypeOrder(type) {
+      return { calendar: 0, event: 1, stage: 2 }[type] ?? 9
+    },
+    selectTimelineItem(item) {
+      if (!item) return
+      this.selectedTimelineItemId = item.id
+    },
+    getTimelineItemIcon(type) {
+      return { event: 'bolt', stage: 'user', calendar: 'clock' }[type] || 'info'
+    },
+    getTimelineItemTypeLabel(type) {
+      return { event: '事件', stage: '实体阶段', calendar: '历法' }[type] || '条目'
+    },
+    getTimelineConfidenceLabel(confidence) {
+      return { high: '高置信', medium: '已解析', low: '待确认' }[confidence] || '已解析'
+    },
     _chunkBuildEntityItems() {
       // 非阻塞分帧构建，每帧处理 12 个实体
       const entities = this.entities
@@ -3878,8 +4355,7 @@ export default {
       }
 
       this.activeTab = 'settings'
-      this.activeCategory = setting.category || 'other'
-      this.viewSettingDetail(setting)
+      this.openSidebarSetting(setting)
     },
     openEntitySettingByName(entityName) {
       const entity = this.entities.find(item => item.name === entityName)
@@ -4075,7 +4551,157 @@ export default {
         this.isTestingLlmConfig = false
       }
     },
-    applyStoredWorld(world) {
+    buildCollectionSnapshot(collection) {
+      if (!collection || typeof collection !== 'object') {
+        return null
+      }
+
+      return {
+        id: String(collection.id || '').trim(),
+        name: String(collection.name || '').trim(),
+        category: normalizeSettingCategory(collection.category),
+      }
+    },
+    buildSettingSnapshot(setting) {
+      if (!setting || typeof setting !== 'object') {
+        return null
+      }
+
+      return {
+        id: String(setting.id || '').trim(),
+        name: String(setting.name || '').trim(),
+        category: normalizeSettingCategory(setting.category),
+        linkedEntityId: String(setting.linkedEntityId || '').trim(),
+      }
+    },
+    findCollectionBySnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object') {
+        return null
+      }
+
+      const snapshotId = String(snapshot.id || '').trim()
+      if (snapshotId) {
+        const byId = this.settings.find(setting => setting.settingType === 'collection' && setting.id === snapshotId)
+        if (byId) {
+          return byId
+        }
+      }
+
+      const snapshotName = String(snapshot.name || '').trim()
+      const snapshotCategory = normalizeSettingCategory(snapshot.category)
+      if (!snapshotName) {
+        return null
+      }
+
+      return this.settings.find(setting => (
+        setting.settingType === 'collection'
+        && normalizeSettingCategory(setting.category) === snapshotCategory
+        && String(setting.name || '').trim() === snapshotName
+      )) || null
+    },
+    findSettingBySnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object') {
+        return null
+      }
+
+      const snapshotId = String(snapshot.id || '').trim()
+      if (snapshotId) {
+        const byId = this.settings.find(setting => setting.settingType === 'setting' && setting.id === snapshotId)
+        if (byId) {
+          return byId
+        }
+      }
+
+      const linkedEntityId = String(snapshot.linkedEntityId || '').trim()
+      if (linkedEntityId) {
+        const byEntity = this.settings.find(setting => (
+          setting.settingType === 'setting' && String(setting.linkedEntityId || '').trim() === linkedEntityId
+        ))
+        if (byEntity) {
+          return byEntity
+        }
+      }
+
+      const snapshotName = String(snapshot.name || '').trim()
+      const snapshotCategory = normalizeSettingCategory(snapshot.category)
+      if (!snapshotName) {
+        return null
+      }
+
+      return this.settings.find(setting => (
+        setting.settingType === 'setting'
+        && normalizeSettingCategory(setting.category) === snapshotCategory
+        && String(setting.name || '').trim() === snapshotName
+      )) || null
+    },
+    captureSettingsViewState() {
+      return {
+        activeCategory: this.activeCategory,
+        activeCollection: this.buildCollectionSnapshot(this.activeSettingCollection || this.findCollectionBySnapshot(this.activeCollectionSnapshot)),
+        currentSetting: this.buildSettingSnapshot(this.currentSetting),
+        showSettingDetail: Boolean(this.showSettingDetail),
+        activeSidebarSettingId: String(this.activeSidebarSettingId || '').trim(),
+      }
+    },
+    restoreSettingsViewState(snapshot = null) {
+      if (!snapshot || typeof snapshot !== 'object') {
+        this.activeCollectionId = ''
+        this.activeCollectionSnapshot = null
+        this.activeSidebarSettingId = ''
+        this.currentSetting = null
+        this.showSettingDetail = false
+        return
+      }
+
+      if (snapshot.activeCategory && this.settingCategories.some(category => category.id === snapshot.activeCategory)) {
+        this.activeCategory = snapshot.activeCategory
+      }
+
+      const activeCategory = this.settingCategories.find(category => category.id === this.activeCategory)
+      if (activeCategory) {
+        activeCategory.expanded = true
+      }
+
+      const collection = this.findCollectionBySnapshot(snapshot.activeCollection)
+      this.activeCollectionId = collection ? collection.id : ''
+      this.activeCollectionSnapshot = collection ? this.buildCollectionSnapshot(collection) : null
+      if (collection) {
+        collection.expanded = true
+      }
+
+      const setting = this.findSettingBySnapshot(snapshot.currentSetting || { id: snapshot.activeSidebarSettingId })
+      this.activeSidebarSettingId = setting ? setting.id : ''
+
+      if (snapshot.showSettingDetail && setting) {
+        this.currentSetting = JSON.parse(JSON.stringify(setting))
+        this.showSettingDetail = true
+      } else {
+        this.currentSetting = null
+        this.showSettingDetail = false
+      }
+    },
+    async handleWorldUpdated(event) {
+      const worldId = String(event?.detail?.worldId || '').trim()
+      if (!worldId || !this.worldId || worldId !== this.worldId) {
+        return
+      }
+
+      if (this.agentWorldRefreshTimer) {
+        clearTimeout(this.agentWorldRefreshTimer)
+      }
+
+      this.saveStatus = 'Agent 已修改世界观，正在同步...'
+      this.agentWorldRefreshTimer = window.setTimeout(async () => {
+        this.agentWorldRefreshTimer = null
+        await this.loadWorld(this.worldId, {
+          preserveSettingState: true,
+          successStatus: '已同步 Agent 变更',
+        })
+      }, 240)
+    },
+    applyStoredWorld(world, options = {}) {
+      const settingsViewState = options.settingsViewState || null
+
       if (!world) {
         return
       }
@@ -4107,6 +4733,7 @@ export default {
       this.settings = synced.settings
       this.mapData = { ...createDefaultMapData(), ...normalizedSettings.mapData }
       this.calendars = normalizedSettings.calendars
+      this.restoreSettingsViewState(settingsViewState)
     },
     syncRouteWorldId() {
       if (!this.worldId || !this.$router || !this.$route) {
@@ -4120,17 +4747,23 @@ export default {
         }
       })
     },
-    async loadWorld(worldId) {
+    async loadWorld(worldId, options = {}) {
+      const { preserveSettingState = false, successStatus = '已加载世界观' } = options
+
       if (!worldId) {
         return
       }
 
+      const settingsViewState = preserveSettingState && worldId === this.worldId
+        ? this.captureSettingsViewState()
+        : null
+
       try {
         const response = await worldApi.getWorld(worldId)
-        this.applyStoredWorld(response.world)
+        this.applyStoredWorld(response.world, { settingsViewState })
         await this.loadLinkedProject(worldId)
         await this.loadEvolutionHistory(worldId)
-        this.saveStatus = '已加载世界观'
+        this.saveStatus = successStatus
       } catch (error) {
         console.error('加载世界观失败:', error)
         this.saveStatus = '加载失败'
@@ -4279,8 +4912,9 @@ export default {
           this.syncRouteWorldId()
         }
 
+        const settingsViewState = this.captureSettingsViewState()
         const response = await worldApi.updateWorld(this.worldId, payload)
-        this.applyStoredWorld(response.world)
+        this.applyStoredWorld(response.world, { settingsViewState })
         this.syncRouteWorldId()
         await this.loadLinkedProject(this.worldId)
         await this.loadEvolutionHistory(this.worldId)
@@ -4357,11 +4991,42 @@ export default {
       if (!taskId || taskId !== this.extractTaskId) return
       this.resetExtractTaskState(taskId)
     },
+    emitExtractTaskSync(taskId = this.extractTaskId, extra = {}) {
+      if (!taskId) return
+      window.dispatchEvent(new CustomEvent(EXTRACT_TASK_SYNC_EVENT, {
+        detail: {
+          taskId,
+          worldId: this.worldId,
+          extractionMode: this.extractionMode,
+          status: this.extractProgress.status || this.extractProgress.stage || 'running',
+          stage: this.extractProgress.stage || 'starting',
+          progress: this.extractProgress.progress || 0,
+          message: this.extractProgress.message || '提取任务已启动',
+          ...extra,
+        }
+      }))
+    },
     removeExtractTaskRouteQuery(taskId) {
       if (!this.$router || !this.$route || this.$route.query?.extractTaskId !== taskId) return
       const query = { ...this.$route.query }
       delete query.extractTaskId
       delete query.showExtractPanel
+      this.$router.replace({ query })
+    },
+    openExtractScanPanel(options = {}) {
+      const { syncRoute = true } = options
+      if (!this.extractTaskId) return
+      this.showExtractScanPanel = true
+      this.extractPanelDismissed = false
+      if (!syncRoute || !this.$router || !this.$route) return
+      const query = {
+        ...this.$route.query,
+        extractTaskId: this.extractTaskId,
+        showExtractPanel: '1',
+      }
+      if (this.worldId) {
+        query.worldId = this.worldId
+      }
       this.$router.replace({ query })
     },
 
@@ -4428,9 +5093,14 @@ export default {
       pollProgress()
     },
     async extractWorldInfo(forceRebuild = false) {
-      const hasText = this.extractText.trim()
-      const hasFiles = this.selectedFiles.length > 0
-      if (!hasText && !hasFiles) return
+      const needsManualInput = this.extractNeedsManualInput
+      const hasText = needsManualInput ? this.extractText.trim() : ''
+      const hasFiles = needsManualInput ? this.selectedFiles.length > 0 : false
+      if (this.extractUsesRagSource && !this.worldId) {
+        this.extractError = '请先创建或保存世界观，再使用已有 RAG 知识库扫描。'
+        return
+      }
+      if (needsManualInput && !hasText && !hasFiles) return
 
       if (!this.hasLlmConfig) {
         this.extractError = '请先配置可用的 LLM API Key、Base URL 和 Model。'
@@ -4450,14 +5120,20 @@ export default {
       this.extractPanelDismissed = false
       this.extractProgress = { status: 'running', stage: 'starting', progress: 0, message: '正在提交提取任务...', detail: {}, ragProgress: null }
       try {
-        // 如果没有 worldId，先轻量创建以便 RAG 自动索引
-        const hasWorldId = await this.ensureWorldId()
-        if (!hasWorldId && !this.worldId) {
-          console.warn('世界观创建失败，提取将跳过 RAG 索引')
+        if (!this.extractUsesRagSource) {
+          // input 模式下，如果没有 worldId，先轻量创建以便自动 RAG 索引
+          const hasWorldId = await this.ensureWorldId()
+          if (!hasWorldId && !this.worldId) {
+            console.warn('世界观创建失败，提取将跳过 RAG 索引')
+          }
         }
 
         // 1. 提交提取任务（附带 worldId 用于自动 RAG 索引）
-        const extractOptions = { extraction_mode: this.extractionMode, force_rebuild: forceRebuild }
+        const extractOptions = {
+          scan_source: this.extractScanSource,
+          extraction_mode: this.extractionMode,
+          force_rebuild: forceRebuild
+        }
         let initResponse
         if (hasFiles) {
           const formData = new FormData()
@@ -4469,13 +5145,20 @@ export default {
           }
           initResponse = await worldApi.extractWorldFromFile(formData, this.worldId, extractOptions)
         } else {
-          initResponse = await worldApi.extractWorld(this.extractText, this.worldId, extractOptions)
+          initResponse = await worldApi.extractWorld(hasText ? this.extractText : '', this.worldId, extractOptions)
         }
 
         const taskId = initResponse.task_id
         this.extractTaskId = taskId || ''
         if (taskId) {
           localStorage.setItem(LAST_EXTRACT_TASK_KEY, taskId)
+          this.emitExtractTaskSync(taskId, {
+            worldId: initResponse.world_id || this.worldId,
+            extractionMode: initResponse.extraction_mode || this.extractionMode,
+            status: 'running',
+            stage: 'starting',
+            message: initResponse.message || '提取任务已启动',
+          })
         }
         if (!taskId) {
           // 可能是直接 JSON 数据返回
@@ -4501,6 +5184,11 @@ export default {
     closeExtractScanPanel() {
       this.extractPanelDismissed = true
       this.showExtractScanPanel = false
+      if (this.$router && this.$route?.query?.showExtractPanel === '1') {
+        const query = { ...this.$route.query }
+        delete query.showExtractPanel
+        this.$router.replace({ query })
+      }
     },
     async restoreExtractTaskFromRoute() {
       const taskId = this.$route?.query?.extractTaskId
@@ -4512,6 +5200,14 @@ export default {
         this.showExtractScanPanel = this.$route?.query?.showExtractPanel === '1'
         this.extractPanelDismissed = false
         localStorage.setItem(LAST_EXTRACT_TASK_KEY, taskId)
+        this.emitExtractTaskSync(taskId, {
+          worldId: progResp.world_id || this.worldId,
+          extractionMode: progResp.extraction_mode || this.extractionMode,
+          status: progResp.status || progResp.stage || 'running',
+          stage: progResp.stage || 'starting',
+          progress: progResp.progress || 0,
+          message: progResp.message || '正在恢复扫描任务...',
+        })
         if (!progResp.done) {
           this.isExtracting = true
           this.startExtractPolling(taskId)
@@ -4547,6 +5243,13 @@ export default {
           stage: 'starting',
           message: '正在从上次 checkpoint 继续解析...',
         }
+        this.emitExtractTaskSync(this.extractTaskId, {
+          worldId: this.worldId,
+          extractionMode: this.extractionMode,
+          status: 'running',
+          stage: 'starting',
+          message: '正在从上次 checkpoint 继续解析...',
+        })
         this.startExtractPolling(this.extractTaskId)
       } catch (error) {
         console.error('继续提取失败:', error)
@@ -4579,7 +5282,7 @@ export default {
         await worldApi.cancelExtract(this.extractTaskId)
         this.extractProgress = {
           ...this.extractProgress,
-          message: '正在中断提取并保存当前成果...',
+          message: '正在强制中止当前扫描...',
         }
       } catch (error) {
         console.error('中断提取失败:', error)
@@ -4806,7 +5509,90 @@ export default {
       }
     },
     deleteEntity(id) {
-      this.entities = this.entities.filter(entity => entity.id !== id)
+      const entity = this.entities.find(item => String(item.id || '').trim() === String(id || '').trim())
+      if (!entity) {
+        return
+      }
+
+      const linkedSetting = findSettingForEntityRecord(this.settings, entity)
+      const entityName = String(entity.name || '').trim() || '未命名实体'
+      const linkedSettingName = String(linkedSetting?.name || '').trim()
+      const confirmMessage = linkedSettingName
+        ? `确定要删除实体“${entityName}”吗？\n这会同时删除对应设定“${linkedSettingName}”。`
+        : `确定要删除实体“${entityName}”吗？`
+
+      if (!confirm(confirmMessage)) {
+        return
+      }
+
+      this.entities = this.entities.filter(item => String(item.id || '').trim() !== String(entity.id || '').trim())
+
+      if (linkedSetting) {
+        this.settings = this.settings.filter(setting => String(setting.id || '').trim() !== String(linkedSetting.id || '').trim())
+        this.removeSettingReferences(linkedSetting.id)
+        if (this.currentSetting && String(this.currentSetting.id || '').trim() === String(linkedSetting.id || '').trim()) {
+          this.closeSettingDetail()
+        }
+      }
+
+      this.removeEntityNamesFromEvents([entityName, linkedSettingName])
+      this.syncEntitySettingLinks()
+      this.saveStatus = linkedSetting ? '已删除实体及对应设定，记得保存世界观' : '已删除实体，记得保存世界观'
+    },
+    findEntityForSetting(setting) {
+      if (!setting || typeof setting !== 'object') {
+        return null
+      }
+
+      const linkedEntityId = String(setting.linkedEntityId || '').trim()
+      const settingName = String(setting.name || '').trim()
+
+      return this.entities.find((entity) => {
+        if (!entity || typeof entity !== 'object') {
+          return false
+        }
+
+        const entityId = String(entity.id || '').trim()
+        if (linkedEntityId && entityId === linkedEntityId) {
+          return true
+        }
+
+        return settingName && String(entity.name || '').trim() === settingName
+      }) || null
+    },
+    removeSettingReferences(settingId) {
+      const normalizedId = String(settingId || '').trim()
+      if (!normalizedId) {
+        return
+      }
+
+      this.selectedSettings = this.selectedSettings.filter(id => String(id || '').trim() !== normalizedId)
+      this.newEvent.selectedSettings = this.newEvent.selectedSettings.filter(id => String(id || '').trim() !== normalizedId)
+      if (String(this.activeSidebarSettingId || '').trim() === normalizedId) {
+        this.activeSidebarSettingId = ''
+      }
+    },
+    removeEntityNamesFromEvents(names = []) {
+      const blockedNames = new Set(
+        (names || [])
+          .map(name => String(name || '').trim())
+          .filter(Boolean)
+      )
+
+      if (!blockedNames.size) {
+        return
+      }
+
+      this.events = this.events.map((event) => {
+        if (!event || typeof event !== 'object' || !Array.isArray(event.entities)) {
+          return event
+        }
+
+        const nextEntities = event.entities.filter(name => !blockedNames.has(String(name || '').trim()))
+        return nextEntities.length === event.entities.length
+          ? event
+          : { ...event, entities: nextEntities }
+      })
     },
     
     // 设定管理方法
@@ -4862,18 +5648,72 @@ export default {
       if (category) {
         const isActiveCategory = this.activeCategory === categoryId
         this.activeCategory = categoryId
+        this.activeCollectionId = ''
+        this.activeCollectionSnapshot = null
+        if (this.currentSetting && this.currentSetting.category !== categoryId) {
+          this.activeSidebarSettingId = ''
+        }
         category.expanded = isActiveCategory ? !category.expanded : true
       }
     },
-    toggleCollection(collectionId) {
+    toggleCollectionExpand(collectionId) {
       const collection = this.settings.find(setting => setting.id === collectionId && setting.settingType === 'collection')
       if (collection) {
         collection.expanded = !collection.expanded
       }
     },
+    openSettingCollection(collection) {
+      if (!collection) {
+        return
+      }
+
+      this.activeCategory = normalizeSettingCategory(collection.category)
+      const category = this.settingCategories.find(item => item.id === this.activeCategory)
+      if (category) {
+        category.expanded = true
+      }
+
+      collection.expanded = true
+      this.activeCollectionId = collection.id
+      this.activeCollectionSnapshot = this.buildCollectionSnapshot(collection)
+      if (this.currentSetting && this.currentSetting.collectionId !== collection.id) {
+        this.activeSidebarSettingId = ''
+      }
+    },
+    clearActiveCollectionFilter() {
+      if (this.activeSettingCollection) {
+        this.activeCategory = normalizeSettingCategory(this.activeSettingCollection.category)
+      }
+      this.activeCollectionId = ''
+      this.activeCollectionSnapshot = null
+    },
+    openSidebarSetting(setting) {
+      if (!setting) {
+        return
+      }
+
+      this.activeCategory = normalizeSettingCategory(setting.category)
+      const category = this.settingCategories.find(item => item.id === this.activeCategory)
+      if (category) {
+        category.expanded = true
+      }
+
+      const parentCollection = this.settings.find(item => item.settingType === 'collection' && item.id === setting.collectionId)
+      if (parentCollection) {
+        parentCollection.expanded = true
+        this.activeCollectionId = parentCollection.id
+        this.activeCollectionSnapshot = this.buildCollectionSnapshot(parentCollection)
+      } else {
+        this.activeCollectionId = ''
+        this.activeCollectionSnapshot = null
+      }
+
+      this.viewSettingDetail(setting)
+    },
     
     // 查看设定详情
     viewSettingDetail(setting) {
+      this.activeSidebarSettingId = setting?.id || ''
       this.currentSetting = JSON.parse(JSON.stringify(setting))
       this.showSettingDetail = true
     },
@@ -4894,6 +5734,45 @@ export default {
       this.showSettingDetail = false
       this.currentSetting = null
       alert('设定详情保存成功！')
+    },
+    deleteSetting(settingId) {
+      const targetSetting = this.settings.find(setting => String(setting.id || '').trim() === String(settingId || '').trim())
+      if (!targetSetting) {
+        return
+      }
+
+      const linkedEntity = this.findEntityForSetting(targetSetting)
+      const settingName = String(targetSetting.name || '').trim() || '未命名设定'
+      const linkedEntityName = String(linkedEntity?.name || '').trim()
+      const confirmMessage = linkedEntityName
+        ? `确定要删除设定“${settingName}”吗？\n这会同时删除对应实体“${linkedEntityName}”。`
+        : `确定要删除设定“${settingName}”吗？`
+
+      if (!confirm(confirmMessage)) {
+        return
+      }
+
+      this.settings = this.settings.filter(setting => String(setting.id || '').trim() !== String(targetSetting.id || '').trim())
+      this.removeSettingReferences(targetSetting.id)
+
+      if (linkedEntity) {
+        this.entities = this.entities.filter(entity => String(entity.id || '').trim() !== String(linkedEntity.id || '').trim())
+        this.removeEntityNamesFromEvents([linkedEntityName, settingName])
+      }
+
+      if (this.currentSetting && String(this.currentSetting.id || '').trim() === String(targetSetting.id || '').trim()) {
+        this.closeSettingDetail()
+      }
+
+      this.syncEntitySettingLinks()
+      this.saveStatus = linkedEntity ? '已删除设定及对应实体，记得保存世界观' : '已删除设定，记得保存世界观'
+    },
+    deleteCurrentSetting() {
+      if (!this.currentSetting?.id) {
+        return
+      }
+
+      this.deleteSetting(this.currentSetting.id)
     },
     
     // 根据分类获取设定集
@@ -5012,8 +5891,10 @@ export default {
         id: Date.now(),
         name: '',
         type: '纪元',
-        baseTime: '',
-        timeRange: '',
+        startYear: 0,
+        endYear: 1,
+        baseTime: 0,
+        timeRange: '0 ~ 1',
         unit: '年',
         ratio: '×1',
         calendarType: '未开启',
@@ -5024,8 +5905,8 @@ export default {
       this.editCalendars.push(newCalendar)
       this.currentCalendar = {
         ...JSON.parse(JSON.stringify(newCalendar)),
-        startYear: '',
-        endYear: '',
+        startYear: 0,
+        endYear: 1,
         noEndTime: false,
         ratioValue: '1',
         absoluteBaseTime: '',
@@ -5064,12 +5945,12 @@ export default {
       // 解析时间范围
       if (calendar.timeRange) {
         const timeRange = calendar.timeRange.split(' ~ ')
-        this.currentCalendar.startYear = timeRange[0] || calendar.baseTime || ''
+        this.currentCalendar.startYear = normalizeCalendarNumber(calendar.startYear ?? timeRange[0] ?? calendar.baseTime, 0)
         this.currentCalendar.noEndTime = timeRange[1] === '无'
-        this.currentCalendar.endYear = this.currentCalendar.noEndTime ? '' : (timeRange[1] || '')
+        this.currentCalendar.endYear = this.currentCalendar.noEndTime ? '' : normalizeCalendarNumber(calendar.endYear ?? timeRange[1], this.currentCalendar.startYear + 1)
       } else {
-        this.currentCalendar.startYear = calendar.baseTime || ''
-        this.currentCalendar.endYear = ''
+        this.currentCalendar.startYear = normalizeCalendarNumber(calendar.startYear ?? calendar.baseTime, 0)
+        this.currentCalendar.endYear = normalizeCalendarNumber(calendar.endYear, this.currentCalendar.startYear + 1)
         this.currentCalendar.noEndTime = false
       }
       // 解析比例系数
@@ -5087,18 +5968,19 @@ export default {
     
     // 保存历法详情
     saveCalendarDetail() {
-      const startYear = String(this.currentCalendar.startYear || '').trim()
-      const endYear = String(this.currentCalendar.endYear || '').trim()
+      const startYear = normalizeCalendarNumber(this.currentCalendar.startYear, 0)
+      const endYear = this.currentCalendar.noEndTime ? '' : normalizeCalendarNumber(this.currentCalendar.endYear, startYear)
       const ratioValue = String(this.currentCalendar.ratioValue || '1').trim() || '1'
-      const localBaseYear = parseLocalYearForCalendar(startYear, this.currentCalendar.name) ?? 0
+      const localBaseYear = startYear
       const savedCalendar = {
         id: this.currentCalendar.id,
         name: String(this.currentCalendar.name || '').trim() || '未命名历法',
         type: String(this.currentCalendar.type || '纪元').trim() || '纪元',
+        startYear,
+        endYear,
+        noEndTime: Boolean(this.currentCalendar.noEndTime),
         baseTime: startYear,
-        timeRange: startYear
-          ? `${startYear} ~ ${this.currentCalendar.noEndTime ? '无' : (endYear || startYear)}`
-          : '',
+        timeRange: `${startYear} ~ ${this.currentCalendar.noEndTime ? '无' : endYear}`, 
         unit: String(this.currentCalendar.unit || '年').trim() || '年',
         ratio: `×${ratioValue.replace(/^×/, '')}`,
         calendarType: String(this.currentCalendar.calendarType || '未开启').trim() || '未开启',
@@ -5145,24 +6027,25 @@ export default {
     },
 
     getTimelineSpanPosition(start, end, options = {}) {
-      const left = this.getTimelinePosition(start)
-      const right = this.getTimelinePosition(Number.isFinite(end) ? end : this.getTimeRange().max)
+      const positionGetter = options.positionGetter || this.getTimelinePosition
+      const left = positionGetter(start)
+      const right = positionGetter(Number.isFinite(end) ? end : this.getTimeRange().max)
       const rawWidth = Math.abs(right - left)
       const minWidth = options.minWidth ?? 3
       return { left: Math.min(left, right), width: Math.max(rawWidth, minWidth), rawWidth }
     },
 
-    calculateSpanLayout(items) {
+    calculateSpanLayout(items, options = {}) {
       const layout = new Map()
       const rowEnds = []
-      const safetyGap = 0.15
+      const safetyGap = options.safetyGap ?? 0.35
 
       ;[...items]
         .map(item => {
           const start = Number.isFinite(item.start) ? item.start : 0
           const end = Number.isFinite(item.end) ? item.end : start + 1
-          const spanPosition = this.getTimelineSpanPosition(start, end, { minWidth: 0 })
-          const displayPosition = this.getTimelineSpanPosition(start, end, { minWidth: 0.8 })
+          const spanPosition = this.getTimelineSpanPosition(start, end, { minWidth: 0, positionGetter: options.positionGetter })
+          const displayPosition = this.getTimelineSpanPosition(start, end, { minWidth: options.minDisplayWidth ?? 0.8, positionGetter: options.positionGetter })
           return {
             item,
             start,
@@ -5177,11 +6060,11 @@ export default {
         .forEach(entry => {
           let row = 0
 
-          while (row < rowEnds.length && rowEnds[row] - safetyGap > entry.visualStart) {
+          while (row < rowEnds.length && rowEnds[row] + safetyGap > entry.visualStart) {
             row += 1
           }
 
-          rowEnds[row] = entry.visualEnd
+          rowEnds[row] = Math.max(rowEnds[row] || -Infinity, entry.visualEnd)
           layout.set(entry.item.id, {
             row,
             start: entry.start,
@@ -5224,6 +6107,56 @@ export default {
       }
 
       return Math.max(...Array.from(layout.values()).map(item => item.row)) + 1
+    },
+
+    getCalendarGraphicPosition(year) {
+      const range = this.calendarGraphicRange
+      if (!Number.isFinite(year) || !range || range.span <= 0) return 50
+      return ((year - range.min) / range.span) * 100
+    },
+
+    handleCalendarGraphicWheel(event) {
+      event.preventDefault()
+      const range = this.calendarGraphicRange
+      const delta = event.deltaY || event.deltaX || 0
+      if (event.ctrlKey || event.metaKey) {
+        const centerBefore = (range.min + range.max) / 2
+        const factor = delta > 0 ? 0.8 : 1.25
+        this.calendarGraphicCenter = (Number.isFinite(this.calendarGraphicCenter) && this.calendarGraphicCenter !== 0)
+          ? this.calendarGraphicCenter
+          : centerBefore
+        this.calendarGraphicZoom = Math.max(0.4, Math.min(8, this.calendarGraphicZoom * factor))
+        return
+      }
+      const move = (delta / 900) * range.span
+      const nextCenter = (Number.isFinite(this.calendarGraphicCenter) && this.calendarGraphicCenter !== 0)
+        ? this.calendarGraphicCenter + move
+        : (range.min + range.max) / 2 + move
+      const padding = range.fullSpan || range.span
+      this.calendarGraphicCenter = Math.max(range.fullMin - padding, Math.min(range.fullMax + padding, nextCenter))
+    },
+
+    getCalendarGraphicBandClass(segment) {
+      return [
+        `is-${segment.item.kind}`,
+        {
+          selected: this.selectedTimelineItemId === segment.item.id,
+          'is-low-confidence': segment.item.confidence === 'low',
+          'is-connected-prev': segment.connectedPrev,
+          'is-connected-next': segment.connectedNext,
+          'is-clipped-start': segment.clippedStart,
+          'is-clipped-end': segment.clippedEnd,
+          'is-open-ended': segment.item.openEnded,
+        }
+      ]
+    },
+
+    getCalendarGraphicBandStyle(segment) {
+      return {
+        left: `${segment.left}%`,
+        width: `${Math.max(0.8, Math.min(segment.width, 100 - segment.left))}%`,
+        '--clip-offset': segment.clippedStart ? '14px' : '0px',
+      }
     },
 
     getTimelineBandStyle(item, layout, index, topOffset, paletteSet) {
@@ -5446,6 +6379,7 @@ export default {
   ,
   mounted() {
     window.addEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
+    window.addEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
     this.syncTimelineRefs()
     this.updateTimelineZoom()
     this.loadLlmConfigStatus()
@@ -5458,9 +6392,14 @@ export default {
   },
   beforeUnmount() {
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
+    window.removeEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
     if (this.extractPollTimer) {
       clearTimeout(this.extractPollTimer)
       this.extractPollTimer = null
+    }
+    if (this.agentWorldRefreshTimer) {
+      clearTimeout(this.agentWorldRefreshTimer)
+      this.agentWorldRefreshTimer = null
     }
   }
 }
@@ -5707,6 +6646,38 @@ export default {
 
 .extract-action-row .extract-btn {
   min-width: 132px;
+}
+
+.extract-source-section {
+  margin-bottom: var(--spacing-md);
+}
+
+.extract-source-note {
+  margin-top: var(--spacing-sm);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: var(--wf-text-secondary);
+  font-size: 0.88rem;
+}
+
+.extract-source-note.is-warning {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.26);
+  color: var(--wf-warning);
+}
+
+.extract-guidance {
+  margin-top: var(--spacing-sm);
+  display: grid;
+  gap: 6px;
+}
+
+.extract-guidance-item {
+  margin: 0;
+  color: var(--wf-text-muted);
+  font-size: 0.84rem;
 }
 
 .extract-inline-actions,
@@ -5969,11 +6940,12 @@ export default {
 
 .sidebar-header {
   padding: var(--spacing-md) var(--spacing-lg);
-  border-bottom: 1px solid var(--neutral-gray-200);
-  background: var(--neutral-gray-50);
+  border-bottom: 1px solid var(--wf-border);
+  background: rgba(255, 255, 255, 0.035);
   position: sticky;
   top: 0;
   z-index: 10;
+  backdrop-filter: blur(10px);
 }
 
 .category-list {
@@ -6005,13 +6977,22 @@ export default {
 }
 
 .tree-item:hover {
-  background: var(--neutral-gray-100);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--wf-text-primary);
 }
 
 .category-item.active {
-  background: var(--primary-blue-light);
-  color: var(--primary-blue-dark);
-  font-weight: 500;
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
+  border: 1px solid rgba(255, 255, 175, 0.14);
+  font-weight: 600;
+}
+
+.collection-item.active,
+.setting-item.active {
+  background: rgba(255, 255, 175, 0.08);
+  color: var(--wf-accent);
+  font-weight: 600;
 }
 
 .root-item {
@@ -6033,7 +7014,7 @@ export default {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--neutral-gray-300);
+  background: rgba(255, 255, 255, 0.10);
 }
 
 .tree-node::before {
@@ -6043,20 +7024,22 @@ export default {
   top: 20px;
   width: 10px;
   height: 1px;
-  background: var(--neutral-gray-300);
+  background: rgba(255, 255, 255, 0.10);
 }
 
 .expand-icon {
   width: 20px;
-  text-align: center;
-  color: var(--neutral-gray-400);
-  font-size: 0.8rem;
+  height: 20px;
+  color: var(--wf-text-muted);
   z-index: 2;
+  flex: 0 0 20px;
 }
 
 .category-icon, .collection-icon, .setting-icon {
   margin-right: var(--spacing-sm);
   z-index: 2;
+  color: var(--wf-accent);
+  flex: 0 0 auto;
 }
 
 .item-name, .category-name, .collection-name, .setting-name {
@@ -6073,13 +7056,42 @@ export default {
 }
 
 .header-search { flex: 1; margin-right: var(--spacing-lg); }
-.search-input { width: 100%; max-width: 400px; padding: var(--spacing-sm) var(--spacing-md); border: 1px solid var(--neutral-gray-300); border-radius: var(--radius-sm); }
+.search-input { width: 100%; max-width: 400px; padding: var(--spacing-sm) var(--spacing-md); border: 1px solid var(--wf-border); border-radius: var(--radius-sm); background: var(--wf-bg-input); color: var(--wf-text-primary); }
 
 .content-header { 
   display: flex; 
   justify-content: space-between; 
   align-items: center; 
   margin-bottom: var(--spacing-lg); 
+}
+
+.settings-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--spacing-lg);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(64, 145, 255, 0.08);
+  border: 1px solid rgba(64, 145, 255, 0.16);
+}
+
+.settings-filter-chip {
+  color: var(--primary-blue-dark);
+  font-weight: 500;
+}
+
+.settings-filter-clear {
+  border: none;
+  background: transparent;
+  color: var(--primary-blue-dark);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.settings-filter-clear:hover {
+  text-decoration: underline;
 }
 
 .settings-list {
@@ -6134,12 +7146,868 @@ export default {
   color: var(--neutral-gray-400);
 }
 
-/* =========== Timeline =========== */
+/* =========== Timeline Workspace =========== */
 .timeline-section {
   background: var(--wf-bg-card);
   padding: var(--spacing-xl);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-xl);
   box-shadow: none;
+  border: 1px solid var(--wf-border);
+}
+
+.timeline-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.timeline-hero-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(circle at 10% 0%, rgba(255, 255, 175, 0.10), transparent 34%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.timeline-hero-copy { max-width: 680px; }
+
+.timeline-eyebrow {
+  display: inline-flex;
+  margin-bottom: var(--spacing-sm);
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.timeline-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.timeline-view-tabs,
+.timeline-filter-chips {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.timeline-view-tabs button,
+.timeline-filter-chips button {
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--wf-text-secondary);
+  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+  min-height: 32px;
+}
+
+.timeline-view-tabs button.active,
+.timeline-filter-chips button.active {
+  background: var(--wf-accent);
+  color: var(--wf-text-on-accent);
+  box-shadow: var(--shadow-glow);
+}
+
+.timeline-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--spacing-md);
+}
+
+.timeline-overview-card {
+  position: relative;
+  overflow: hidden;
+  padding: var(--spacing-lg);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.035);
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.timeline-overview-card::after {
+  content: '';
+  position: absolute;
+  inset: auto 16px 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 175, 0.42), transparent);
+  opacity: 0.4;
+}
+
+.timeline-overview-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 175, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.timeline-overview-card span,
+.status-label {
+  display: block;
+  color: var(--wf-text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.timeline-overview-card strong {
+  display: block;
+  color: var(--wf-text-primary);
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+
+.timeline-overview-card small {
+  display: block;
+  margin-top: 6px;
+  color: var(--wf-text-muted);
+}
+
+.timeline-overview-card.is-primary {
+  background: var(--wf-accent-muted);
+  border-color: rgba(255, 255, 175, 0.18);
+}
+
+.timeline-overview-card.has-warning strong { color: var(--wf-warning); }
+
+.timeline-filter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.timeline-search-box {
+  flex: 1;
+  min-width: 280px;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-md);
+  height: 42px;
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-full);
+  background: var(--wf-bg-input);
+  color: var(--wf-text-muted);
+}
+
+.timeline-search-box input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--wf-text-primary);
+  box-shadow: none;
+}
+
+.timeline-search-box input:focus { box-shadow: none; }
+
+.timeline-workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+
+.timeline-main-panel,
+.timeline-detail-panel {
+  min-width: 0;
+}
+
+.timeline-story-view,
+.timeline-calendar-view,
+.timeline-diagnostics-view,
+.timeline-detail-card,
+.timeline-detail-empty {
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-xl);
+  background: rgba(0, 0, 0, 0.22);
+  padding: var(--spacing-lg);
+}
+
+.chronology-group {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg) 0;
+  border-bottom: 1px solid var(--wf-border);
+}
+
+.chronology-group:last-child { border-bottom: 0; }
+
+.chronology-year-rail {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chronology-year {
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.chronology-count {
+  color: var(--wf-text-muted);
+  font-size: 0.78rem;
+}
+
+.chronology-card-stack {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.chronology-card {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 175, 0.035), transparent 42%),
+    rgba(255, 255, 255, 0.035);
+  color: var(--wf-text-primary);
+  text-align: left;
+  white-space: normal;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.chronology-card:hover,
+.chronology-card.selected,
+.calendar-line-card:hover,
+.calendar-line-card.selected,
+.diagnostic-row:hover {
+  border-color: rgba(255, 255, 175, 0.35);
+  background: var(--wf-accent-muted);
+  transform: translateY(-1px);
+}
+
+.chronology-card-icon,
+.diagnostic-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--wf-accent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 175, 0.08);
+}
+
+.chronology-hover-card {
+  position: absolute;
+  left: 54px;
+  bottom: calc(100% + 10px);
+  z-index: 25;
+  width: min(360px, calc(100vw - 80px));
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 175, 0.24);
+  border-radius: var(--radius-md);
+  background: rgba(17, 17, 19, 0.96);
+  color: var(--wf-text-primary);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48), var(--shadow-glow);
+  backdrop-filter: blur(14px);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.chronology-hover-card strong {
+  color: var(--wf-accent);
+  font-size: 0.92rem;
+}
+
+.chronology-hover-card small,
+.chronology-hover-card em {
+  color: var(--wf-text-secondary);
+  font-size: 0.78rem;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.chronology-card:hover .chronology-hover-card,
+.chronology-card:focus-visible .chronology-hover-card {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chronology-card-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+
+.chronology-card-kicker,
+.chronology-card-body small,
+.calendar-line-range,
+.diagnostic-main small,
+.detail-time {
+  color: var(--wf-text-muted);
+  font-size: 0.82rem;
+}
+
+.chronology-card-body strong,
+.calendar-line-name,
+.diagnostic-main strong {
+  color: var(--wf-text-primary);
+  font-size: 0.98rem;
+}
+
+.chronology-confidence {
+  justify-self: end;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--wf-border);
+  color: var(--wf-text-muted);
+  font-size: 0.72rem;
+}
+
+.chronology-confidence.is-high { color: var(--wf-success); border-color: rgba(0, 212, 170, 0.28); }
+.chronology-confidence.is-low { color: var(--wf-warning); border-color: rgba(255, 165, 2, 0.28); }
+
+.calendar-graphic-panel {
+  margin-bottom: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(255, 255, 175, 0.08), transparent 28%),
+    rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.calendar-graphic-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.calendar-graphic-header strong {
+  color: var(--wf-text-primary);
+  font-size: 1rem;
+}
+
+.calendar-graphic-header p {
+  margin: 4px 0 0;
+  color: var(--wf-text-muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.calendar-graphic-header span,
+.calendar-axis-meter {
+  flex: 0 0 auto;
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.calendar-axis-meter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 175, 0.18);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 175, 0.07);
+  line-height: 1;
+}
+
+.calendar-graphic-stage {
+  position: relative;
+  isolation: isolate;
+  min-height: 260px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  --calendar-stage-bg:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 175, 0.10), transparent 24%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.20));
+  background-size: auto, 10% 100%, auto;
+  overflow: visible;
+  padding: 0 12px;
+  cursor: grab;
+  outline: none;
+}
+
+.calendar-graphic-stage:active { cursor: grabbing; }
+
+.calendar-graphic-stage:focus-visible {
+  border-color: rgba(255, 255, 175, 0.36);
+  box-shadow: 0 0 0 3px rgba(255, 255, 175, 0.08);
+}
+
+.calendar-graphic-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--calendar-stage-bg);
+  background-size: auto, 10% 100%, auto;
+  clip-path: inset(0 round var(--radius-lg));
+}
+
+.calendar-graphic-axis {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 30px;
+  height: 38px;
+}
+
+.calendar-axis-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 175, 0.18), rgba(255, 255, 175, 0.9), rgba(255, 255, 175, 0.18));
+  box-shadow: 0 0 18px rgba(255, 255, 175, 0.18);
+}
+
+.calendar-axis-start,
+.calendar-axis-end,
+.calendar-axis-tick {
+  position: absolute;
+  top: 20px;
+  color: var(--wf-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  white-space: nowrap;
+  padding-top: 2px;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.65);
+}
+
+.calendar-axis-start { left: 0; }
+.calendar-axis-end { right: 0; }
+.calendar-axis-tick { transform: translateX(-50%); }
+
+.calendar-axis-tick::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -13px;
+  width: 1px;
+  height: 9px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.calendar-graphic-row {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  height: 58px;
+}
+
+.calendar-graphic-band {
+  position: absolute;
+  height: 58px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 14px 0 calc(14px + var(--clip-offset, 0px));
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--wf-text-primary);
+  overflow: visible;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+}
+
+.calendar-graphic-band.is-era {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 175, 0.24), rgba(255, 255, 175, 0.08)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  border-color: rgba(255, 255, 175, 0.32);
+}
+
+.calendar-graphic-band.is-year {
+  background:
+    linear-gradient(90deg, rgba(59, 130, 246, 0.24), rgba(59, 130, 246, 0.08)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  border-color: rgba(59, 130, 246, 0.32);
+}
+
+.calendar-graphic-band.is-open-ended {
+  border-right-style: dashed;
+}
+
+.calendar-graphic-band.is-open-ended .calendar-band-duration {
+  color: rgba(0, 212, 170, 0.9);
+}
+
+.calendar-graphic-band.is-low-confidence {
+  background: linear-gradient(90deg, rgba(255, 165, 2, 0.20), rgba(255, 165, 2, 0.08));
+  border-color: rgba(255, 165, 2, 0.34);
+}
+
+.calendar-graphic-band.is-connected-prev,
+.calendar-graphic-band.is-clipped-start {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-color: rgba(255, 255, 255, 0.22);
+}
+
+.calendar-graphic-band.is-connected-next,
+.calendar-graphic-band.is-clipped-end {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.calendar-graphic-band.is-connected-prev::before,
+.calendar-graphic-band.is-clipped-start::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.calendar-graphic-band.is-clipped-start::after,
+.calendar-graphic-band.is-clipped-end::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.calendar-graphic-band.is-clipped-start::after {
+  left: 0;
+  background: linear-gradient(90deg, rgba(17, 17, 19, 0.82), transparent);
+}
+
+.calendar-graphic-band.is-clipped-end::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(17, 17, 19, 0.82), transparent);
+}
+
+.calendar-graphic-band:hover,
+.calendar-graphic-band.selected {
+  transform: translateY(-2px);
+  border-color: var(--wf-accent);
+  box-shadow: var(--shadow-glow), 0 16px 28px rgba(0, 0, 0, 0.28);
+  filter: saturate(1.08);
+}
+
+.calendar-band-title,
+.calendar-band-range,
+.calendar-band-duration {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calendar-band-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.calendar-band-range {
+  color: var(--wf-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.calendar-band-duration {
+  color: rgba(255, 255, 175, 0.82);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+}
+
+.calendar-band-hover-card {
+  position: absolute;
+  left: max(12px, min(50%, calc(100vw - 360px)));
+  bottom: calc(100% + 10px);
+  z-index: 120;
+  min-width: 220px;
+  max-width: min(340px, calc(100vw - 64px));
+  transform: translate(-50%, 8px);
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 175, 0.24);
+  background: rgba(17, 17, 19, 0.96);
+  color: var(--wf-text-primary);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48), var(--shadow-glow);
+  backdrop-filter: blur(14px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  white-space: normal;
+}
+
+.calendar-band-hover-card strong {
+  color: var(--wf-accent);
+  font-size: 0.92rem;
+}
+
+.calendar-band-hover-card small,
+.calendar-band-hover-card em {
+  color: var(--wf-text-secondary);
+  font-size: 0.78rem;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.calendar-graphic-band:hover .calendar-band-hover-card,
+.calendar-graphic-band:focus-visible .calendar-band-hover-card {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.calendar-graphic-band.is-clipped-start .calendar-band-hover-card {
+  left: 12px;
+  transform: translate(0, 8px);
+}
+
+.calendar-graphic-band.is-clipped-start:hover .calendar-band-hover-card,
+.calendar-graphic-band.is-clipped-start:focus-visible .calendar-band-hover-card {
+  transform: translate(0, 0);
+}
+
+.calendar-graphic-band.is-clipped-end .calendar-band-hover-card {
+  left: auto;
+  right: 12px;
+  transform: translate(0, 8px);
+}
+
+.calendar-graphic-band.is-clipped-end:hover .calendar-band-hover-card,
+.calendar-graphic-band.is-clipped-end:focus-visible .calendar-band-hover-card {
+  transform: translate(0, 0);
+}
+
+.calendar-view-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-lg);
+}
+
+.calendar-view-title {
+  margin-bottom: var(--spacing-md);
+  color: var(--wf-accent);
+  font-weight: 700;
+}
+
+.calendar-line-card,
+.diagnostic-row {
+  width: 100%;
+  margin-bottom: var(--spacing-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--wf-text-primary);
+  text-align: left;
+  white-space: normal;
+}
+
+.calendar-line-card {
+  position: relative;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.calendar-line-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 175, 0.75), rgba(59, 130, 246, 0.38));
+  opacity: 0.7;
+}
+
+.diagnostics-header-card {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+  padding: var(--spacing-md);
+  border: 1px solid rgba(255, 165, 2, 0.22);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 165, 2, 0.08);
+  color: var(--wf-warning);
+  margin-bottom: var(--spacing-md);
+}
+
+.diagnostics-header-card p {
+  margin: 4px 0 0;
+  color: var(--wf-text-secondary);
+  line-height: 1.6;
+}
+
+.diagnostic-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.diagnostic-raw {
+  max-width: 180px;
+  color: var(--wf-text-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-empty-state,
+.timeline-detail-empty {
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--spacing-sm);
+  color: var(--wf-text-muted);
+}
+
+.timeline-empty-state.compact { min-height: 180px; }
+.timeline-empty-state svg,
+.timeline-detail-empty svg { color: var(--wf-accent); opacity: 0.8; }
+
+.info-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.info-list li svg {
+  flex: 0 0 auto;
+  color: var(--wf-accent);
+}
+
+.timeline-detail-panel {
+  position: sticky;
+  top: var(--spacing-lg);
+}
+
+.timeline-detail-card h4 {
+  margin: var(--spacing-md) 0 var(--spacing-sm);
+  color: var(--wf-text-primary);
+}
+
+.detail-type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius-full);
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
+  border: 1px solid rgba(255, 255, 175, 0.16);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.detail-description {
+  color: var(--wf-text-secondary);
+  line-height: 1.7;
+}
+
+.detail-meta-list {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 8px 10px;
+  margin: var(--spacing-lg) 0 0;
+}
+
+.detail-meta-list dt {
+  color: var(--wf-text-muted);
+  font-size: 0.8rem;
+}
+
+.detail-meta-list dd {
+  margin: 0;
+  color: var(--wf-text-secondary);
+  word-break: break-word;
+}
+
+.detail-warning {
+  margin-top: var(--spacing-md);
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background: rgba(255, 165, 2, 0.08);
+  color: var(--wf-warning);
+}
+
+@media (max-width: 1100px) {
+  .timeline-hero-panel,
+  .timeline-filter-row { flex-direction: column; align-items: stretch; }
+  .timeline-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .timeline-workspace-layout { grid-template-columns: 1fr; }
+  .timeline-detail-panel { position: static; }
+  .calendar-view-columns { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .timeline-overview-grid { grid-template-columns: 1fr; }
+  .chronology-group { grid-template-columns: 1fr; gap: var(--spacing-sm); }
+  .chronology-year-rail { position: static; }
+  .chronology-card { grid-template-columns: 32px minmax(0, 1fr); }
+  .chronology-confidence { grid-column: 2; justify-self: start; }
 }
 
 .timeline-header { 
@@ -7489,6 +9357,10 @@ export default {
   border-radius: 0 0 var(--radius-md) var(--radius-md);
 }
 
+.setting-detail-dialog .dialog-footer .delete-btn {
+  margin-right: auto;
+}
+
 .close-btn { background: none; border: none; font-size: 1.5rem; line-height: 1; cursor: pointer; color: var(--neutral-gray-400); padding: 0 4px; }
 .close-btn:hover { color: var(--wf-text-primary); }
 
@@ -7750,6 +9622,13 @@ export default {
   min-width: 0;
   flex: 1;
 }
+.entity-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .entity-setting-link {
   border: 1px solid var(--wf-border-light);
   background: var(--wf-bg-hover);
@@ -7767,6 +9646,23 @@ export default {
   background: rgba(2, 132, 199, 0.12);
   border-color: rgba(2, 132, 199, 0.25);
   color: #38bdf8;
+}
+.entity-delete-link {
+  border: 1px solid rgba(239, 68, 68, 0.24);
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.entity-delete-link:hover {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.32);
 }
 
 /* 加载更多按钮 */

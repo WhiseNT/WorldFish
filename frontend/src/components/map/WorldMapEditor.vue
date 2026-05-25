@@ -434,6 +434,7 @@ button {
   color: var(--wf-accent);
   font-weight: 600;
   cursor: pointer;
+  min-height: 36px;
 }
 button:hover:not(:disabled) { background: var(--wf-accent-muted); border-color: var(--wf-accent); color: var(--wf-accent-hover); }
 button.active, .primary { background: var(--wf-accent); color: var(--wf-text-on-accent); border-color: var(--wf-accent); }

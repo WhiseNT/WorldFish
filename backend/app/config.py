@@ -9,7 +9,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 
 # 加载项目根目录的 .env 文件
-# 路径: MiroFish/.env (相对于 backend/app/config.py)
+# 路径: WorldFish/.env (相对于 backend/app/config.py)
 project_root_env = os.path.join(os.path.dirname(__file__), '../../.env')
 
 
@@ -99,7 +99,7 @@ class Config:
     """Flask配置类"""
     
     # Flask配置
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
+    SECRET_KEY = os.environ.get('SECRET_KEY', 'worldfish-secret-key')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     
     # JSON配置 - 禁用ASCII转义，让中文直接显示（而不是 \uXXXX 格式）
@@ -224,6 +224,7 @@ class Config:
     EXTRACTION_MAX_CHUNK_CHARS = _parse_int_env("EXTRACTION_MAX_CHUNK_CHARS", 220000)
     EXTRACTION_CHUNK_PROFILE_VERSION = _parse_int_env("EXTRACTION_CHUNK_PROFILE_VERSION", 2)
     EXTRACTION_CHECKPOINT_DIR = os.environ.get("EXTRACTION_CHECKPOINT_DIR", "extraction_cache")
+    EXTRACTION_ENTITY_INTRO_MAX_CHARS = _parse_int_env("EXTRACTION_ENTITY_INTRO_MAX_CHARS", 1200)
     DEEP_EXTRACTION_STATE_RESERVE_RATIO = _parse_float_env("DEEP_EXTRACTION_STATE_RESERVE_RATIO", 0.06)
     DEEP_EXTRACTION_SUMMARY_MAX_CHARS = _parse_int_env("DEEP_EXTRACTION_SUMMARY_MAX_CHARS", 4000)
     DEEP_EXTRACTION_ENTITY_SNAPSHOT_MAX_CHARS = _parse_int_env("DEEP_EXTRACTION_ENTITY_SNAPSHOT_MAX_CHARS", 10000)
@@ -264,7 +265,7 @@ class Config:
     @classmethod
     def reload(cls):
         _load_environment()
-        cls.SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
+        cls.SECRET_KEY = os.environ.get('SECRET_KEY', 'worldfish-secret-key')
         cls.DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
         cls.JSON_AS_ASCII = False
         cls.LLM_API_KEY = os.environ.get('LLM_API_KEY')

@@ -12,14 +12,16 @@
             :placeholder="$t('graph.searchEntity', 'Search entities...')" 
             class="search-input"
           />
-          <button class="search-btn" @click="handleSearch">🔍</button>
+          <button class="search-btn" @click="handleSearch" :title="$t('graph.searchEntity', '搜索')">
+            <SvgIcon name="search" :size="15" />
+          </button>
         </div>
         <button class="tool-btn" @click="$emit('refresh')" :disabled="loading" :title="$t('graph.refreshGraph')">
-          <span class="icon-refresh" :class="{ 'spinning': loading }">↻</span>
+          <SvgIcon class="icon-refresh" :class="{ 'spinning': loading }" name="refresh" :size="15" />
           <span class="btn-text">Refresh</span>
         </button>
         <button class="tool-btn" @click="$emit('toggle-maximize')" :title="$t('graph.toggleMaximize')">
-          <span class="icon-maximize">⛶</span>
+          <SvgIcon class="icon-maximize" name="maximize" :size="15" />
         </button>
       </div>
     </div>
@@ -65,7 +67,7 @@
             <span v-if="selectedItem.type === 'node'" class="detail-type-badge" :style="{ background: selectedItem.color, color: '#fff' }">
               {{ selectedItem.entityType }}
             </span>
-            <button class="detail-close" @click="closeDetailPanel">×</button>
+            <button class="detail-close" @click="closeDetailPanel" title="关闭详情"><SvgIcon name="close" :size="14" /></button>
           </div>
           
           <!-- 节点详情 -->
@@ -237,7 +239,7 @@
       
       <!-- 等待/空状态 -->
       <div v-else class="graph-state">
-        <div class="empty-icon">❖</div>
+        <div class="empty-icon"><SvgIcon name="grid" :size="38" :stroke-width="1.5" /></div>
         <p class="empty-text">{{ $t('graph.waitingOntology') }}</p>
       </div>
     </div>
@@ -267,6 +269,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import * as d3 from 'd3'
+import SvgIcon from './ui/SvgIcon.vue'
 
 const props = defineProps({
   graphData: Object,
@@ -1038,9 +1041,17 @@ onUnmounted(() => {
 }
 
 .empty-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  opacity: 0.2;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 16px;
+  opacity: 0.35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wf-accent);
+  border: 1px solid rgba(255, 255, 175, 0.12);
+  border-radius: 50%;
+  background: var(--wf-accent-muted);
 }
 
 /* Entity Types Legend - Bottom Left */
@@ -1102,11 +1113,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--wf-bg-card, #1a1a2e);
+  background: rgba(9, 9, 11, 0.88);
+  backdrop-filter: blur(12px);
   padding: 8px 14px;
   border-radius: 20px;
-  border: 1px solid #E0E0E0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  border: 1px solid var(--wf-border);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
   z-index: 10;
 }
 
@@ -1130,7 +1142,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #E0E0E0;
+  background-color: rgba(255, 255, 255, 0.12);
   border-radius: 22px;
   transition: 0.3s;
 }
@@ -1145,10 +1157,11 @@ onUnmounted(() => {
   background-color: var(--wf-bg-primary);
   border-radius: 50%;
   transition: 0.3s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
 }
 
 input:checked + .slider {
-  background-color: #7B2D8E;
+  background-color: var(--wf-accent);
 }
 
 input:checked + .slider:before {

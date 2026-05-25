@@ -21,7 +21,7 @@ from ..models.agent import (
 from ..services.agent_service import AgentService
 from ..utils.logger import get_logger
 
-logger = get_logger("mirofish.api.agent")
+logger = get_logger("worldfish.api.agent")
 
 # 全局 Agent 服务实例
 agent_service = AgentService()

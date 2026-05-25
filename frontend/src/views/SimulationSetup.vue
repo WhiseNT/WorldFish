@@ -116,7 +116,8 @@
             :disabled="!canStart || starting"
             @click="startEvolution"
           >
-            {{ starting ? '启动中...' : '开始推演 →' }}
+            <template v-if="starting">启动中...</template>
+            <template v-else><span>开始推演</span><SvgIcon name="arrow-right" :size="16" /></template>
           </button>
           <p v-if="!hasLlmConfig" class="message-warning">请先在 LLM 配置中设置 API Key</p>
         </div>
@@ -132,6 +133,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { worldApi } from '../api/world'
 import StepIndicator from '../components/StepIndicator.vue'
+import SvgIcon from '../components/ui/SvgIcon.vue'
 
 const route = useRoute()
 const router = useRouter()

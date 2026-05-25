@@ -159,7 +159,8 @@
             <div class="forward-params">
               <label>轮次 <input v-model.number="forwardRounds" type="number" min="1" max="10" /></label>
               <button class="btn btn-primary btn-sm" :disabled="!forwardScenario.trim() || forwarding" @click="startForward">
-                {{ forwarding ? '...' : '向后推演 →' }}
+                <template v-if="forwarding">...</template>
+                <template v-else><span>向后推演</span><SvgIcon name="arrow-right" :size="14" /></template>
               </button>
             </div>
           </div>
@@ -174,7 +175,7 @@
       <div class="dialog-content apply-dialog">
         <div class="dialog-header">
           <h2>变更实体 — 应用到世界观</h2>
-          <button class="close-btn" @click="showApplyDialog = false">&times;</button>
+          <button class="close-btn" @click="showApplyDialog = false" title="关闭"><SvgIcon name="close" :size="16" /></button>
         </div>
         <div class="dialog-body">
           <p class="hint">勾选你想应用的变更，它们将添加回世界观设定中</p>
@@ -210,12 +211,15 @@
       <div class="dialog-content entity-chat-dialog">
         <div class="dialog-header">
           <h2>与 {{ chatEntity.name }} 对话</h2>
-          <button class="close-btn" @click="chatEntity = null">&times;</button>
+          <button class="close-btn" @click="chatEntity = null" title="关闭"><SvgIcon name="close" :size="16" /></button>
         </div>
         <div class="chat-profile-card">
           <div class="chat-profile-header" @click="chatProfileCollapsed = !chatProfileCollapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <span style="font-size: 0.9rem; font-weight: 500; color: var(--wf-text-primary);">人物小传</span>
-            <span style="font-size: 0.8rem; color: var(--wf-text-muted);">{{ chatProfileCollapsed ? '展开 ▾' : '折叠 ▴' }}</span>
+            <span class="chat-profile-toggle-text">
+              {{ chatProfileCollapsed ? '展开' : '折叠' }}
+              <SvgIcon :name="chatProfileCollapsed ? 'chevron-down' : 'chevron-up'" :size="12" />
+            </span>
           </div>
           <div v-show="!chatProfileCollapsed">
             <div v-if="chatProfileLoading" class="chat-profile-loading">正在生成当前角色小传...</div>
@@ -245,6 +249,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StepIndicator from '../components/StepIndicator.vue'
 import GraphPanel from '../components/GraphPanel.vue'
+import SvgIcon from '../components/ui/SvgIcon.vue'
 import { default as service } from '../api/index'
 
 const route = useRoute()
@@ -951,6 +956,7 @@ async function sendChat() {
 .chat-profile-loading { font-size: 0.84rem; color: var(--wf-text-muted); }
 .chat-profile-notice { font-size: 0.8rem; line-height: 1.6; color: var(--wf-accent); }
 .chat-profile-meta { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
+.chat-profile-toggle-text { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--wf-text-muted); }
 .chat-profile-text { margin: 0; font-size: 0.85rem; line-height: 1.7; color: var(--wf-text-secondary); white-space: pre-wrap; }
 .chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: var(--spacing-sm); display: flex; flex-direction: column; gap: var(--spacing-sm); }
 .chat-msg { padding: var(--spacing-sm) var(--spacing-md); border-radius: var(--radius-md); font-size: 0.9rem; max-width: 85%; }

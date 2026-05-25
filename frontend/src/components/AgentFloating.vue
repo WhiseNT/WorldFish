@@ -78,7 +78,7 @@
       <div v-if="showSessions && !showSettings" class="agent-sessions-panel">
         <div class="agent-sessions-header">
           <span>{{ $t('agent.conversations') || '对话列表' }}</span>
-          <button class="agent-btn-sm" @click="showSessions = false">×</button>
+          <button class="agent-btn-sm" @click="showSessions = false" title="关闭会话列表"><SvgIcon name="close" :size="13" /></button>
         </div>
         <div class="agent-sessions-list">
           <div
@@ -91,7 +91,7 @@
             <div class="agent-session-title">{{ s.title }}</div>
             <div class="agent-session-meta">
               <span>{{ s.message_count }} 条消息</span>
-              <span class="agent-session-world" v-if="s.world_id">🌐</span>
+              <span class="agent-session-world" v-if="s.world_id"><SvgIcon name="globe" :size="13" /></span>
               <button
                 class="agent-session-delete-btn"
                 @click.stop="deleteSessionItem(s.session_id)"
@@ -286,7 +286,7 @@
               <div v-for="(srv, idx) in mcpServers" :key="idx" class="mcp-item">
                 <div class="mcp-item-header">
                   <span class="mcp-item-name">{{ srv.name || '未命名' }}</span>
-                  <button class="agent-btn-xs" @click="removeMcpServer(idx)" title="删除">🗑</button>
+                  <button class="agent-btn-xs" @click="removeMcpServer(idx)" title="删除"><SvgIcon name="trash" :size="13" /></button>
                 </div>
                 <div class="mcp-item-row">
                   <input v-model="srv.name" class="settings-input" placeholder="服务器名称" />
@@ -344,9 +344,9 @@
               <div v-for="sk in filteredSkills" :key="sk.skill_id" class="skill-item">
                 <div class="skill-item-header">
                   <span class="skill-item-name">{{ sk.name }}</span>
-                  <span class="skill-item-world" v-if="sk.world_id">🌐 {{ getWorldName(sk.world_id) }}</span>
-                  <span class="skill-item-world" v-else>🌍 全局</span>
-                  <button class="agent-btn-xs" @click="deleteSkillItem(sk.skill_id)" title="删除">🗑</button>
+                  <span class="skill-item-world" v-if="sk.world_id"><SvgIcon name="globe" :size="13" /> {{ getWorldName(sk.world_id) }}</span>
+                  <span class="skill-item-world" v-else><SvgIcon name="world" :size="13" /> 全局</span>
+                  <button class="agent-btn-xs" @click="deleteSkillItem(sk.skill_id)" title="删除"><SvgIcon name="trash" :size="13" /></button>
                 </div>
                 <div class="skill-item-desc" v-if="sk.description">{{ sk.description }}</div>
                 <div class="skill-item-inst" v-if="showSkillDetail === sk.skill_id">{{ sk.instructions }}</div>
@@ -365,7 +365,8 @@
             <div class="skills-subtitle">
               发现的 Skills
               <button class="skill-scan-btn" :disabled="discoveringLoading" @click="loadDiscoveredSkills">
-                {{ discoveringLoading ? '扫描中...' : '🔍 扫描' }}
+                <template v-if="discoveringLoading">扫描中...</template>
+                <template v-else><SvgIcon name="search" :size="13" /> 扫描</template>
               </button>
             </div>
             <div class="skills-list">
@@ -416,7 +417,7 @@
       <!-- ============================================================ -->
       <div v-if="!showSettings" class="agent-messages" ref="messagesEl">
         <div v-if="messages.length === 0 && !streaming" class="agent-welcome">
-          <div class="agent-welcome-icon">🐟</div>
+          <div class="agent-welcome-icon"><SvgIcon name="fish" :size="34" :stroke-width="1.7" /></div>
           <div class="agent-welcome-text">
             {{ $t('agent.welcome') || '你好！我是 WorldFish Agent，可以帮你管理世界观数据。\n\n你可以尝试：\n• 查看当前世界观概况\n• 添加/修改实体和事件\n• 批量导入设定\n• 让我提问以了解你的需求' }}
           </div>
@@ -439,8 +440,8 @@
           <!-- Tool Call 流式 Chunk — 可折叠 -->
           <div v-if="msg.type === 'tool_call'" class="agent-tool-call" :class="{ expanded: expandedTools.has(idx) }">
             <div class="agent-tool-call-header" @click="toggleToolExpand(idx)">
-              <span class="agent-tool-chevron">{{ expandedTools.has(idx) ? '▾' : '▸' }}</span>
-              <span class="agent-tool-call-icon">⚙️</span>
+              <SvgIcon class="agent-tool-chevron" :name="expandedTools.has(idx) ? 'chevron-down' : 'chevron-right'" :size="13" />
+              <span class="agent-tool-call-icon"><SvgIcon name="settings" :size="14" /></span>
               <span>{{ msg.content }}</span>
             </div>
             <div v-if="expandedTools.has(idx) && msg.data?.arguments" class="agent-tool-call-detail">
@@ -451,8 +452,8 @@
           <!-- Tool Result 消息 — 可折叠 -->
           <div v-else-if="msg.role === 'tool'" class="agent-tool-msg" :class="{ expanded: expandedTools.has(idx) }">
             <div class="agent-tool-header" @click="toggleToolExpand(idx)">
-              <span class="agent-tool-chevron">{{ expandedTools.has(idx) ? '▾' : '▸' }}</span>
-              <span class="agent-tool-icon">🔧</span>
+              <SvgIcon class="agent-tool-chevron" :name="expandedTools.has(idx) ? 'chevron-down' : 'chevron-right'" :size="13" />
+              <span class="agent-tool-icon"><SvgIcon name="tool" :size="14" /></span>
               <span class="agent-tool-name">{{ msg.name || 'Tool' }}</span>
               <span class="agent-tool-summary">{{ toolSummary(msg) }}</span>
             </div>
@@ -478,10 +479,10 @@
               >
                 <span class="agent-option-check">
                   <template v-if="msg.options.multiSelect">
-                    {{ selectedOptions.includes(opt.label) ? '☑' : '☐' }}
+                    <SvgIcon :name="selectedOptions.includes(opt.label) ? 'checkbox-on' : 'checkbox-off'" :size="16" />
                   </template>
                   <template v-else>
-                    {{ selectedOptions.includes(opt.label) ? '●' : '○' }}
+                    <SvgIcon :name="selectedOptions.includes(opt.label) ? 'radio-on' : 'radio-off'" :size="16" />
                   </template>
                 </span>
                 <div>
@@ -522,8 +523,8 @@
         <!-- 文件缩略 -->
         <div v-if="pendingFiles.length > 0" class="agent-pending-files">
           <div v-for="(f, fi) in pendingFiles" :key="fi" class="agent-pending-file">
-            <span>📎 {{ f.name }}</span>
-            <button @click="removeFile(fi)">×</button>
+            <span><SvgIcon name="paperclip" :size="14" /> {{ f.name }}</span>
+            <button @click="removeFile(fi)" title="移除文件"><SvgIcon name="close" :size="12" /></button>
           </div>
         </div>
         <div class="agent-input-row">
@@ -555,7 +556,7 @@
             </svg>
             <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="agent-stop-icon" @click.stop="stopStreaming">
               <rect x="6" y="4" width="4" height="16" rx="1"/>
-              <rect x="24" y="4" width="4" height="16" rx="1"/>
+              <rect x="14" y="4" width="4" height="16" rx="1"/>
             </svg>
           </button>
         </div>
@@ -574,6 +575,25 @@ import {
   discoverSkills, toggleDiscoveredSkill,
 } from '../api/agent.js'
 import { worldApi } from '../api/world.js'
+import SvgIcon from './ui/SvgIcon.vue'
+
+const WORLD_UPDATED_EVENT = 'worldfish:world-updated'
+const WORLD_MUTATION_TOOLS = new Set([
+  'add_entity',
+  'update_entity',
+  'delete_entity',
+  'add_event',
+  'update_event',
+  'delete_event',
+  'update_world_meta',
+  'create_calendar',
+  'update_calendar',
+  'delete_calendar',
+  'create_setting_collection',
+  'create_setting_item',
+  'update_map_cell',
+  'batch_update_map_cells',
+])
 
 // ---- State ----
 const minimized = ref(true)
@@ -746,6 +766,31 @@ function onWorldChange() {
   // Switch to a new session for the new world context
 }
 
+function emitWorldUpdated(chunk) {
+  const toolName = String(chunk?.data?.name || '').trim()
+  if (!toolName || !chunk?.data?.success || !WORLD_MUTATION_TOOLS.has(toolName)) {
+    return
+  }
+
+  const worldId = String(
+    chunk?.data?.world_id
+    || chunk?.data?.result?.world_id
+    || currentWorldId.value
+    || ''
+  ).trim()
+  if (!worldId) {
+    return
+  }
+
+  window.dispatchEvent(new CustomEvent(WORLD_UPDATED_EVENT, {
+    detail: {
+      worldId,
+      toolName,
+      updatedAt: Date.now(),
+    },
+  }))
+}
+
 // ---- Chat ----
 async function sendMessage(text) {
   const msg = text || inputText.value.trim()
@@ -817,6 +862,7 @@ async function sendMessage(text) {
             data: chunk.data,
           })
           applyToolCollapseDefault(msgIndex)
+          emitWorldUpdated(chunk)
         } else if (chunk.type === 'user_prompt') {
           // Agent 需要用户交互
           if (chunk.data) {
@@ -849,7 +895,7 @@ async function sendMessage(text) {
         console.error('Chat error:', err)
         messages.value.push({
           role: 'assistant',
-          content: `❌ 出错了: ${err.message}`,
+          content: `出错了: ${err.message}`, 
           timestamp: new Date().toISOString(),
         })
         streaming.value = false
@@ -975,6 +1021,7 @@ async function confirmOptions() {
             content: chunk.content, name: chunk.data?.name || 'Tool', data: chunk.data,
           })
           applyToolCollapseDefault(msgIndex)
+          emitWorldUpdated(chunk)
         } else if (chunk.type === 'user_prompt') {
           if (chunk.data) {
             messages.value.push({
@@ -1335,7 +1382,7 @@ defineExpose({
   transform: scale(1.08);
   box-shadow: 0 6px 24px rgba(255, 255, 175, 0.45);
 }
-.agent-mini-icon { display: flex; }
+.agent-mini-icon { display: flex; align-items: center; justify-content: center; }
 .agent-mini-pulse {
   position: absolute;
   top: -2px;
@@ -1538,12 +1585,13 @@ defineExpose({
   color: var(--wf-text-primary);
 }
 .agent-btn-sm {
+  width: 28px;
+  height: 28px;
   background: none;
   border: none;
   color: var(--wf-text-muted);
   cursor: pointer;
-  font-size: 22px;
-  padding: 0 4px;
+  padding: 0;
 }
 .agent-sessions-list {
   flex: 1;
@@ -1579,11 +1627,13 @@ defineExpose({
   margin-top: 2px;
 }
 .agent-btn-xs {
+  width: 26px;
+  height: 26px;
   background: none;
   border: none;
+  color: var(--wf-text-muted);
   cursor: pointer;
-  font-size: 15px;
-  opacity: 0.5;
+  opacity: 0.55;
   padding: 0;
 }
 .agent-btn-xs:hover { opacity: 1; }
@@ -1634,7 +1684,17 @@ defineExpose({
   align-items: center;
   gap: 16px;
 }
-.agent-welcome-icon { font-size: 42px; }
+.agent-welcome-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wf-accent);
+  background: var(--wf-accent-muted);
+  border: 1px solid rgba(255, 255, 175, 0.16);
+}
 .agent-welcome-text {
   font-size: 16px;
   color: var(--wf-text-secondary);
@@ -1784,7 +1844,18 @@ defineExpose({
 .agent-tool-call-header:hover {
   background: rgba(100, 100, 200, 0.06);
 }
-.agent-tool-call-icon { font-size: 15px; }
+.agent-tool-call-icon,
+.agent-tool-icon,
+.agent-session-world,
+.skill-item-world,
+.agent-pending-file span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.agent-tool-chevron {
+  color: var(--wf-text-muted);
+}
 .agent-tool-call-detail {
   padding: 6px 10px 8px 28px;
   border-top: 1px solid rgba(100, 100, 200, 0.08);
@@ -1846,9 +1917,14 @@ defineExpose({
   border-color: rgba(255, 255, 175, 0.3);
 }
 .agent-option-check {
-  font-size: 15px;
   color: var(--wf-accent);
   margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 .agent-option-label {
   font-size: 15px;
@@ -1905,12 +1981,13 @@ defineExpose({
   color: var(--wf-text-secondary);
 }
 .agent-pending-file button {
+  width: 20px;
+  height: 20px;
   background: none;
   border: none;
   color: var(--wf-text-muted);
   cursor: pointer;
-  font-size: 15px;
-  padding: 0 2px;
+  padding: 0;
 }
 .agent-input-row {
   display: flex;

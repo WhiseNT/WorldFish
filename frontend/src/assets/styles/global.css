@@ -108,7 +108,8 @@ a { color: var(--wf-accent); text-decoration: none; transition: color var(--tran
 a:hover { color: var(--wf-accent-hover); }
 
 /* === Buttons === */
-button {
+button,
+.btn {
   font-family: var(--font-sans);
   border: none;
   border-radius: var(--radius-md);
@@ -117,11 +118,67 @@ button {
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-normal);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  line-height: 1;
+  vertical-align: middle;
+  text-align: center;
+  white-space: nowrap;
 }
 
 button:hover:not(:disabled) { transform: translateY(-1px); }
 button:active:not(:disabled) { transform: translateY(0); }
 button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+button:focus-visible,
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--wf-accent-muted);
+}
+
+.svg-icon {
+  display: block;
+  flex: 0 0 auto;
+  width: 1em;
+  height: 1em;
+  color: currentColor;
+  pointer-events: none;
+}
+
+.icon-only,
+.btn-icon,
+.close-btn,
+.agent-btn-icon,
+.agent-btn-sm,
+.agent-btn-xs,
+.extract-icon-btn,
+.detail-close,
+.search-btn,
+.upload-file-remove,
+.file-remove-btn,
+.scan-close-btn,
+.remove-alias {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  line-height: 1;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+}
+
+.btn-sm { padding: 7px 13px; font-size: 13px; }
+.btn-xs { padding: 5px 9px; font-size: 12px; }
+.btn-danger {
+  background: rgba(255, 71, 87, 0.12);
+  color: var(--wf-danger);
+  border: 1px solid rgba(255, 71, 87, 0.28);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 71, 87, 0.18);
+  border-color: rgba(255, 71, 87, 0.45);
+}
 
 .btn-primary {
   background: var(--wf-accent);

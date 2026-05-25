@@ -32,7 +32,7 @@ from ..services.timeline_manager import TimelineManager
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
 
-logger = get_logger("mirofish.agent_tools")
+logger = get_logger("worldfish.agent_tools")
 TIMELINE_MANAGER = TimelineManager()
 
 # ============================================================
@@ -965,9 +965,9 @@ class CreateCalendarTool(BaseTool):
     parameters = {
         "name": {"type": "string", "description": "历法名称"},
         "timeline_type": {"type": "string", "description": "历法类型：纪元/纪年"},
-        "base_time": {"type": "string", "description": "起始时间/基础时间（可选）"},
+        "base_time": {"type": "string", "description": "基准时间/开始时间（可选）"},
         "end_time": {"type": "string", "description": "结束时间（可选）"},
-        "time_range": {"type": "string", "description": "完整时间范围（可选，优先级高于 base_time/end_time）"},
+        "time_range": {"type": "string", "description": "完整时间范围（可选）"},
         "unit": {"type": "string", "description": "时间单位（默认 年）"},
         "ratio": {"type": "string", "description": "时间比例，如 ×1、×12"},
         "calendar_system": {"type": "string", "description": "自定义历法系统/规则名称（对应 calendarType）"},
@@ -1006,11 +1006,11 @@ class CreateCalendarTool(BaseTool):
 
 class UpdateCalendarTool(BaseTool):
     name = "update_calendar"
-    description = "更新指定历法的字段。updates 里只放要修改的字段即可。"
+    description = "更新指定历法的字段。修改、纠错、重命名都应优先使用此工具，不要通过 delete_calendar + create_calendar 代替更新。updates 里只放要修改的字段即可。"
     parameters = {
         "calendar_id": {"type": "string", "description": "历法 ID（优先）"},
         "calendar_name": {"type": "string", "description": "历法名称（可选）"},
-        "updates": {"type": "object", "description": "要修改的字段对象，可包含 name、timeline_type、base_time、end_time、time_range、unit、ratio、calendar_system、description、no_end_time"},
+        "updates": {"type": "object", "description": "要修改的字段对象，可包含 name、timeline_type、base_time、end_time、time_range、unit、ratio、calendar_system、description、no_end_time。"},
     }
 
     def execute(self, world_id: str = "", calendar_id: str = "", calendar_name: str = "", updates: dict = None, **kwargs) -> ToolCallResult:
@@ -1042,7 +1042,7 @@ class UpdateCalendarTool(BaseTool):
 
 class DeleteCalendarTool(BaseTool):
     name = "delete_calendar"
-    description = "删除指定历法条目。此操作不可撤销。"
+    description = "仅当用户明确要求删除历法时才可使用。修改、纠错、重命名、去重优先使用 update_calendar，不要用删旧建新代替更新。此操作不可撤销。"
     parameters = {
         "calendar_id": {"type": "string", "description": "历法 ID（优先）"},
         "calendar_name": {"type": "string", "description": "历法名称（可选）"},

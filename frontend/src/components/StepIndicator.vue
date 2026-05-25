@@ -9,7 +9,8 @@
           'step-pending': index + 1 > currentStep,
         }"
       >
-        {{ index + 1 < currentStep ? '✓' : index + 1 }}
+        <SvgIcon v-if="index + 1 < currentStep" name="check" :size="13" :stroke-width="3" />
+        <template v-else>{{ index + 1 }}</template>
       </span>
       <span
         v-if="index < stepLabels.length - 1"
@@ -22,6 +23,8 @@
 </template>
 
 <script setup>
+import SvgIcon from './ui/SvgIcon.vue'
+
 defineProps({
   currentStep: { type: Number, default: 1 },
   totalSteps: { type: Number, default: 1 },

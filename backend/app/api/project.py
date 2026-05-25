@@ -6,7 +6,7 @@ from app.models.world import WorldManager
 from app.utils.logger import get_logger
 
 project_bp = Blueprint('project', __name__)
-logger = get_logger('mirofish.api.project')
+logger = get_logger('worldfish.api.project')
 
 
 @project_bp.route('/create', methods=['POST'])

@@ -67,7 +67,7 @@ ZEP_API_KEY=
 # 构建并启动（后台）
 docker-compose up -d --build
 # 查看容器日志
-docker-compose logs -f mirofish
+docker-compose logs -f worldfish
 # 停止并删除容器
 docker-compose down
 ```
