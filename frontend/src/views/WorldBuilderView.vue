@@ -26,13 +26,6 @@
         >
           {{ projectActionLabel }}
         </button>
-        <button
-          @click="saveWorld()"
-          :disabled="isSaving || isProjectLaunching"
-          class="btn btn-primary"
-        >
-          {{ isSaving ? '保存中...' : (worldId ? '保存世界观' : '创建世界观') }}
-        </button>
       </div>
     </header>
     
@@ -686,7 +679,7 @@
                 </div>
                 <div class="tree-children">
                   <div v-for="category in settingCategories" :key="category.id" class="tree-node">
-                    <div class="tree-item category-item" :class="{ active: activeCategory === category.id }" @click="toggleCategory(category.id)">
+                    <div class="tree-item category-item" :class="{ expanded: category.expanded }" @click="toggleCategory(category.id)">
                       <SvgIcon class="expand-icon" :name="category.expanded ? 'chevron-down' : 'chevron-right'" :size="13" />
                       <SvgIcon class="category-icon" :name="category.icon" :size="15" />
                       <span class="category-name">{{ category.name }}</span>
@@ -698,9 +691,22 @@
                           :class="{ active: activeSettingCollection && activeSettingCollection.id === collection.id }"
                           @click="openSettingCollection(collection)"
                         >
-                          <SvgIcon class="expand-icon" @click.stop="toggleCollectionExpand(collection.id)" :name="collection.expanded ? 'chevron-down' : 'chevron-right'" :size="13" />
-                          <SvgIcon class="collection-icon" name="folder" :size="15" />
-                          <span class="collection-name">{{ collection.name }}</span>
+                          <button
+                            type="button"
+                            class="tree-expand-button"
+                            @click.stop="toggleCollectionExpand(collection.id)"
+                            :title="collection.expanded ? '折叠设定集' : '展开设定集'"
+                          >
+                            <SvgIcon class="expand-icon" :name="collection.expanded ? 'chevron-down' : 'chevron-right'" :size="13" />
+                          </button>
+                          <button
+                            type="button"
+                            class="tree-item-main collection-item-main"
+                            @click.stop="openSettingCollection(collection)"
+                          >
+                            <SvgIcon class="collection-icon" name="folder" :size="15" />
+                            <span class="collection-name">{{ collection.name }}</span>
+                          </button>
                         </div>
                         <div v-if="collection.expanded" class="tree-children">
                           <div
@@ -1343,7 +1349,7 @@
               <div class="form-group required" v-if="newSetting.settingType === 'setting'">
                 <label class="form-label">* 关联设定集</label>
                 <select v-model="newSetting.parentCollection" class="form-select">
-                  <option value="">选择关联设定集</option>
+                    <option value="">自动归入当前分类通用设定集</option>
                   <option v-for="collection in settingCollections" :key="collection.id" :value="collection.id">
                     {{ collection.name }}
                   </option>
@@ -1383,85 +1389,216 @@
       </div>
       
       <!-- 设定详情对话框 -->
-      <div v-if="showSettingDetail" class="dialog">
-        <div class="dialog-content setting-detail-dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">{{ currentSetting.name }} - 详情</h2>
+      <div v-if="showSettingDetail && currentSetting" class="dialog">
+        <div class="dialog-content setting-detail-dialog setting-detail-workbench">
+          <div class="dialog-header setting-detail-topbar">
+            <div>
+              <span class="detail-eyebrow">SETTING WORKBENCH</span>
+              <h2 class="dialog-title">{{ currentSetting.name }} - 详情编辑</h2>
+            </div>
             <button class="close-btn" @click="closeSettingDetail" title="关闭"><SvgIcon name="close" :size="16" /></button>
           </div>
           
-          <div class="setting-detail-content">
-            <div class="detail-header">
-              <div class="detail-info">
-                <h3 class="detail-title">{{ currentSetting.name }}</h3>
-                <div class="detail-meta">
-                  <span :class="['setting-type-tag', currentSetting.settingType]">
-                    {{ currentSetting.settingType === 'setting' ? '设定' : '设定集' }}
-                  </span>
-                  <span v-if="currentSetting.aliases && currentSetting.aliases.length > 0" class="aliases">
-                    别名：{{ currentSetting.aliases.join(', ') }}
-                  </span>
+          <div class="setting-detail-content setting-detail-editor">
+            <aside class="setting-detail-profile">
+              <div class="detail-profile-card">
+                <div class="detail-avatar">{{ currentSettingInitial }}</div>
+                <div class="detail-info">
+                  <input
+                    v-model="currentSetting.name"
+                    class="detail-title-input"
+                    placeholder="设定名称"
+                  >
+                  <textarea
+                    v-model="currentSetting.description"
+                    class="detail-description-input"
+                    placeholder="卡片摘要 / 一句话简介"
+                    rows="6"
+                  ></textarea>
                 </div>
               </div>
-            </div>
-            
-            <div class="detail-body">
-              <div v-if="currentSettingStructuredSections.length > 0" class="setting-structured-grid">
-                <section
-                  v-for="section in currentSettingStructuredSections"
-                  :key="section.key"
-                  class="setting-structured-section"
-                  :class="{ 'is-wide': section.wide }"
-                >
-                  <div class="setting-structured-header">
-                    <h4 class="setting-structured-title">{{ section.title }}</h4>
-                    <span v-if="section.kind !== 'text'" class="setting-structured-count">{{ section.items.length }}</span>
-                  </div>
 
-                  <div v-if="section.kind === 'text'" class="setting-structured-text">{{ section.content }}</div>
-
-                  <div v-else-if="section.kind === 'facts'" class="setting-facts-grid">
-                    <div v-for="item in section.items" :key="`${section.key}-${item.label}`" class="setting-fact-item">
-                      <span class="setting-fact-label">{{ item.label }}</span>
-                      <span class="setting-fact-value">{{ item.value }}</span>
-                    </div>
-                  </div>
-
-                  <div v-else class="setting-card-list">
-                    <article v-for="item in section.items" :key="item.id || `${section.key}-${item.title}`" class="setting-structured-card">
-                      <div class="setting-card-header">
-                        <div>
-                          <h5 class="setting-card-title">{{ item.title }}</h5>
-                          <div v-if="item.subtitle" class="setting-card-subtitle">{{ item.subtitle }}</div>
-                        </div>
-                      </div>
-
-                      <p v-if="item.description" class="setting-card-description">{{ item.description }}</p>
-
-                      <div v-if="item.fields && item.fields.length > 0" class="setting-card-fields">
-                        <div v-for="field in item.fields" :key="`${item.id || item.title}-${field.label}`" class="setting-card-field">
-                          <span class="setting-card-field-label">{{ field.label }}</span>
-                          <span class="setting-card-field-value">{{ field.value }}</span>
-                        </div>
-                      </div>
-                    </article>
-                  </div>
-                </section>
+              <div class="detail-meta-grid">
+                <label class="detail-meta-field">
+                  <span>类型</span>
+                  <select v-model="currentSetting.settingType" class="form-select">
+                    <option value="setting">设定</option>
+                    <option value="collection">设定集</option>
+                  </select>
+                </label>
+                <label class="detail-meta-field">
+                  <span>分类</span>
+                  <select v-model="currentSetting.category" class="form-select" @change="assignCurrentSettingDefaultCollection">
+                    <option v-for="category in settingCategories" :key="category.id" :value="category.id">
+                      {{ category.name }}
+                    </option>
+                  </select>
+                </label>
+                <label class="detail-meta-field detail-meta-field-wide">
+                  <span>所属设定集</span>
+                  <select v-model="currentSetting.collectionId" class="form-select">
+                    <option value="">自动归入当前分类通用设定集</option>
+                    <option
+                      v-for="collection in settingCollections"
+                      :key="collection.id"
+                      :value="collection.id"
+                      :disabled="collection.id === currentSetting.id"
+                    >
+                      {{ collection.name }}
+                    </option>
+                  </select>
+                </label>
               </div>
 
-              <div class="form-group">
-                <label class="form-label">{{ currentSettingDetailLabel }}</label>
-                <p v-if="currentSettingStructuredSections.length > 0" class="setting-detail-hint">
-                  上方分栏展示的是实体结构化内容；这里可补充额外说明、背景设定或人工修订文本。
+              <div class="detail-alias-editor">
+                <div class="detail-panel-heading">
+                  <strong>别名</strong>
+                  <span>{{ currentSetting.aliases?.length || 0 }}</span>
+                </div>
+                <div class="alias-chips editable-aliases">
+                  <span v-for="(alias, index) in currentSetting.aliases" :key="`${alias}-${index}`" class="alias-chip">
+                    {{ alias }}
+                    <button type="button" @click="removeCurrentSettingAlias(index)">×</button>
+                  </span>
+                  <span v-if="!currentSetting.aliases || currentSetting.aliases.length === 0" class="empty-inline-hint">暂无别名</span>
+                </div>
+                <div class="alias-input-row">
+                  <input
+                    v-model="currentSettingNewAlias"
+                    class="form-input"
+                    placeholder="新增别名"
+                    @keyup.enter="addCurrentSettingAlias"
+                  >
+                  <button type="button" class="btn btn-secondary" @click="addCurrentSettingAlias">添加</button>
+                </div>
+              </div>
+
+              <div v-if="currentSettingLinkedEntity" class="linked-entity-panel">
+                <div class="detail-panel-heading">
+                  <strong>关联实体</strong>
+                  <span>{{ currentSettingLinkedEntity.type || '未分类' }}</span>
+                </div>
+                <p>{{ currentSettingLinkedEntity.name }}</p>
+                <button type="button" class="btn btn-secondary" @click="refreshCurrentSettingFromEntity">
+                  从实体同步结构化内容
+                </button>
+              </div>
+            </aside>
+            
+            <main class="setting-detail-main">
+              <section class="detail-editor-section is-wide">
+                <div class="detail-panel-heading">
+                  <strong>核心简介</strong>
+                  <span>INTRO</span>
+                </div>
+                <textarea
+                  v-model="currentSetting.structuredDetail.intro"
+                  class="form-textarea structured-intro-textarea"
+                  placeholder="概括这个设定的本质、背景、用途或叙事定位..."
+                  rows="8"
+                ></textarea>
+              </section>
+
+              <section class="detail-editor-section">
+                <div class="detail-panel-heading">
+                  <strong>关键事实</strong>
+                  <button type="button" class="inline-add-btn" @click="addSettingFact">+ 字段</button>
+                </div>
+                <div class="structured-field-list">
+                  <div
+                    v-for="(field, index) in currentSetting.structuredDetail.facts"
+                    :key="field.id"
+                    class="structured-field-row"
+                  >
+                    <input v-model="field.label" class="form-input" placeholder="字段名">
+                    <input v-model="field.value" class="form-input" placeholder="字段内容">
+                    <button type="button" class="icon-remove-btn" @click="removeSettingFact(index)">×</button>
+                  </div>
+                  <div v-if="!currentSetting.structuredDetail.facts.length" class="empty-structured-state">
+                    暂无关键事实，可添加如身份、阵营、能力、地点等字段。
+                  </div>
+                </div>
+              </section>
+
+              <section class="detail-editor-section">
+                <div class="detail-panel-heading">
+                  <strong>关系网络</strong>
+                  <button type="button" class="inline-add-btn" @click="addSettingRelationship">+ 关系</button>
+                </div>
+                <div class="structured-card-editor-list">
+                  <article
+                    v-for="(relationship, index) in currentSetting.structuredDetail.relationships"
+                    :key="relationship.id"
+                    class="structured-card-editor"
+                  >
+                    <div class="structured-card-editor-header">
+                      <input v-model="relationship.target" class="form-input" placeholder="关联对象">
+                      <input v-model="relationship.type" class="form-input" placeholder="关系类型">
+                      <button type="button" class="icon-remove-btn" @click="removeSettingRelationship(index)">×</button>
+                    </div>
+                    <textarea v-model="relationship.description" class="form-textarea structured-description-textarea" placeholder="关系描述" rows="5"></textarea>
+                    <div class="structured-card-editor-grid">
+                      <input v-model="relationship.time_period" class="form-input" placeholder="时期 / 时间段">
+                      <input v-model="relationship.source_event" class="form-input" placeholder="来源事件">
+                    </div>
+                  </article>
+                  <div v-if="!currentSetting.structuredDetail.relationships.length" class="empty-structured-state">
+                    暂无关系记录，可添加关联人物、组织、地点或事件。
+                  </div>
+                </div>
+              </section>
+
+              <section class="detail-editor-section is-wide">
+                <div class="detail-panel-heading">
+                  <strong>阶段 / 演变</strong>
+                  <button type="button" class="inline-add-btn" @click="addSettingStage">+ 阶段</button>
+                </div>
+                <div class="structured-card-editor-list">
+                  <article
+                    v-for="(stage, stageIndex) in currentSetting.structuredDetail.stages"
+                    :key="stage.id"
+                    class="structured-card-editor stage-editor-card"
+                  >
+                    <div class="structured-card-editor-header">
+                      <input v-model="stage.name" class="form-input" placeholder="阶段名称">
+                      <input v-model="stage.era" class="form-input" placeholder="时期">
+                      <button type="button" class="icon-remove-btn" @click="removeSettingStage(stageIndex)">×</button>
+                    </div>
+                    <textarea v-model="stage.description" class="form-textarea structured-description-textarea" placeholder="阶段描述" rows="5"></textarea>
+                    <div class="detail-panel-heading compact-heading">
+                      <strong>阶段字段</strong>
+                      <button type="button" class="inline-add-btn" @click="addSettingStageField(stageIndex)">+ 字段</button>
+                    </div>
+                    <div class="structured-field-list compact-field-list">
+                      <div v-for="(field, fieldIndex) in stage.fields" :key="field.id" class="structured-field-row">
+                        <input v-model="field.label" class="form-input" placeholder="字段名">
+                        <input v-model="field.value" class="form-input" placeholder="字段内容">
+                        <button type="button" class="icon-remove-btn" @click="removeSettingStageField(stageIndex, fieldIndex)">×</button>
+                      </div>
+                    </div>
+                  </article>
+                  <div v-if="!currentSetting.structuredDetail.stages.length" class="empty-structured-state">
+                    暂无阶段记录，可添加成长阶段、历史时期或版本演变。
+                  </div>
+                </div>
+              </section>
+
+              <section class="detail-editor-section is-wide">
+                <div class="detail-panel-heading">
+                  <strong>{{ currentSettingDetailLabel }}</strong>
+                  <span>FREEFORM</span>
+                </div>
+                <p class="setting-detail-hint">
+                  结构化内容会用于详情分栏与后续保存；这里保留自由文本，适合补充背景设定、人工修订和未归类说明。
                 </p>
                 <textarea 
                   v-model="currentSetting.detailContent" 
                   class="form-textarea detail-textarea" 
                   placeholder="输入详细内容..."
-                  rows="10"
+                  rows="12"
                 ></textarea>
-              </div>
-            </div>
+              </section>
+            </main>
           </div>
           
           <div class="dialog-footer">
@@ -2492,7 +2629,137 @@ const normalizeAliases = (aliases) => {
   return []
 }
 
+const createSettingDetailField = (label = '', value = '', index = 0) => ({
+  id: createLocalId('setting_field', index),
+  label: String(label || '').trim(),
+  value: String(value || '').trim(),
+})
+
+const normalizeSettingDetailFields = (fields = []) => {
+  if (!fields) {
+    return []
+  }
+
+  if (Array.isArray(fields)) {
+    return fields
+      .map((field, index) => {
+        if (field && typeof field === 'object') {
+          return {
+            id: field.id || createLocalId('setting_field', index),
+            label: String(field.label || field.key || field.name || '').trim(),
+            value: formatStructuredText(field.value ?? field.content ?? field.description ?? '', { inline: true }),
+          }
+        }
+        const text = String(field || '').trim()
+        return text ? createSettingDetailField(`字段 ${index + 1}`, text, index) : null
+      })
+      .filter(field => field && (field.label || field.value))
+  }
+
+  if (fields && typeof fields === 'object') {
+    return Object.entries(fields)
+      .filter(([, value]) => hasStructuredDisplayValue(value))
+      .map(([label, value], index) => createSettingDetailField(label, formatStructuredText(value, { inline: true }), index))
+  }
+
+  return []
+}
+
+const createEmptySettingStructuredDetail = (intro = '') => ({
+  intro: String(intro || '').trim(),
+  facts: [],
+  relationships: [],
+  stages: [],
+})
+
+const normalizeSettingStructuredDetail = (detail = {}, fallbackIntro = '') => {
+  const source = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {}
+  return {
+    intro: String(source.intro || source.summary || fallbackIntro || '').trim(),
+    facts: normalizeSettingDetailFields(source.facts || source.overview || source.attributes),
+    relationships: Array.isArray(source.relationships)
+      ? source.relationships.map((relationship, index) => ({
+          id: relationship?.id || createLocalId('setting_relation', index),
+          target: String(relationship?.target || relationship?.name || '').trim(),
+          type: String(relationship?.type || relationship?.relation || '关联').trim() || '关联',
+          description: String(relationship?.description || relationship?.detail || '').trim(),
+          time_period: String(relationship?.time_period || relationship?.period || '').trim(),
+          source_event: String(relationship?.source_event || relationship?.event || '').trim(),
+        })).filter(item => item.target || item.description)
+      : [],
+    stages: Array.isArray(source.stages)
+      ? source.stages.map((stage, index) => ({
+          id: stage?.id || createLocalId('setting_stage', index),
+          name: String(stage?.name || stage?.title || `阶段 ${index + 1}`).trim(),
+          era: String(stage?.era || stage?.time || '').trim(),
+          description: String(stage?.description || stage?.detail || '').trim(),
+          fields: normalizeSettingDetailFields(stage?.fields || stage?.attributes),
+        })).filter(item => item.name || item.description || item.fields.length > 0)
+      : [],
+  }
+}
+
+const createSettingStructuredDetailFromEntity = (entity, fallbackIntro = '') => {
+  if (!entity || typeof entity !== 'object') {
+    return createEmptySettingStructuredDetail(fallbackIntro)
+  }
+
+  const attributes = entity.attributes || {}
+  const intro = formatStructuredText(attributes['简介']) || fallbackIntro
+  const aliases = normalizeAliases(entity.aliases)
+  const facts = [
+    createSettingDetailField('实体类型', String(entity.type || '未分类').trim() || '未分类'),
+    ...(aliases.length ? [createSettingDetailField('别名', aliases.join('、'))] : []),
+    ...buildStructuredFieldItems(attributes, ['简介', '实力变化', '性格变化', '关键转折'])
+      .map((field, index) => createSettingDetailField(field.label, field.value, index + 2)),
+  ]
+
+  return {
+    intro,
+    facts,
+    relationships: (Array.isArray(entity.relationships) ? entity.relationships : [])
+      .map((relationship, index) => ({
+        id: relationship.id || createLocalId('setting_relation', index),
+        target: String(relationship.target || '').trim(),
+        type: String(relationship.type || '关联').trim() || '关联',
+        description: String(relationship.description || '').trim(),
+        time_period: String(relationship.time_period || '').trim(),
+        source_event: String(relationship.source_event || '').trim(),
+      }))
+      .filter(item => item.target || item.description),
+    stages: (Array.isArray(entity.stages) ? entity.stages : [])
+      .map((stage, index) => ({
+        id: stage.id || createLocalId('setting_stage', index),
+        name: String(stage.name || `阶段 ${index + 1}`).trim(),
+        era: String(stage.era || '').trim(),
+        description: String(stage.description || '').trim(),
+        fields: buildStructuredFieldItems(stage.attributes || {}).map((field, fieldIndex) => createSettingDetailField(field.label, field.value, fieldIndex)),
+      }))
+      .filter(item => item.name || item.description || item.fields.length > 0),
+  }
+}
+
 const getCategoryMeta = (categoryId) => SETTING_CATEGORY_OPTIONS.find(category => category.id === categoryId) || SETTING_CATEGORY_OPTIONS[SETTING_CATEGORY_OPTIONS.length - 1]
+
+const getDefaultCollectionIdForCategory = (categoryId) => `default_collection_${normalizeSettingCategory(categoryId)}`
+
+const createDefaultCollectionForCategory = (categoryId) => {
+  const category = normalizeSettingCategory(categoryId)
+  const categoryMeta = getCategoryMeta(category)
+  return {
+    id: getDefaultCollectionIdForCategory(category),
+    name: `${categoryMeta.name}设定集`,
+    settingType: 'collection',
+    category,
+    expanded: true,
+    description: `${categoryMeta.name}相关通用设定`,
+    aliases: [],
+    detailContent: `${categoryMeta.name}相关通用设定`,
+    structuredDetail: createEmptySettingStructuredDetail(`${categoryMeta.name}相关通用设定`),
+    autoGenerated: true,
+    sourceType: 'default_collection',
+  }
+}
 
 const FRAGMENT_ENTITY_NAMES = new Set([
   '的', '地', '得', '了', '着', '过', '和', '与', '及', '或', '在', '从', '向', '把', '被', '对', '为', '以', '于',
@@ -2531,6 +2798,7 @@ const normalizeSettingsForUi = (settings = []) => {
   const normalizedCollections = []
   const normalizedItems = []
   const collectionsByCategory = new Map()
+  const collectionIds = new Set()
 
   settings.forEach((setting, index) => {
     if (!setting || typeof setting !== 'object') {
@@ -2549,6 +2817,7 @@ const normalizeSettingsForUi = (settings = []) => {
       description: String(setting.description || setting.detailContent || '').trim(),
       aliases: normalizeAliases(setting.aliases),
       detailContent: String(setting.detailContent || setting.description || '').trim(),
+      structuredDetail: normalizeSettingStructuredDetail(setting.structuredDetail, String(setting.detailContent || setting.description || '').trim()),
       linkedEntityId: String(setting.linkedEntityId || setting.entityId || '').trim(),
       sourceType: String(setting.sourceType || '').trim(),
       autoGenerated: Boolean(setting.autoGenerated),
@@ -2566,31 +2835,26 @@ const normalizeSettingsForUi = (settings = []) => {
       normalizedSetting.expanded = setting.expanded !== false
       normalizedCollections.push(normalizedSetting)
       collectionsByCategory.set(category, normalizedSetting)
+      collectionIds.add(String(normalizedSetting.id || '').trim())
     } else {
       normalizedItems.push(normalizedSetting)
     }
   })
 
-  normalizedItems.forEach((setting, index) => {
-    if (!setting.collectionId) {
-      let collection = collectionsByCategory.get(setting.category)
-      if (!collection) {
-        const categoryMeta = getCategoryMeta(setting.category)
-        collection = {
-          id: createLocalId(`collection_${setting.category}`, index),
-          name: `${categoryMeta.name}设定集`,
-          settingType: 'collection',
-          category: setting.category,
-          expanded: true,
-          description: `${categoryMeta.name}相关设定`,
-          aliases: [],
-          detailContent: `${categoryMeta.name}相关设定`,
-        }
-        collectionsByCategory.set(setting.category, collection)
-        normalizedCollections.push(collection)
-      }
-      setting.collectionId = collection.id
+  normalizedItems.forEach((setting) => {
+    const currentCollectionId = String(setting.collectionId || '').trim()
+    if (currentCollectionId && collectionIds.has(currentCollectionId)) {
+      return
     }
+
+    let collection = collectionsByCategory.get(setting.category)
+    if (!collection) {
+      collection = createDefaultCollectionForCategory(setting.category)
+      collectionsByCategory.set(setting.category, collection)
+      normalizedCollections.push(collection)
+      collectionIds.add(String(collection.id || '').trim())
+    }
+    setting.collectionId = collection.id
   })
 
   return [...normalizedCollections, ...normalizedItems]
@@ -3012,6 +3276,7 @@ const entitiesToSettingsItems = (entities) => {
         description: summary.description || entityType,
         aliases: normalizeAliases(entity.aliases),
         detailContent: summary.detailContent || summary.description || entityType,
+        structuredDetail: createSettingStructuredDetailFromEntity(entity, summary.description || summary.detailContent || ''),
         linkedEntityId: entity.id,
         sourceType: 'entity',
         autoGenerated: true,
@@ -3071,6 +3336,7 @@ const normalizeExtractedSettings = (settings) => {
         description: String(value).trim(),
         aliases: [],
         detailContent: String(value).trim(),
+        structuredDetail: createEmptySettingStructuredDetail(String(value).trim()),
       }))
     : []
 
@@ -3105,6 +3371,7 @@ const mergeSettingsByKey = (currentSettings = [], incomingSettings = []) => {
         aliases: normalizeAliases(setting.aliases),
         description: String(setting.description || setting.detailContent || '').trim(),
         detailContent: String(setting.detailContent || setting.description || '').trim(),
+        structuredDetail: normalizeSettingStructuredDetail(setting.structuredDetail, String(setting.detailContent || setting.description || '').trim()),
         linkedEntityId,
         sourceType: String(setting.sourceType || '').trim(),
         autoGenerated: Boolean(setting.autoGenerated),
@@ -3122,6 +3389,7 @@ const mergeSettingsByKey = (currentSettings = [], incomingSettings = []) => {
       aliases: Array.from(new Set([...normalizeAliases(existing.aliases), ...normalizeAliases(setting.aliases)])),
       description: String(setting.description || existing.description || setting.detailContent || '').trim(),
       detailContent: String(setting.detailContent || existing.detailContent || setting.description || existing.description || '').trim(),
+      structuredDetail: normalizeSettingStructuredDetail(setting.structuredDetail || existing.structuredDetail, String(setting.detailContent || existing.detailContent || setting.description || existing.description || '').trim()),
       linkedEntityId: linkedEntityId || existing.linkedEntityId || '',
       sourceType: String(setting.sourceType || existing.sourceType || '').trim(),
       autoGenerated: Boolean(setting.autoGenerated || existing.autoGenerated),
@@ -3210,6 +3478,11 @@ export default {
       isSavingLlmConfig: false,
       isTestingLlmConfig: false,
       saveStatus: '',
+      autoSaveTimer: null,
+      autoSaveSignature: '',
+      autoSaveLastSavedAt: 0,
+      isApplyingStoredWorld: false,
+      pendingAutoSave: false,
       extractError: '',
       showLlmConfigDialog: false,
       llmConfigFeedback: '',
@@ -3308,6 +3581,7 @@ export default {
         newAlias: ''
       },
       currentSetting: null,
+      currentSettingNewAlias: '',
       activeSidebarSettingId: '',
       showSettingDetail: false,
       showSettingSelector: false,
@@ -4018,6 +4292,10 @@ export default {
     currentSettingDetailLabel() {
       return this.currentSettingLinkedEntity ? '设定补充说明' : '详细内容'
     },
+    currentSettingInitial() {
+      const name = String(this.currentSetting?.name || '').trim()
+      return name ? name.slice(0, 1).toUpperCase() : '设'
+    },
     hasRunnableProject() {
       return ['ontology_generated', 'graph_building', 'graph_completed'].includes(this.linkedProjectStatus)
     },
@@ -4206,11 +4484,35 @@ export default {
         this.openExtractScanPanel({ syncRoute: false })
       }
     },
+    world: {
+      deep: true,
+      handler() { this.scheduleAutoSave() },
+    },
+    mapData: {
+      deep: true,
+      handler() { this.scheduleAutoSave() },
+    },
+    settings: {
+      deep: true,
+      handler() { this.scheduleAutoSave() },
+    },
+    calendars: {
+      deep: true,
+      handler() { this.scheduleAutoSave() },
+    },
     entities: {
-      handler() { this._chunkBuildEntityItems() },
+      deep: true,
+      handler() {
+        this._chunkBuildEntityItems()
+        this.scheduleAutoSave()
+      },
     },
     events: {
-      handler() { this._chunkBuildEventItems() },
+      deep: true,
+      handler() {
+        this._chunkBuildEventItems()
+        this.scheduleAutoSave()
+      },
     },
     activeTab(newTab) {
       if (newTab === 'timeline') {
@@ -4431,7 +4733,42 @@ export default {
         ...this.mapData,
         structuredMaps: JSON.parse(JSON.stringify(maps || []))
       }
-      this.saveStatus = '地图已更新，记得保存世界观'
+    },
+    getWorldPayloadSignature(payload = this.buildWorldPayload()) {
+      try {
+        return JSON.stringify(payload)
+      } catch (error) {
+        console.warn('生成自动保存签名失败:', error)
+        return `${Date.now()}`
+      }
+    },
+    markWorldAsSaved(payload = this.buildWorldPayload()) {
+      this.autoSaveSignature = this.getWorldPayloadSignature(payload)
+      this.autoSaveLastSavedAt = Date.now()
+    },
+    scheduleAutoSave(delay = 5000) {
+      if (this.isApplyingStoredWorld) return
+      if (this.autoSaveTimer) {
+        clearTimeout(this.autoSaveTimer)
+      }
+      const minInterval = 15000
+      const elapsed = Date.now() - (this.autoSaveLastSavedAt || 0)
+      const waitTime = Math.max(delay, minInterval - elapsed, 0)
+      this.saveStatus = this.worldId ? '有未保存修改，将稍后自动保存' : '有未保存修改，将自动创建世界观'
+      this.autoSaveTimer = window.setTimeout(() => {
+        this.autoSaveTimer = null
+        this.saveWorld({ silent: true, skipReload: true })
+      }, waitTime)
+    },
+    async flushAutoSave() {
+      if (this.autoSaveTimer) {
+        clearTimeout(this.autoSaveTimer)
+        this.autoSaveTimer = null
+      }
+      if (this.isApplyingStoredWorld) {
+        await this.$nextTick()
+      }
+      return await this.saveWorld({ silent: true, skipReload: true })
     },
     buildWorldPayload() {
       this.syncEntitySettingLinks()
@@ -4706,34 +5043,42 @@ export default {
         return
       }
 
-      this.worldId = world.id || ''
-      this.world = {
-        name: world.name || '',
-        description: world.description || '',
-        era: world.era || '',
-        anchor_time: world.anchor_time || '',
-        writing_style: world.writing_style || '',
-        reference_text: world.reference_text || ''
-      }
-      const normalizedEntities = normalizeEntitiesForUi(Array.isArray(world.entities) ? world.entities : [])
-      this.entities = normalizedEntities
-      this.events = Array.isArray(world.events) ? world.events : []
-
-      const normalizedSettings = normalizeExtractedSettings(world.settings || {})
-      // 从实体创建设定项，合并到 settings 中
-      let mergedSettings = normalizedSettings.items
-      if (normalizedEntities.length > 0) {
-        const entitySettings = entitiesToSettingsItems(normalizedEntities)
-        if (entitySettings.length > 0) {
-          mergedSettings = mergeSettingsByKey(mergedSettings, entitySettings)
+      this.isApplyingStoredWorld = true
+      try {
+        this.worldId = world.id || ''
+        this.world = {
+          name: world.name || '',
+          description: world.description || '',
+          era: world.era || '',
+          anchor_time: world.anchor_time || '',
+          writing_style: world.writing_style || '',
+          reference_text: world.reference_text || ''
         }
+        const normalizedEntities = normalizeEntitiesForUi(Array.isArray(world.entities) ? world.entities : [])
+        this.entities = normalizedEntities
+        this.events = Array.isArray(world.events) ? world.events : []
+
+        const normalizedSettings = normalizeExtractedSettings(world.settings || {})
+        // 从实体创建设定项，合并到 settings 中
+        let mergedSettings = normalizedSettings.items
+        if (normalizedEntities.length > 0) {
+          const entitySettings = entitiesToSettingsItems(normalizedEntities)
+          if (entitySettings.length > 0) {
+            mergedSettings = mergeSettingsByKey(mergedSettings, entitySettings)
+          }
+        }
+        const synced = syncEntitiesWithSettings(normalizedEntities, mergedSettings)
+        this.entities = synced.entities
+        this.settings = synced.settings
+        this.mapData = { ...createDefaultMapData(), ...normalizedSettings.mapData }
+        this.calendars = normalizedSettings.calendars
+        this.restoreSettingsViewState(settingsViewState)
+        this.markWorldAsSaved()
+      } finally {
+        this.$nextTick(() => {
+          this.isApplyingStoredWorld = false
+        })
       }
-      const synced = syncEntitiesWithSettings(normalizedEntities, mergedSettings)
-      this.entities = synced.entities
-      this.settings = synced.settings
-      this.mapData = { ...createDefaultMapData(), ...normalizedSettings.mapData }
-      this.calendars = normalizedSettings.calendars
-      this.restoreSettingsViewState(settingsViewState)
     },
     syncRouteWorldId() {
       if (!this.worldId || !this.$router || !this.$route) {
@@ -4881,16 +5226,7 @@ export default {
       // 轻量确保 worldId 存在 — 仅 create + update，不加载 project/evolution
       if (this.worldId) return true
       try {
-        const payload = this.buildWorldPayload()
-        const createResponse = await worldApi.createWorld({
-          ...this.world,
-          settings: payload.settings
-        })
-        this.worldId = createResponse.world_id
-        this.syncRouteWorldId()
-        await worldApi.updateWorld(this.worldId, payload)
-        this.saveStatus = '已保存'
-        return true
+        return await this.saveWorld({ silent: true, skipReload: true })
       } catch (e) {
         console.warn('ensureWorldId 失败，RAG 索引将被跳过:', e)
         return false
@@ -4898,11 +5234,25 @@ export default {
     },
 
     async saveWorld(options = {}) {
-      const { silent = false, successMessage } = options
+      const { silent = false, successMessage, skipReload = false } = options
+      if (this.isSaving) {
+        this.pendingAutoSave = true
+        return false
+      }
+
+      const payload = this.buildWorldPayload()
+      const signature = this.getWorldPayloadSignature(payload)
+      if (signature === this.autoSaveSignature) {
+        if (!silent) {
+          this.saveStatus = successMessage || '已保存'
+        }
+        return true
+      }
+
       this.isSaving = true
+      this.saveStatus = this.worldId ? '自动保存中...' : '正在自动创建世界观...'
 
       try {
-        const payload = this.buildWorldPayload()
         if (!this.worldId) {
           const createResponse = await worldApi.createWorld({
             ...this.world,
@@ -4914,23 +5264,34 @@ export default {
 
         const settingsViewState = this.captureSettingsViewState()
         const response = await worldApi.updateWorld(this.worldId, payload)
-        this.applyStoredWorld(response.world, { settingsViewState })
+        if (!skipReload) {
+          this.applyStoredWorld(response.world, { settingsViewState })
+        }
+        this.markWorldAsSaved(skipReload ? payload : this.buildWorldPayload())
         this.syncRouteWorldId()
-        await this.loadLinkedProject(this.worldId)
-        await this.loadEvolutionHistory(this.worldId)
-        this.saveStatus = successMessage || '已保存'
+        if (!skipReload) {
+          await this.loadLinkedProject(this.worldId)
+          await this.loadEvolutionHistory(this.worldId)
+        }
+        this.saveStatus = successMessage || '已自动保存'
 
         if (!silent) {
-          alert(successMessage || '世界观保存成功！')
+          alert(successMessage || '世界观已自动保存！')
         }
+        return true
       } catch (error) {
         console.error('保存世界观失败:', error)
-        this.saveStatus = '保存失败'
+        this.saveStatus = '自动保存失败，将在下次修改后重试'
         if (!silent) {
           alert('保存失败，请重试')
         }
+        return false
       } finally {
         this.isSaving = false
+        if (this.pendingAutoSave) {
+          this.pendingAutoSave = false
+          this.scheduleAutoSave()
+        }
       }
     },
     async launchProjectFromWorld() {
@@ -4940,10 +5301,12 @@ export default {
 
       try {
         if (!this.worldId) {
-          await this.saveWorld({ silent: true, successMessage: '世界观已保存' })
+          await this.flushAutoSave()
+        } else if (this.autoSaveTimer) {
+          await this.flushAutoSave()
         }
         if (!this.worldId) {
-          throw new Error('请先保存当前世界观')
+          throw new Error('自动创建世界观失败，请稍后重试')
         }
 
         this.saveStatus = '推演已就绪'
@@ -5466,7 +5829,7 @@ export default {
         this.extractedData = null
         this.extractText = ''
         this.selectedFiles = []
-        await this.saveWorld({ silent: false, successMessage: 'AI 提取结果已保存到世界观！' })
+        await this.saveWorld({ silent: true, skipReload: true, successMessage: 'AI 提取结果已自动保存到世界观' })
       }
     },
     addAttribute() {
@@ -5537,7 +5900,7 @@ export default {
 
       this.removeEntityNamesFromEvents([entityName, linkedSettingName])
       this.syncEntitySettingLinks()
-      this.saveStatus = linkedSetting ? '已删除实体及对应设定，记得保存世界观' : '已删除实体，记得保存世界观'
+      this.saveStatus = linkedSetting ? '已删除实体及对应设定，正在自动保存...' : '已删除实体，正在自动保存...'
     },
     findEntityForSetting(setting) {
       if (!setting || typeof setting !== 'object') {
@@ -5625,18 +5988,26 @@ export default {
       this.newSetting.aliases.splice(index, 1)
     },
     saveNewSetting() {
+      const category = normalizeSettingCategory(this.newSetting.category || this.activeCategory)
       const setting = {
         id: Date.now(),
         name: this.newSetting.name,
         settingType: this.newSetting.settingType,
-        category: this.newSetting.category,
-        collectionId: this.newSetting.parentCollection,
+        category,
+        collectionId: this.newSetting.settingType === 'setting'
+          ? (this.newSetting.parentCollection || getDefaultCollectionIdForCategory(category))
+          : this.newSetting.parentCollection,
         description: this.newSetting.description,
         aliases: [...this.newSetting.aliases],
         showInList: this.newSetting.showInList,
-        detailContent: ''
+        detailContent: '',
+        structuredDetail: createEmptySettingStructuredDetail(this.newSetting.description)
       }
-      this.settings.push(setting)
+      this.settings = normalizeSettingsForUi([...this.settings, setting])
+      if (setting.settingType === 'setting') {
+        const createdSetting = this.settings.find(item => item.name === setting.name && item.settingType === 'setting')
+        this.openSidebarSetting(createdSetting || setting)
+      }
       this.syncEntitySettingLinks()
       this.showNewSettingDialog = false
       alert('设定创建成功！')
@@ -5646,14 +6017,15 @@ export default {
     toggleCategory(categoryId) {
       const category = this.settingCategories.find(cat => cat.id === categoryId)
       if (category) {
-        const isActiveCategory = this.activeCategory === categoryId
-        this.activeCategory = categoryId
-        this.activeCollectionId = ''
-        this.activeCollectionSnapshot = null
-        if (this.currentSetting && this.currentSetting.category !== categoryId) {
-          this.activeSidebarSettingId = ''
-        }
-        category.expanded = isActiveCategory ? !category.expanded : true
+        category.expanded = !category.expanded
+      }
+    },
+    selectCategory(categoryId) {
+      this.activeCategory = categoryId
+      this.activeCollectionId = ''
+      this.activeCollectionSnapshot = null
+      if (this.currentSetting && this.currentSetting.category !== categoryId) {
+        this.activeSidebarSettingId = ''
       }
     },
     toggleCollectionExpand(collectionId) {
@@ -5673,7 +6045,6 @@ export default {
         category.expanded = true
       }
 
-      collection.expanded = true
       this.activeCollectionId = collection.id
       this.activeCollectionSnapshot = this.buildCollectionSnapshot(collection)
       if (this.currentSetting && this.currentSetting.collectionId !== collection.id) {
@@ -5714,7 +6085,24 @@ export default {
     // 查看设定详情
     viewSettingDetail(setting) {
       this.activeSidebarSettingId = setting?.id || ''
-      this.currentSetting = JSON.parse(JSON.stringify(setting))
+      const editingSetting = JSON.parse(JSON.stringify(setting || {}))
+      const linkedEntity = this.findEntityForSetting(editingSetting)
+      const existingStructuredDetail = normalizeSettingStructuredDetail(
+        editingSetting.structuredDetail,
+        editingSetting.description || editingSetting.detailContent
+      )
+
+      editingSetting.aliases = normalizeAliases(editingSetting.aliases)
+      editingSetting.category = normalizeSettingCategory(editingSetting.category)
+      editingSetting.collectionId = editingSetting.collectionId || editingSetting.parentCollection || getDefaultCollectionIdForCategory(editingSetting.category)
+      editingSetting.detailContent = String(editingSetting.detailContent || '').trim()
+      editingSetting.description = String(editingSetting.description || '').trim()
+      editingSetting.structuredDetail = linkedEntity && !editingSetting.structuredDetail
+        ? createSettingStructuredDetailFromEntity(linkedEntity, editingSetting.description || editingSetting.detailContent)
+        : existingStructuredDetail
+
+      this.currentSetting = editingSetting
+      this.currentSettingNewAlias = ''
       this.showSettingDetail = true
     },
     
@@ -5722,17 +6110,168 @@ export default {
     closeSettingDetail() {
       this.showSettingDetail = false
       this.currentSetting = null
+      this.currentSettingNewAlias = ''
+    },
+    addCurrentSettingAlias() {
+      const alias = String(this.currentSettingNewAlias || '').trim()
+      if (!alias || !this.currentSetting) {
+        return
+      }
+      if (!Array.isArray(this.currentSetting.aliases)) {
+        this.currentSetting.aliases = []
+      }
+      if (!this.currentSetting.aliases.includes(alias)) {
+        this.currentSetting.aliases.push(alias)
+      }
+      this.currentSettingNewAlias = ''
+    },
+    removeCurrentSettingAlias(index) {
+      if (!Array.isArray(this.currentSetting?.aliases)) {
+        return
+      }
+      this.currentSetting.aliases.splice(index, 1)
+    },
+    assignCurrentSettingDefaultCollection() {
+      if (!this.currentSetting || this.currentSetting.settingType !== 'setting') {
+        return
+      }
+      const category = normalizeSettingCategory(this.currentSetting.category)
+      this.currentSetting.category = category
+      this.currentSetting.collectionId = getDefaultCollectionIdForCategory(category)
+    },
+    ensureCurrentSettingStructuredDetail() {
+      if (!this.currentSetting) {
+        return null
+      }
+      this.currentSetting.structuredDetail = normalizeSettingStructuredDetail(
+        this.currentSetting.structuredDetail,
+        this.currentSetting.description || this.currentSetting.detailContent
+      )
+      return this.currentSetting.structuredDetail
+    },
+    addSettingFact() {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      if (!detail) return
+      detail.facts.push(createSettingDetailField('', '', detail.facts.length))
+    },
+    removeSettingFact(index) {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      if (!detail) return
+      detail.facts.splice(index, 1)
+    },
+    addSettingRelationship() {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      if (!detail) return
+      detail.relationships.push({
+        id: createLocalId('setting_relation', detail.relationships.length),
+        target: '',
+        type: '关联',
+        description: '',
+        time_period: '',
+        source_event: '',
+      })
+    },
+    removeSettingRelationship(index) {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      if (!detail) return
+      detail.relationships.splice(index, 1)
+    },
+    addSettingStage() {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      if (!detail) return
+      detail.stages.push({
+        id: createLocalId('setting_stage', detail.stages.length),
+        name: '',
+        era: '',
+        description: '',
+        fields: [],
+      })
+    },
+    removeSettingStage(index) {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      if (!detail) return
+      detail.stages.splice(index, 1)
+    },
+    addSettingStageField(stageIndex) {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      const stage = detail?.stages?.[stageIndex]
+      if (!stage) return
+      if (!Array.isArray(stage.fields)) {
+        stage.fields = []
+      }
+      stage.fields.push(createSettingDetailField('', '', stage.fields.length))
+    },
+    removeSettingStageField(stageIndex, fieldIndex) {
+      const detail = this.ensureCurrentSettingStructuredDetail()
+      const stage = detail?.stages?.[stageIndex]
+      if (!stage || !Array.isArray(stage.fields)) return
+      stage.fields.splice(fieldIndex, 1)
+    },
+    refreshCurrentSettingFromEntity() {
+      if (!this.currentSetting) return
+      const linkedEntity = this.findEntityForSetting(this.currentSetting)
+      if (!linkedEntity) return
+      this.currentSetting.structuredDetail = createSettingStructuredDetailFromEntity(
+        linkedEntity,
+        this.currentSetting.description || this.currentSetting.detailContent
+      )
+      const summary = buildEntitySettingSummary(linkedEntity)
+      if (!this.currentSetting.description) {
+        this.currentSetting.description = summary.description
+      }
+      if (!this.currentSetting.detailContent) {
+        this.currentSetting.detailContent = summary.detailContent
+      }
+    },
+    buildCurrentSettingDetailContent(setting) {
+      const detail = normalizeSettingStructuredDetail(setting.structuredDetail, setting.description || setting.detailContent)
+      const lines = []
+      if (detail.intro) lines.push(detail.intro)
+      if (detail.facts.length) {
+        lines.push(detail.facts.map(field => `${field.label || '字段'}：${field.value}`).join('\n'))
+      }
+      if (detail.relationships.length) {
+        lines.push(`关系网络：\n${detail.relationships.map(item => `- ${item.target || '未命名对象'}${item.type ? `（${item.type}）` : ''}${item.description ? `：${item.description}` : ''}`).join('\n')}`)
+      }
+      if (detail.stages.length) {
+        lines.push(`阶段 / 演变：\n${detail.stages.map(stage => {
+          const stageTitle = stage.era ? `[${stage.name || '未命名阶段'}｜${stage.era}]` : `[${stage.name || '未命名阶段'}]`
+          const fieldText = stage.fields.length ? `｜${stage.fields.map(field => `${field.label || '字段'}：${field.value}`).join('；')}` : ''
+          return `- ${stageTitle} ${stage.description || ''}${fieldText}`.trim()
+        }).join('\n')}`)
+      }
+      const freeform = String(setting.detailContent || '').trim()
+      if (freeform && !lines.includes(freeform)) {
+        lines.push(freeform)
+      }
+      return lines.filter(Boolean).join('\n\n')
     },
     
     // 保存设定详情
     saveSettingDetail() {
+      if (!this.currentSetting) {
+        return
+      }
       const index = this.settings.findIndex(setting => setting.id === this.currentSetting.id)
       if (index !== -1) {
-        this.settings[index] = JSON.parse(JSON.stringify(this.currentSetting))
+        const normalizedCurrentSetting = JSON.parse(JSON.stringify(this.currentSetting))
+        normalizedCurrentSetting.aliases = normalizeAliases(normalizedCurrentSetting.aliases)
+        normalizedCurrentSetting.category = normalizeSettingCategory(normalizedCurrentSetting.category)
+        if (normalizedCurrentSetting.settingType === 'setting') {
+          normalizedCurrentSetting.collectionId = normalizedCurrentSetting.collectionId || getDefaultCollectionIdForCategory(normalizedCurrentSetting.category)
+        }
+        normalizedCurrentSetting.structuredDetail = normalizeSettingStructuredDetail(
+          normalizedCurrentSetting.structuredDetail,
+          normalizedCurrentSetting.description || normalizedCurrentSetting.detailContent
+        )
+        normalizedCurrentSetting.detailContent = this.buildCurrentSettingDetailContent(normalizedCurrentSetting)
+        this.settings[index] = normalizedCurrentSetting
+        this.settings = normalizeSettingsForUi(this.settings)
       }
       this.syncEntitySettingLinks()
       this.showSettingDetail = false
       this.currentSetting = null
+      this.currentSettingNewAlias = ''
       alert('设定详情保存成功！')
     },
     deleteSetting(settingId) {
@@ -5765,7 +6304,7 @@ export default {
       }
 
       this.syncEntitySettingLinks()
-      this.saveStatus = linkedEntity ? '已删除设定及对应实体，记得保存世界观' : '已删除设定，记得保存世界观'
+      this.saveStatus = linkedEntity ? '已删除设定及对应实体，正在自动保存...' : '已删除设定，正在自动保存...'
     },
     deleteCurrentSetting() {
       if (!this.currentSetting?.id) {
@@ -6393,6 +6932,10 @@ export default {
   beforeUnmount() {
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     window.removeEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
+    if (this.autoSaveTimer) {
+      clearTimeout(this.autoSaveTimer)
+      this.autoSaveTimer = null
+    }
     if (this.extractPollTimer) {
       clearTimeout(this.extractPollTimer)
       this.extractPollTimer = null
@@ -6981,10 +7524,10 @@ export default {
   color: var(--wf-text-primary);
 }
 
-.category-item.active {
-  background: var(--wf-accent-muted);
+.category-item.expanded {
+  background: rgba(255, 255, 175, 0.06);
   color: var(--wf-accent);
-  border: 1px solid rgba(255, 255, 175, 0.14);
+  border: 1px solid rgba(255, 255, 175, 0.12);
   font-weight: 600;
 }
 
@@ -7027,12 +7570,53 @@ export default {
   background: rgba(255, 255, 255, 0.10);
 }
 
-.expand-icon {
-  width: 20px;
+.tree-expand-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
   height: 20px;
-  color: var(--wf-text-muted);
+  padding: 0;
+  margin: 0 2px 0 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
   z-index: 2;
-  flex: 0 0 20px;
+  flex: 0 0 14px;
+}
+
+.tree-expand-button:hover .expand-icon {
+  color: var(--wf-text-primary);
+}
+
+.tree-item-main {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  z-index: 2;
+  flex: 1 1 auto;
+}
+
+.expand-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--wf-text-muted);
+  flex: 0 0 14px;
+}
+
+.collection-item-main {
+  height: 100%;
+  justify-content: flex-start;
 }
 
 .category-icon, .collection-icon, .setting-icon {
@@ -7044,6 +7628,8 @@ export default {
 
 .item-name, .category-name, .collection-name, .setting-name {
   z-index: 2;
+  min-width: 0;
+  text-align: left;
 }
 
 .settings-content {
@@ -10089,6 +10675,360 @@ export default {
 .evolution-status-badge.is-created {
   background: rgba(250, 204, 21, 0.16);
   color: #fde68a;
+}
+
+.setting-detail-workbench {
+  width: min(1180px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 175, 0.16);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 175, 0.12), transparent 30%),
+    rgba(17, 17, 19, 0.97);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.55), var(--shadow-glow);
+}
+
+.setting-detail-topbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--wf-border);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.detail-eyebrow {
+  display: inline-flex;
+  margin-bottom: 4px;
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+}
+
+.setting-detail-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: var(--spacing-lg);
+  overflow: hidden;
+  padding: var(--spacing-lg);
+}
+
+.setting-detail-profile,
+.setting-detail-main {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.setting-detail-profile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.setting-detail-main {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: var(--spacing-md);
+}
+
+.detail-profile-card,
+.detail-meta-grid,
+.detail-alias-editor,
+.linked-entity-panel,
+.detail-editor-section {
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.detail-profile-card {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+}
+
+.detail-avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
+  border: 1px solid rgba(255, 255, 175, 0.22);
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.detail-title-input,
+.detail-description-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--wf-text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-family: inherit;
+}
+
+.detail-title-input {
+  font-size: 1.18rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.detail-description-input {
+  resize: vertical;
+  min-height: 148px;
+  line-height: 1.6;
+  color: var(--wf-text-secondary);
+}
+
+.detail-title-input:focus,
+.detail-description-input:focus {
+  outline: none;
+  border-color: var(--wf-accent);
+  box-shadow: 0 0 0 3px var(--wf-accent-muted);
+}
+
+.detail-meta-grid {
+  display: grid;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+}
+
+.detail-meta-field {
+  display: grid;
+  gap: 6px;
+  color: var(--wf-text-muted);
+  font-size: 0.8rem;
+}
+
+.detail-meta-field span {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.detail-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.detail-panel-heading strong {
+  color: var(--wf-text-primary);
+  font-size: 0.95rem;
+}
+
+.detail-panel-heading span {
+  color: var(--wf-accent);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+.detail-alias-editor,
+.linked-entity-panel,
+.detail-editor-section {
+  padding: var(--spacing-md);
+}
+
+.editable-aliases {
+  min-height: 34px;
+}
+
+.alias-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 175, 0.14);
+  background: rgba(255, 255, 175, 0.06);
+  color: var(--wf-accent);
+  font-size: 0.8rem;
+}
+
+.alias-chip button,
+.icon-remove-btn {
+  border: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--wf-text-secondary);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.alias-chip button {
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+}
+
+.alias-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.empty-inline-hint,
+.empty-structured-state {
+  color: var(--wf-text-muted);
+  font-size: 0.86rem;
+}
+
+.linked-entity-panel p {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--wf-text-secondary);
+}
+
+.detail-editor-section.is-wide {
+  grid-column: 1 / -1;
+}
+
+.setting-detail-workbench textarea,
+.setting-detail-workbench .form-textarea,
+.structured-intro-textarea,
+.detail-textarea,
+.structured-description-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  line-height: 1.7;
+}
+
+.structured-intro-textarea {
+  min-height: 220px;
+}
+
+.structured-description-textarea {
+  min-height: 150px;
+}
+
+.detail-textarea {
+  min-height: 300px;
+}
+
+.structured-field-list,
+.structured-card-editor-list {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.structured-field-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr) 30px;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.structured-card-editor {
+  display: grid;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.structured-card-editor-header,
+.structured-card-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.5fr) 30px;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.structured-card-editor-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.icon-remove-btn {
+  width: 30px;
+  height: 30px;
+  font-size: 1rem;
+}
+
+.icon-remove-btn:hover,
+.alias-chip button:hover {
+  background: rgba(255, 71, 87, 0.18);
+  color: var(--wf-danger);
+}
+
+.inline-add-btn {
+  border: 1px solid rgba(255, 255, 175, 0.16);
+  border-radius: var(--radius-full);
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.inline-add-btn:hover {
+  border-color: rgba(255, 255, 175, 0.32);
+  background: rgba(255, 255, 175, 0.12);
+}
+
+.compact-heading {
+  margin: 2px 0 0;
+}
+
+.compact-field-list {
+  padding-top: 2px;
+}
+
+.empty-structured-state {
+  padding: var(--spacing-md);
+  border: 1px dashed var(--wf-border);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.12);
+  line-height: 1.6;
+}
+
+.setting-detail-hint {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--wf-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 980px) {
+  .setting-detail-editor {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .setting-detail-profile,
+  .setting-detail-main {
+    overflow: visible;
+  }
+
+  .setting-detail-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .setting-detail-workbench {
+    width: calc(100vw - 16px);
+  }
+
+  .detail-profile-card,
+  .structured-field-row,
+  .structured-card-editor-header,
+  .structured-card-editor-grid,
+  .alias-input-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .extract-preview { background: var(--wf-bg-card); border: 1px solid var(--wf-border); border-radius: var(--radius-md); padding: var(--spacing-lg); margin-top: var(--spacing-md); box-shadow: none; }
