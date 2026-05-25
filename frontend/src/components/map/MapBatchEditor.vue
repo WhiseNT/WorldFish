@@ -86,7 +86,10 @@ export default {
 .field { border: 1px solid var(--wf-border); border-radius: var(--radius-md); padding: var(--spacing-sm) var(--spacing-md); background: var(--wf-bg-input); color: var(--wf-text-primary); outline: none; }
 .field::placeholder { color: var(--wf-text-muted); }
 .field:focus { border-color: var(--wf-accent); box-shadow: 0 0 0 3px var(--wf-accent-muted); }
-.field option { background: var(--wf-bg-surface); color: var(--wf-text-primary); }
+.field option { background: var(--wf-dropdown-panel); color: var(--wf-text-primary); }
+.field option:checked,
+.field option:hover,
+.field option:focus { background: var(--wf-dropdown-option-active); }
 .clear-row { grid-column: 1 / -1; display: flex; gap: var(--spacing-md); flex-wrap: wrap; color: var(--wf-text-secondary); font-size: 13px; }
 .apply-btn { margin-top: var(--spacing-sm); border: 1px solid var(--wf-accent); border-radius: var(--radius-md); padding: var(--spacing-sm) var(--spacing-md); background: var(--wf-accent); color: var(--wf-text-on-accent); font-weight: 600; cursor: pointer; }
 .apply-btn:disabled { opacity: .4; cursor: not-allowed; }

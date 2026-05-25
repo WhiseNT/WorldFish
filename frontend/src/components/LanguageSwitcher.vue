@@ -96,8 +96,8 @@ onUnmounted(() => {
   top: 100%;
   right: 0;
   margin-top: 6px;
-  background: rgba(17, 17, 19, 0.98);
-  border: 1px solid var(--wf-border);
+  background: var(--wf-dropdown-panel);
+  border: 1px solid var(--wf-dropdown-border);
   border-radius: var(--radius-md);
   list-style: none;
   padding: 4px;
@@ -123,8 +123,8 @@ onUnmounted(() => {
 }
 
 .switcher-option.active {
-  color: var(--wf-accent);
-  background: var(--wf-accent-muted);
+  color: var(--wf-text-primary);
+  background: var(--wf-dropdown-option-active);
 }
 
 

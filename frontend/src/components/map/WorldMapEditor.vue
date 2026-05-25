@@ -423,7 +423,10 @@ export default {
 }
 .toolbar-field::placeholder { color: var(--wf-text-muted); }
 .toolbar-field:focus { border-color: var(--wf-accent); box-shadow: 0 0 0 3px var(--wf-accent-muted); }
-.toolbar-field option { background: var(--wf-bg-surface); color: var(--wf-text-primary); }
+.toolbar-field option { background: var(--wf-dropdown-panel); color: var(--wf-text-primary); }
+.toolbar-field option:checked,
+.toolbar-field option:hover,
+.toolbar-field option:focus { background: var(--wf-dropdown-option-active); }
 .toolbar-field.small { width: 86px; }
 .map-actions, .layer-switcher { display: flex; gap: 8px; flex-wrap: wrap; }
 button {

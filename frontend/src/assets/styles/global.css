@@ -9,6 +9,12 @@
   --wf-bg-hover: rgba(255, 255, 255, 0.06);
   --wf-bg-input: rgba(0, 0, 0, 0.4);
 
+  /* Dropdowns — native select panels */
+  --wf-dropdown-bg: #050506;
+  --wf-dropdown-panel: #111113;
+  --wf-dropdown-option-active: #5f5d6d;
+  --wf-dropdown-border: rgba(255, 255, 175, 0.78);
+
   /* Accent — Warm Yellow */
   --wf-accent: #ffffaf;
   --wf-accent-hover: #ffffc0;
@@ -227,6 +233,25 @@ input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--wf-accent);
   box-shadow: 0 0 0 3px var(--wf-accent-muted);
+}
+
+select {
+  background-color: var(--wf-dropdown-bg);
+  border-color: var(--wf-dropdown-border);
+  color: var(--wf-text-primary);
+  color-scheme: dark;
+}
+
+select option {
+  background-color: var(--wf-dropdown-panel);
+  color: var(--wf-text-primary);
+}
+
+select option:checked,
+select option:hover,
+select option:focus {
+  background-color: var(--wf-dropdown-option-active);
+  color: var(--wf-text-primary);
 }
 
 .form-group { flex: 1; min-width: 200px; margin-bottom: var(--spacing-md); }

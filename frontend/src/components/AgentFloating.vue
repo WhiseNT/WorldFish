@@ -1476,21 +1476,23 @@ defineExpose({
   font-size: 14px;
   padding: 5px 10px;
   border-radius: var(--radius-sm);
-  background: #111;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #fff;
+  background: var(--wf-dropdown-bg);
+  border: 1px solid var(--wf-dropdown-border);
+  color: var(--wf-text-primary);
+  color-scheme: dark;
   max-width: 140px;
   outline: none;
   cursor: pointer;
 }
 .agent-world-select option {
-  background: #111;
-  color: #fff;
+  background: var(--wf-dropdown-panel);
+  color: var(--wf-text-primary);
   padding: 6px 8px;
 }
 .agent-world-select option:checked,
-.agent-world-select option:hover {
-  background: #333;
+.agent-world-select option:hover,
+.agent-world-select option:focus {
+  background: var(--wf-dropdown-option-active);
 }
 .agent-world-select:focus {
   border-color: var(--wf-accent);
@@ -2283,19 +2285,21 @@ defineExpose({
   font-size: 15px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: #111;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #fff;
+  background: var(--wf-dropdown-bg);
+  border: 1px solid var(--wf-dropdown-border);
+  color: var(--wf-text-primary);
+  color-scheme: dark;
   outline: none;
   cursor: pointer;
 }
 .settings-select option {
-  background: #111;
-  color: #fff;
+  background: var(--wf-dropdown-panel);
+  color: var(--wf-text-primary);
 }
 .settings-select option:checked,
-.settings-select option:hover {
-  background: #333;
+.settings-select option:hover,
+.settings-select option:focus {
+  background: var(--wf-dropdown-option-active);
 }
 .settings-select-sm {
   font-size: 14px;
