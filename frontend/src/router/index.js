@@ -34,6 +34,11 @@ const routes = [
     name: 'LlmConfig',
     component: () => import('../views/LlmConfigView.vue'),
   },
+  {
+    path: '/settings/modules',
+    name: 'Modules',
+    component: () => import('../views/ModulesView.vue'),
+  },
 ]
 
 const router = createRouter({

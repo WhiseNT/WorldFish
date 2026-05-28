@@ -15,9 +15,15 @@
           创造属于你的世界，并让它不断进化。
         </p>
         <div class="hero-actions">
-          <router-link to="/world-builder" class="btn btn-primary hero-btn-primary">
-            <span>构建世界观</span>
-            <SvgIcon name="arrow-right" :size="16" />
+          <router-link
+            v-for="item in navItems"
+            :key="item.module_id + item.path"
+            :to="item.path"
+            class="btn hero-btn-primary"
+            :class="item.module_id === 'world-builder' ? 'btn-primary' : 'btn-secondary'"
+          >
+            <span>{{ item.label }}</span>
+            <SvgIcon v-if="item.module_id === 'world-builder'" name="arrow-right" :size="16" />
           </router-link>
           <button class="btn btn-secondary hero-btn-secondary" @click="scrollToWorlds">
             已有世界观
@@ -109,12 +115,14 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { worldApi } from '../api/world'
+import { useModuleRegistry } from '../modules/registry'
 import SvgIcon from '../components/ui/SvgIcon.vue'
 
 const worlds = ref([])
 const loading = ref(true)
 const loadError = ref('')
 const worldsSection = ref(null)
+const { navigation: navItems, refreshNavigation } = useModuleRegistry()
 
 async function fetchWorlds() {
   loading.value = true
@@ -133,7 +141,10 @@ function scrollToWorlds() {
   worldsSection.value?.scrollIntoView({ behavior: 'smooth' })
 }
 
-onMounted(fetchWorlds)
+onMounted(() => {
+  refreshNavigation().catch(() => {})
+  fetchWorlds()
+})
 </script>
 
 <style scoped>

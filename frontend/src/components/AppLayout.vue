@@ -14,6 +14,7 @@
         <slot name="nav-center"></slot>
       </div>
       <div class="wf-navbar-right">
+        <router-link to="/settings/modules" class="wf-config-link">模块</router-link>
         <router-link to="/settings/llm" class="wf-config-link">LLM 配置</router-link>
         <slot name="nav-right"></slot>
       </div>
