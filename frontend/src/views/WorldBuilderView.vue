@@ -8,6 +8,28 @@
       </div>
 
       <div class="builder-header-actions">
+        <div class="history-actions" aria-label="编辑历史操作">
+          <button
+            type="button"
+            class="btn btn-secondary history-btn"
+            :disabled="!canUndo"
+            :title="undoButtonTitle"
+            aria-label="撤回"
+            @click="undoWorldChange"
+          >
+            <SvgIcon name="undo" :size="17" :stroke-width="2.2" />
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary history-btn"
+            :disabled="!canRedo"
+            :title="redoButtonTitle"
+            aria-label="重做"
+            @click="redoWorldChange"
+          >
+            <SvgIcon name="redo" :size="17" :stroke-width="2.2" />
+          </button>
+        </div>
         <span v-if="saveStatus" class="save-status">{{ saveStatus }}</span>
         <span v-if="worldId" class="world-id-badge">{{ worldId }}</span>
         <span v-if="linkedProjectId" class="project-id-badge">{{ linkedProjectId }}</span>
@@ -1677,6 +1699,10 @@ const LAST_EXTRACT_TASK_KEY = 'worldfish:lastExtractTaskId'
 const EXTRACT_TASK_DELETED_EVENT = 'worldfish:extract-task-deleted'
 const EXTRACT_TASK_SYNC_EVENT = 'worldfish:extract-task-sync'
 const WORLD_UPDATED_EVENT = 'worldfish:world-updated'
+const EDIT_HISTORY_LIMIT = 80
+const EDIT_HISTORY_CAPTURE_DELAY = 350
+
+const cloneEditableState = (value) => JSON.parse(JSON.stringify(value ?? null))
 
 const SETTING_CATEGORY_OPTIONS = [
       { id: 'character', name: '角色', icon: 'user' },
@@ -3482,7 +3508,13 @@ export default {
       autoSaveSignature: '',
       autoSaveLastSavedAt: 0,
       isApplyingStoredWorld: false,
+      isApplyingHistory: false,
       pendingAutoSave: false,
+      undoStack: [],
+      redoStack: [],
+      editHistoryCurrentSignature: '',
+      editHistoryCurrentSnapshot: null,
+      editHistoryTimer: null,
       extractError: '',
       showLlmConfigDialog: false,
       llmConfigFeedback: '',
@@ -4460,7 +4492,19 @@ export default {
       return ['paused', 'stale', 'cancelled', 'failed', 'error', 'completed', 'done'].includes(this.extractStatus)
         || (this.extractProgress.done && ['pause_requested', 'cancel_requested'].includes(this.extractStatus))
     },
-    // 计算时间线容器的高度，确保容纳语义时间带与事件层
+    canUndo() {
+      return this.undoStack.length > 0
+    },
+    canRedo() {
+      return this.redoStack.length > 0
+    },
+    undoButtonTitle() {
+      return this.canUndo ? `撤回上一步（Ctrl+Z）· 还有 ${this.undoStack.length} 步` : '暂无可撤回的修改'
+    },
+    redoButtonTitle() {
+      return this.canRedo ? `重做下一步（Ctrl+Y）· 还有 ${this.redoStack.length} 步` : '暂无可重做的修改'
+    },
+    // 根据时间线内容计算高度，确保所有卡片都在可视区域内
     timelineHeight() {
       const totalHeight = this.timelineStageTop + this.timelineStageHeight + 86
       return Math.max(totalHeight, 520) + 'px'
@@ -4486,32 +4530,32 @@ export default {
     },
     world: {
       deep: true,
-      handler() { this.scheduleAutoSave() },
+      handler() { this.handleEditableStateChanged() },
     },
     mapData: {
       deep: true,
-      handler() { this.scheduleAutoSave() },
+      handler() { this.handleEditableStateChanged() },
     },
     settings: {
       deep: true,
-      handler() { this.scheduleAutoSave() },
+      handler() { this.handleEditableStateChanged() },
     },
     calendars: {
       deep: true,
-      handler() { this.scheduleAutoSave() },
+      handler() { this.handleEditableStateChanged() },
     },
     entities: {
       deep: true,
       handler() {
         this._chunkBuildEntityItems()
-        this.scheduleAutoSave()
+        this.handleEditableStateChanged()
       },
     },
     events: {
       deep: true,
       handler() {
         this._chunkBuildEventItems()
-        this.scheduleAutoSave()
+        this.handleEditableStateChanged()
       },
     },
     activeTab(newTab) {
@@ -4532,6 +4576,148 @@ export default {
     }
   },
   methods: {
+    createEditSnapshot() {
+      return cloneEditableState({
+        world: this.world,
+        mapData: this.mapData,
+        settings: this.settings,
+        calendars: this.calendars,
+        entities: this.entities,
+        events: this.events,
+      })
+    },
+    getEditSnapshotSignature(snapshot = this.createEditSnapshot()) {
+      try {
+        return JSON.stringify(snapshot)
+      } catch (error) {
+        console.warn('生成编辑历史签名失败:', error)
+        return `${Date.now()}`
+      }
+    },
+    resetEditHistory(snapshot = this.createEditSnapshot()) {
+      if (this.editHistoryTimer) {
+        clearTimeout(this.editHistoryTimer)
+        this.editHistoryTimer = null
+      }
+      this.undoStack = []
+      this.redoStack = []
+      this.editHistoryCurrentSnapshot = cloneEditableState(snapshot)
+      this.editHistoryCurrentSignature = this.getEditSnapshotSignature(snapshot)
+    },
+    handleEditableStateChanged() {
+      if (this.isApplyingStoredWorld || this.isApplyingHistory) return
+      this.scheduleEditHistoryCapture()
+      this.scheduleAutoSave()
+    },
+    scheduleEditHistoryCapture() {
+      if (!this.editHistoryCurrentSignature) {
+        this.resetEditHistory()
+        return
+      }
+      if (this.editHistoryTimer) {
+        clearTimeout(this.editHistoryTimer)
+      }
+      this.editHistoryTimer = window.setTimeout(() => {
+        this.editHistoryTimer = null
+        this.captureEditHistoryChange()
+      }, EDIT_HISTORY_CAPTURE_DELAY)
+    },
+    captureEditHistoryChange() {
+      if (this.isApplyingStoredWorld || this.isApplyingHistory) return false
+      const snapshot = this.createEditSnapshot()
+      const signature = this.getEditSnapshotSignature(snapshot)
+      if (!this.editHistoryCurrentSignature || !this.editHistoryCurrentSnapshot) {
+        this.editHistoryCurrentSnapshot = cloneEditableState(snapshot)
+        this.editHistoryCurrentSignature = signature
+        return false
+      }
+      if (signature === this.editHistoryCurrentSignature) return false
+
+      this.undoStack = [...this.undoStack.slice(-(EDIT_HISTORY_LIMIT - 1)), cloneEditableState(this.editHistoryCurrentSnapshot)]
+      this.redoStack = []
+      this.editHistoryCurrentSnapshot = cloneEditableState(snapshot)
+      this.editHistoryCurrentSignature = signature
+      return true
+    },
+    flushEditHistoryCapture() {
+      if (this.editHistoryTimer) {
+        clearTimeout(this.editHistoryTimer)
+        this.editHistoryTimer = null
+      }
+      this.captureEditHistoryChange()
+    },
+    applyEditSnapshot(snapshot) {
+      if (!snapshot) return
+      this.isApplyingHistory = true
+      try {
+        this.world = cloneEditableState(snapshot.world || {})
+        this.mapData = { ...createDefaultMapData(), ...cloneEditableState(snapshot.mapData || {}) }
+        this.settings = cloneEditableState(snapshot.settings || [])
+        this.calendars = cloneEditableState(snapshot.calendars || [])
+        this.entities = cloneEditableState(snapshot.entities || [])
+        this.events = cloneEditableState(snapshot.events || [])
+        this.syncOpenSettingReference()
+        const appliedSnapshot = this.createEditSnapshot()
+        this.editHistoryCurrentSnapshot = cloneEditableState(appliedSnapshot)
+        this.editHistoryCurrentSignature = this.getEditSnapshotSignature(appliedSnapshot)
+      } finally {
+        this.$nextTick(() => {
+          this.isApplyingHistory = false
+          this._chunkBuildEntityItems()
+          this._chunkBuildEventItems()
+          this.scheduleAutoSave(800)
+        })
+      }
+    },
+    syncOpenSettingReference() {
+      if (!this.currentSetting?.id) return
+      this.currentSetting = this.settings.find(setting => setting.id === this.currentSetting.id) || this.currentSetting
+    },
+    undoWorldChange() {
+      this.flushEditHistoryCapture()
+      if (!this.canUndo) return
+      const currentSnapshot = this.createEditSnapshot()
+      const previousSnapshot = this.undoStack[this.undoStack.length - 1]
+      this.undoStack = this.undoStack.slice(0, -1)
+      this.redoStack = [...this.redoStack.slice(-(EDIT_HISTORY_LIMIT - 1)), currentSnapshot]
+      this.applyEditSnapshot(previousSnapshot)
+      this.saveStatus = '已撤回上一步修改'
+    },
+    redoWorldChange() {
+      this.flushEditHistoryCapture()
+      if (!this.canRedo) return
+      const currentSnapshot = this.createEditSnapshot()
+      const nextSnapshot = this.redoStack[this.redoStack.length - 1]
+      this.redoStack = this.redoStack.slice(0, -1)
+      this.undoStack = [...this.undoStack.slice(-(EDIT_HISTORY_LIMIT - 1)), currentSnapshot]
+      this.applyEditSnapshot(nextSnapshot)
+      this.saveStatus = '已重做下一步修改'
+    },
+    handleEditHistoryShortcut(event) {
+      const key = String(event.key || '').toLowerCase()
+      const modifierPressed = event.ctrlKey || event.metaKey
+      if (!modifierPressed || event.altKey) return
+
+      if (key === 'z' && event.shiftKey) {
+        if (!this.canRedo) return
+        event.preventDefault()
+        this.redoWorldChange()
+        return
+      }
+
+      if (key === 'z') {
+        if (!this.canUndo) return
+        event.preventDefault()
+        this.undoWorldChange()
+        return
+      }
+
+      if (key === 'y') {
+        if (!this.canRedo) return
+        event.preventDefault()
+        this.redoWorldChange()
+      }
+    },
     getTimelineTypeOrder(type) {
       return { calendar: 0, event: 1, stage: 2 }[type] ?? 9
     },
@@ -5074,6 +5260,7 @@ export default {
         this.calendars = normalizedSettings.calendars
         this.restoreSettingsViewState(settingsViewState)
         this.markWorldAsSaved()
+        this.resetEditHistory()
       } finally {
         this.$nextTick(() => {
           this.isApplyingStoredWorld = false
@@ -6919,6 +7106,8 @@ export default {
   mounted() {
     window.addEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     window.addEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
+    window.addEventListener('keydown', this.handleEditHistoryShortcut)
+    this.resetEditHistory()
     this.syncTimelineRefs()
     this.updateTimelineZoom()
     this.loadLlmConfigStatus()
@@ -6932,6 +7121,11 @@ export default {
   beforeUnmount() {
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     window.removeEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
+    window.removeEventListener('keydown', this.handleEditHistoryShortcut)
+    if (this.editHistoryTimer) {
+      clearTimeout(this.editHistoryTimer)
+      this.editHistoryTimer = null
+    }
     if (this.autoSaveTimer) {
       clearTimeout(this.autoSaveTimer)
       this.autoSaveTimer = null
@@ -6975,6 +7169,25 @@ export default {
   align-items: center;
   gap: var(--spacing-sm);
   flex-wrap: wrap;
+}
+
+.history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .save-status {

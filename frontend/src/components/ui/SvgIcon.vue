@@ -142,6 +142,14 @@
       <path d="M18 3v4h-4" />
       <path d="M6 21v-4h4" />
     </template>
+    <template v-else-if="name === 'undo'">
+      <path d="M9 7 4 12l5 5" />
+      <path d="M4 12h10a6 6 0 0 1 0 12" transform="translate(0 -5)" />
+    </template>
+    <template v-else-if="name === 'redo'">
+      <path d="m15 7 5 5-5 5" />
+      <path d="M20 12H10a6 6 0 0 0 0 12" transform="translate(0 -5)" />
+    </template>
     <template v-else-if="name === 'grid'">
       <rect x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
