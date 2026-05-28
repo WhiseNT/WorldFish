@@ -231,9 +231,6 @@ class Config:
     DEEP_EXTRACTION_ACTIVE_ENTITY_LIMIT = _parse_int_env("DEEP_EXTRACTION_ACTIVE_ENTITY_LIMIT", 80)
     DEEP_EXTRACTION_RECENT_CHUNKS = _parse_int_env("DEEP_EXTRACTION_RECENT_CHUNKS", 2)
     
-    # Zep配置
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
-    
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
@@ -282,7 +279,6 @@ class Config:
         cls.LLM_DEEPSEEK_V4_CONTEXT_WINDOW = _parse_int_env('LLM_DEEPSEEK_V4_CONTEXT_WINDOW', 1_000_000)
         cls.LLM_CONTEXT_WINDOW = _parse_int_env('LLM_CONTEXT_WINDOW', 0)
         cls.AGENT_CONTEXT_COMPRESSION_RATIO = _parse_float_env('AGENT_CONTEXT_COMPRESSION_RATIO', 0.70)
-        cls.ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
         cls.EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
         cls.EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
         cls.EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")

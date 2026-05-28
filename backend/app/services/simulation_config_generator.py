@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from ..utils.logger import get_logger
-from .zep_entity_reader import EntityNode
+from .knowledge_graph import EntityNode
 
 logger = get_logger('worldfish.simulation_config')
 

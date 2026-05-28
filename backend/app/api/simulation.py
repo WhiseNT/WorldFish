@@ -1,6 +1,6 @@
 """
 模拟相关 API 路由
-Step2: Zep 实体读取与过滤、WorldFish 模拟准备与运行（全程自动化）
+实体读取与过滤、WorldFish 模拟准备与运行（全程自动化）
 """
 
 import os
@@ -9,7 +9,7 @@ from flask import request, jsonify, send_file
 
 from . import simulation_bp
 from ..config import Config
-from ..services.zep_entity_reader import ZepEntityReader
+from ..services.knowledge_graph import GraphEntityReader, ZepEntityReader
 from ..services.worldfish_profile_generator import WorldFishProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
@@ -58,11 +58,6 @@ def get_graph_entities(graph_id: str):
     """
     try:
         is_local = graph_id.startswith("local_") if graph_id else False
-        if not Config.ZEP_API_KEY and not is_local:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY not configured and graph is not a local graph"
-            }), 500
 
         entity_types_str = request.args.get('entity_types', '')
         entity_types = [t.strip() for t in entity_types_str.split(',') if t.strip()] if entity_types_str else None
@@ -70,7 +65,7 @@ def get_graph_entities(graph_id: str):
 
         logger.info(f"Reading graph entities: graph_id={graph_id}, entity_types={entity_types}, enrich={enrich}")
 
-        reader = ZepEntityReader()
+        reader = GraphEntityReader()
         result = reader.filter_defined_entities(
             graph_id=graph_id,
             defined_entity_types=entity_types,
@@ -96,13 +91,8 @@ def get_entity_detail(graph_id: str, entity_uuid: str):
     """获取单个实体的详细信息"""
     try:
         is_local = graph_id.startswith("local_") if graph_id else False
-        if not Config.ZEP_API_KEY and not is_local:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY not configured"
-            }), 500
         
-        reader = ZepEntityReader()
+        reader = GraphEntityReader()
         entity = reader.get_entity_with_context(graph_id, entity_uuid)
         
         if not entity:
@@ -138,7 +128,7 @@ def get_entities_by_type(graph_id: str, entity_type: str):
         
         enrich = request.args.get('enrich', 'true').lower() == 'true'
         
-        reader = ZepEntityReader()
+        reader = GraphEntityReader()
         entities = reader.get_entities_by_type(
             graph_id=graph_id,
             entity_type=entity_type,
@@ -469,7 +459,7 @@ def prepare_simulation():
         # 这样前端在调用prepare后立即就能获取到预期Agent总数
         try:
             logger.info(f"同步获取实体数量: graph_id={state.graph_id}")
-            reader = ZepEntityReader()
+            reader = GraphEntityReader()
             # 快速读取实体（不需要边信息，只统计数量）
             filtered_preview = reader.filter_defined_entities(
                 graph_id=state.graph_id,
@@ -537,59 +527,37 @@ def prepare_simulation():
                     stage_index = list(stage_weights.keys()).index(stage) + 1 if stage in stage_weights else 1
                     total_stages = len(stage_weights)
                     
-                    # 更新阶段详情
-                    stage_details[stage] = {
+                    detail = stage_details.setdefault(stage, {
                         "stage_name": stage_names.get(stage, stage),
                         "stage_progress": progress,
                         "current": kwargs.get("current", 0),
                         "total": kwargs.get("total", 0),
-                        "item_name": kwargs.get("item_name", "")
+                        "item_name": kwargs.get("item_name", ""),
+                    })
+                    detail.update(stage_progress=progress, current=kwargs.get("current", 0),
+                                  total=kwargs.get("total", 0), item_name=kwargs.get("item_name", ""))
+                    progress_detail = {
+                        "current_stage": stage, "current_stage_name": stage_names.get(stage, stage),
+                        "stage_index": stage_index, "total_stages": total_stages,
+                        "stage_progress": progress, "current_item": detail["current"],
+                        "total_items": detail["total"], "item_description": message,
                     }
-                    
-                    # 构建详细进度信息
-                    detail = stage_details[stage]
-                    progress_detail_data = {
-                        "current_stage": stage,
-                        "current_stage_name": stage_names.get(stage, stage),
-                        "stage_index": stage_index,
-                        "total_stages": total_stages,
-                        "stage_progress": progress,
-                        "current_item": detail["current"],
-                        "total_items": detail["total"],
-                        "item_description": message
-                    }
-                    
-                    # 构建简洁消息
                     if detail["total"] > 0:
-                        detailed_message = (
-                            f"[{stage_index}/{total_stages}] {stage_names.get(stage, stage)}: "
-                            f"{detail['current']}/{detail['total']} - {message}"
-                        )
+                        summary = f"[{stage_index}/{total_stages}] {detail['stage_name']}: {detail['current']}/{detail['total']} - {message}"
                     else:
-                        detailed_message = f"[{stage_index}/{total_stages}] {stage_names.get(stage, stage)}: {message}"
-                    
-                    task_manager.update_task(
-                        task_id,
-                        progress=current_progress,
-                        message=detailed_message,
-                        progress_detail=progress_detail_data
-                    )
+                        summary = f"[{stage_index}/{total_stages}] {detail['stage_name']}: {message}"
+                    task_manager.update_task(task_id, progress=current_progress, message=summary, progress_detail=progress_detail)
                 
-                result_state = manager.prepare_simulation(
+                outcome = manager.prepare_simulation(
                     simulation_id=simulation_id,
                     simulation_requirement=simulation_requirement,
                     document_text=document_text,
                     defined_entity_types=entity_types_list,
                     use_llm_for_profiles=use_llm_for_profiles,
                     progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count
+                    parallel_profile_count=parallel_profile_count,
                 )
-                
-                # 任务完成
-                task_manager.complete_task(
-                    task_id,
-                    result=result_state.to_simple_dict()
-                )
+                task_manager.complete_task(task_id, result=outcome.to_simple_dict())
                 
             except Exception as e:
                 logger.error(f"准备模拟失败: {str(e)}")
@@ -1309,7 +1277,7 @@ def generate_profiles():
         entity_types = data.get('entity_types')
         use_llm = data.get('use_llm', True)
         
-        reader = ZepEntityReader()
+        reader = GraphEntityReader()
         filtered = reader.filter_defined_entities(
             graph_id=graph_id,
             defined_entity_types=entity_types,

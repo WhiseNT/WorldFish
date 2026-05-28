@@ -935,21 +935,12 @@ def stream_console_log(report_id: str):
 @report_bp.route('/tools/search', methods=['POST'])
 def search_graph_tool():
     """
-    图谱搜索工具接口（供调试使用）
-    
-    请求（JSON）：
-        {
-            "graph_id": "worldfish_xxxx",
-            "query": "搜索查询",
-            "limit": 10
-        }
+    本地图谱搜索工具接口（供调试使用）
     """
     try:
         data = request.get_json() or {}
-        
         graph_id = data.get('graph_id')
         query = data.get('query')
-        limit = data.get('limit', 10)
         
         if not graph_id or not query:
             return jsonify({
@@ -957,18 +948,16 @@ def search_graph_tool():
                 "error": t('api.requireGraphIdAndQuery')
             }), 400
         
-        from ..services.zep_tools import ZepToolsService
-        
-        tools = ZepToolsService()
-        result = tools.search_graph(
-            graph_id=graph_id,
-            query=query,
-            limit=limit
-        )
+        from ..services.knowledge_graph import GraphEntityReader
+        reader = GraphEntityReader()
+        result = reader.get_entities_by_type(graph_id, query, enrich_with_edges=True)
+        nodes = []
+        for entity in result:
+            nodes.append({"uuid": entity.uuid, "name": entity.name, "labels": entity.labels, "summary": entity.summary})
         
         return jsonify({
             "success": True,
-            "data": result.to_dict()
+            "data": {"query": query, "nodes": nodes, "total_count": len(nodes)}
         })
         
     except Exception as e:
@@ -983,16 +972,10 @@ def search_graph_tool():
 @report_bp.route('/tools/statistics', methods=['POST'])
 def get_graph_statistics_tool():
     """
-    图谱统计工具接口（供调试使用）
-    
-    请求（JSON）：
-        {
-            "graph_id": "worldfish_xxxx"
-        }
+    本地图谱统计工具接口（供调试使用）
     """
     try:
         data = request.get_json() or {}
-        
         graph_id = data.get('graph_id')
         
         if not graph_id:
@@ -1001,14 +984,14 @@ def get_graph_statistics_tool():
                 "error": t('api.requireGraphId')
             }), 400
         
-        from ..services.zep_tools import ZepToolsService
-        
-        tools = ZepToolsService()
-        result = tools.get_graph_statistics(graph_id)
+        from ..services.knowledge_graph import GraphEntityReader
+        reader = GraphEntityReader()
+        nodes = reader.get_all_nodes(graph_id)
+        edges = reader.get_all_edges(graph_id)
         
         return jsonify({
             "success": True,
-            "data": result
+            "data": {"node_count": len(nodes), "edge_count": len(edges)}
         })
         
     except Exception as e:

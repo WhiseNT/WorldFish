@@ -830,7 +830,7 @@ def entity_chat():
 
 @evolution_bp.route('/<evolution_id>/status', methods=['GET'])
 def get_evolution_status(evolution_id: str):
-    """获取进化推演状态（轻量轮询端点）"""
+    """获取进化推演状态（轻量轮询端点），包含新工作流的状态字段。"""
     try:
         evolution = EvolutionManager.get(evolution_id)
         if not evolution:
@@ -851,6 +851,26 @@ def get_evolution_status(evolution_id: str):
             if latest_warnings:
                 break
 
+        # ── 新工作流字段 ──
+        active_pressures: List[Dict[str, Any]] = []
+        evolution_pattern: Dict[str, Any] = {}
+        causal_graph_summary: Dict[str, Any] = {}
+        if visible_rounds:
+            latest_round = visible_rounds[-1]
+            if getattr(latest_round, 'pressures', None):
+                active_pressures = latest_round.pressures
+            if getattr(latest_round, 'evolution_pattern', None):
+                evolution_pattern = latest_round.evolution_pattern
+
+        # 全局因果图摘要
+        global_graph = getattr(evolution, 'global_causal_graph', None) or {}
+        if global_graph:
+            causal_graph_summary = {
+                "node_count": len((global_graph.get("nodes") or {})),
+                "edge_count": len((global_graph.get("edges") or [])),
+                "latest_edges": (global_graph.get("edges") or [])[-5:],
+            }
+
         return jsonify({
             'success': True,
             'status': evolution.status,
@@ -860,6 +880,10 @@ def get_evolution_status(evolution_id: str):
             'error': getattr(evolution, 'error', ''),
             'warning_count': warning_count,
             'latest_warnings': latest_warnings[:5],
+            # 新字段
+            'active_pressures': active_pressures,
+            'evolution_pattern': evolution_pattern,
+            'causal_graph_summary': causal_graph_summary,
         })
 
     except Exception as e:

@@ -188,6 +188,379 @@ def _is_time_regression(previous: Any, current: Any) -> bool:
     return bool(previous_key and current_key and current_key < previous_key)
 
 
+# ──────────────────────────────────────────────
+#  新推演工作流：世界状态账本 / 推进方式 / 压力分析
+# ──────────────────────────────────────────────
+
+def _build_world_state_snapshot(
+    world: WorldSetting,
+    accumulated_context: Optional[Dict[str, Any]] = None,
+    completed_rounds: Optional[List[Dict[str, Any]]] = None,
+    current_year: str = "",
+) -> Dict[str, Any]:
+    """构建当前世界状态快照。
+
+    返回结构：
+    {
+      "current_time": str,
+      "key_entities": [{name, type, status, resources, relations}],
+      "active_conflicts": [str],
+      "unresolved_issues": [str],
+      "resource_distribution": str,
+      "tech_level": str,
+      "public_sentiment": str,
+      "external_pressures": [str],
+      "pending_consequences": [str],
+    }
+    """
+    accumulated_context = accumulated_context or {}
+    completed_rounds = completed_rounds or []
+
+    snapshot: Dict[str, Any] = {
+        "current_time": current_year or world.anchor_time or "未知",
+        "key_entities": [],
+        "active_conflicts": [],
+        "unresolved_issues": [],
+        "resource_distribution": "",
+        "tech_level": "",
+        "public_sentiment": "",
+        "external_pressures": [],
+        "pending_consequences": [],
+    }
+
+    # 1. 从世界实体提取
+    for ent in (world.entities or []):
+        ent_info: Dict[str, Any] = {
+            "name": ent.name or "?",
+            "type": getattr(ent, "type", "") or "",
+        }
+        attrs = getattr(ent, "attributes", {}) or {}
+        ent_info["resources"] = attrs.get("resources", attrs.get("资源", ""))
+        ent_info["status"] = _pick_str(attrs, "status", "状态", "现状")
+        ent_info["relations"] = _pick_str(attrs, "relations", "关系", "外交")
+        if any(v for v in [ent_info.get("resources"), ent_info.get("status"), ent_info.get("relations")]):
+            snapshot["key_entities"].append(ent_info)
+
+    # 2. 从已完成轮次合并状态
+    for rd in completed_rounds:
+        for ae in (rd.get("affected_entities") or []):
+            if not isinstance(ae, dict):
+                continue
+            name = str(ae.get("name", "")).strip()
+            if not name:
+                continue
+            existing = next((e for e in snapshot["key_entities"] if e["name"] == name), None)
+            if existing:
+                if ae.get("new_status"):
+                    existing["status"] = str(ae["new_status"])
+                if ae.get("state_changes"):
+                    existing.setdefault("changes", []).append(str(ae["state_changes"]))
+            else:
+                snapshot["key_entities"].append({
+                    "name": name,
+                    "type": ae.get("type", ""),
+                    "status": str(ae.get("new_status", "")),
+                    "resources": "",
+                    "relations": "",
+                    "is_new": True,
+                })
+
+    # 3. 冲突与未解决问题
+    all_events: List[Dict[str, Any]] = []
+    for rd in completed_rounds:
+        for evt in (rd.get("new_events") or []):
+            if isinstance(evt, dict):
+                all_events.append(evt)
+
+    conflict_keywords = ["战争", "冲突", "入侵", "叛乱", "暴动", "起义", "对抗", "对峙",
+                         "war", "conflict", "invasion", "rebellion", "revolt", "battle"]
+    issue_keywords = ["危机", "短缺", "饥荒", "瘟疫", "贫困", "腐败", "分裂", "威胁",
+                      "crisis", "shortage", "famine", "plague", "corruption", "division"]
+
+    for evt in all_events:
+        desc = str(evt.get("description", ""))
+        name = str(evt.get("name", ""))
+        combined = f"{name} {desc}"
+        if any(kw in combined for kw in conflict_keywords):
+            snapshot["active_conflicts"].append(name or desc[:60])
+        if any(kw in combined for kw in issue_keywords):
+            snapshot["unresolved_issues"].append(name or desc[:60])
+
+    # 4. 待显现后果（最近 3 轮中未完全解决的）
+    for rd in completed_rounds[-3:]:
+        for evt in (rd.get("new_events") or []):
+            if isinstance(evt, dict):
+                desc = str(evt.get("description", ""))
+                if any(kw in desc for kw in ["导致", "引发", "埋下", "酝酿", "积累", "逐渐"]):
+                    snapshot["pending_consequences"].append(
+                        str(evt.get("name", desc[:60]))
+                    )
+
+    # 5. 从世界观设定中提取技术水平和资源分布
+    settings = world.settings if isinstance(world.settings, dict) else {}
+    for item in (settings.get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        cat = str(item.get("category", "")).lower()
+        if cat in ("technology", "技术", "tech"):
+            snapshot["tech_level"] = str(item.get("description", item.get("detailContent", "")))[:200]
+        if cat in ("resource", "资源", "economy", "经济"):
+            snapshot["resource_distribution"] = str(item.get("description", item.get("detailContent", "")))[:200]
+
+    # 去重
+    snapshot["active_conflicts"] = list(dict.fromkeys(snapshot["active_conflicts"]))[:8]
+    snapshot["unresolved_issues"] = list(dict.fromkeys(snapshot["unresolved_issues"]))[:8]
+    snapshot["pending_consequences"] = list(dict.fromkeys(snapshot["pending_consequences"]))[:6]
+
+    return snapshot
+
+
+def _pick_str(attrs: Dict[str, Any], *keys: str) -> str:
+    for k in keys:
+        v = attrs.get(k, "")
+        if v and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _analyze_evolution_pattern(completed_rounds: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """从已完成轮次中分析世界的推进方式。
+
+    返回结构：
+    {
+      "primary_drivers": ["资源短缺", "组织博弈", ...],
+      "conflict_rhythm": "积累期" | "爆发期" | "后果期",
+      "event_scale": "区域" | "国家" | "国际",
+      "change_speed": "慢" | "中" | "快",
+      "typical_round_structure": str,
+      "recurring_patterns": [str],
+    }
+    """
+    if not completed_rounds:
+        return {
+            "primary_drivers": ["初始推演"],
+            "conflict_rhythm": "积累期",
+            "event_scale": "区域",
+            "change_speed": "中",
+            "typical_round_structure": "每轮引入 1 个主事件和 2-3 个次级变化",
+            "recurring_patterns": [],
+        }
+
+    # 驱动因素检测
+    driver_keywords = {
+        "资源短缺": ["资源", "短缺", "饥荒", "枯竭", "资源不足", "抢夺"],
+        "组织博弈": ["谈判", "联盟", "背叛", "条约", "协定", "博弈", "制衡"],
+        "人物选择": ["决定", "选择", "继承", "登基", "退位", "背叛"],
+        "外部入侵": ["入侵", "侵略", "外敌", "异族", "蛮族"],
+        "技术突破": ["发明", "发现", "技术", "革新", "突破"],
+        "自然灾害": ["地震", "洪水", "瘟疫", "干旱", "天灾"],
+        "经济变化": ["贸易", "经济", "货币", "通胀", "商业"],
+    }
+    driver_counts: Dict[str, int] = {}
+    for rd in completed_rounds:
+        narrative = str(rd.get("narrative", ""))
+        for driver, keywords in driver_keywords.items():
+            if any(kw in narrative for kw in keywords):
+                driver_counts[driver] = driver_counts.get(driver, 0) + 1
+
+    primary_drivers = sorted(driver_counts, key=driver_counts.get, reverse=True)[:3] if driver_counts else ["组织博弈"]
+
+    # 冲突节奏
+    conflict_density = [0] * len(completed_rounds) if completed_rounds else [0]
+    for i, rd in enumerate(completed_rounds):
+        narrative = str(rd.get("narrative", ""))
+        conflict_density[i] = sum(1 for kw in ["战争", "冲突", "入侵", "叛乱", "暴动", "对抗"]
+                                 if kw in narrative)
+    avg = sum(conflict_density) / max(len(conflict_density), 1)
+    if avg < 0.5:
+        conflict_rhythm = "积累期"
+    elif avg < 1.5:
+        conflict_rhythm = "后果期"
+    else:
+        conflict_rhythm = "爆发期"
+
+    # 事件规模
+    scale_keywords_national = ["国家", "王国", "帝国", "朝廷", "中央"]
+    scale_keywords_international = ["国际", "大陆", "诸国", "联盟", "联合国"]
+    national_count = 0
+    international_count = 0
+    for rd in completed_rounds:
+        narrative = str(rd.get("narrative", ""))
+        national_count += sum(1 for kw in scale_keywords_national if kw in narrative)
+        international_count += sum(1 for kw in scale_keywords_international if kw in narrative)
+    if international_count > national_count:
+        event_scale = "国际"
+    elif national_count > 0:
+        event_scale = "国家"
+    else:
+        event_scale = "区域"
+
+    # 变化速度
+    new_entity_count = sum(
+        1 for rd in completed_rounds
+        for ae in (rd.get("affected_entities") or [])
+        if isinstance(ae, dict) and ae.get("is_new_entity")
+    )
+    avg_new_per_round = new_entity_count / max(len(completed_rounds), 1)
+    if avg_new_per_round > 2:
+        change_speed = "快"
+    elif avg_new_per_round > 0.5:
+        change_speed = "中"
+    else:
+        change_speed = "慢"
+
+    # 重复模式
+    recurring_patterns: List[str] = []
+    if change_speed == "慢":
+        recurring_patterns.append("世界变化以渐进累积为主，突发性事件较少")
+    if conflict_rhythm == "积累期":
+        recurring_patterns.append("冲突倾向于缓慢积累而非突然爆发")
+    if "组织博弈" in primary_drivers:
+        recurring_patterns.append("势力之间倾向于通过谈判与制衡而非直接对抗")
+
+    return {
+        "primary_drivers": primary_drivers,
+        "conflict_rhythm": conflict_rhythm,
+        "event_scale": event_scale,
+        "change_speed": change_speed,
+        "typical_round_structure": "每轮约引入 1-2 个核心变化和 3-5 个新事件",
+        "recurring_patterns": recurring_patterns,
+    }
+
+
+def _extract_pressures(world_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从世界状态中提取当前推动变化的压力。"""
+    pressures: List[Dict[str, Any]] = []
+
+    # 冲突压力
+    for conflict in world_state.get("active_conflicts", [])[:3]:
+        pressures.append({
+            "type": "冲突",
+            "source": str(conflict)[:80],
+            "description": f"正在进行的冲突或对抗: {conflict}",
+            "intensity": "高",
+            "likely_consequences": ["局势升级", "相关方被迫站队", "资源消耗加剧"],
+        })
+
+    # 未解决问题压力
+    for issue in world_state.get("unresolved_issues", [])[:3]:
+        pressures.append({
+            "type": "危机",
+            "source": str(issue)[:80],
+            "description": f"尚未解决的问题: {issue}",
+            "intensity": "中",
+            "likely_consequences": ["问题扩大化", "催生新冲突", "民众不满上升"],
+        })
+
+    # 待显现后果
+    for pending in world_state.get("pending_consequences", [])[:2]:
+        pressures.append({
+            "type": "潜在后果",
+            "source": str(pending)[:80],
+            "description": f"尚未完全显现的事件后果: {pending}",
+            "intensity": "低",
+            "likely_consequences": ["在未来轮次中逐渐发酵"],
+        })
+
+    # 如果没有明显压力，生成默认压力
+    if not pressures:
+        pressures.append({
+            "type": "自然演化",
+            "source": "世界内在发展规律",
+            "description": "当前世界处于相对平稳期，主要受长期趋势推动",
+            "intensity": "低",
+            "likely_consequences": ["渐进式发展"],
+        })
+
+    return pressures
+
+
+def _format_world_state_for_prompt(state: Dict[str, Any]) -> str:
+    if not state:
+        return ""
+    lines = ["## 当前世界状态快照"]
+
+    if state.get("current_time"):
+        lines.append(f"- 当前时间: {state['current_time']}")
+
+    entities = state.get("key_entities") or []
+    if entities:
+        lines.append(f"\n### 关键实体状态 ({len(entities)} 个)")
+        for ent in entities[:15]:
+            extras = []
+            if ent.get("status"):
+                extras.append(f"状态: {ent['status'][:60]}")
+            if ent.get("resources"):
+                extras.append(f"资源: {ent['resources'][:60]}")
+            tag = " [新]" if ent.get("is_new") else ""
+            line = f"- **{ent['name']}**{tag} ({ent.get('type', '?')})"
+            if extras:
+                line += ": " + " | ".join(extras)
+            lines.append(line)
+
+    conflicts = state.get("active_conflicts") or []
+    if conflicts:
+        lines.append(f"\n### 活跃冲突")
+        for c in conflicts:
+            lines.append(f"- {c}")
+
+    issues = state.get("unresolved_issues") or []
+    if issues:
+        lines.append(f"\n### 未解决问题")
+        for i in issues:
+            lines.append(f"- {i}")
+
+    pending = state.get("pending_consequences") or []
+    if pending:
+        lines.append(f"\n### 待显现后果")
+        for p in pending:
+            lines.append(f"- {p}")
+
+    if state.get("tech_level"):
+        lines.append(f"\n### 技术水平\n{state['tech_level'][:150]}")
+    if state.get("resource_distribution"):
+        lines.append(f"\n### 资源分布\n{state['resource_distribution'][:150]}")
+
+    return "\n".join(lines)
+
+
+def _format_pattern_for_prompt(pattern: Dict[str, Any]) -> str:
+    if not pattern:
+        return ""
+    lines = [
+        "## 历史推进方式分析（用于约束本轮推演）",
+        f"- 主要驱动力: {', '.join(pattern.get('primary_drivers', ['未知']))}",
+        f"- 冲突节奏: {pattern.get('conflict_rhythm', '积累期')}",
+        f"- 事件规模: {pattern.get('event_scale', '区域')}",
+        f"- 变化速度: {pattern.get('change_speed', '中')}",
+        f"- 典型结构: {pattern.get('typical_round_structure', '')}",
+    ]
+    recurring = pattern.get("recurring_patterns") or []
+    if recurring:
+        lines.append(f"- 重复模式: {'; '.join(recurring)}")
+    lines.append("\n**约束**: 本轮推演必须与上述推进方式保持一致。不要引入与历史节奏不符的突转。")
+    return "\n".join(lines)
+
+
+def _format_pressures_for_prompt(pressures: List[Dict[str, Any]]) -> str:
+    if not pressures:
+        return ""
+    lines = ["## 当前世界压力（推动变化的力）"]
+    for i, p in enumerate(pressures, 1):
+        lines.append(
+            f"{i}. [{p.get('type', '?')}] {p.get('source', '')} "
+            f"(强度: {p.get('intensity', '?')})"
+        )
+        desc = p.get("description", "")
+        if desc:
+            lines.append(f"   {desc}")
+        consequences = p.get("likely_consequences") or []
+        if consequences:
+            lines.append(f"   可能走向: {'; '.join(consequences[:3])}")
+    lines.append("\n**约束**: 本轮事件应主要从上述压力中自然生长，优先解决或推进已有压力。")
+    return "\n".join(lines)
+
+
 class WorldEvolutionEngine:
     """世界观进化推演引擎 — 规划→分阶段推演→整合"""
 
@@ -485,6 +858,13 @@ class WorldEvolutionEngine:
                         completed_rounds = parent_rounds_data + completed_rounds
                     cumulative_state = _build_cumulative_state(completed_rounds, known_entity_names)
 
+                    # ── 新工作流：世界状态快照 + 推进方式分析 + 压力提取 ──
+                    world_state_snapshot = _build_world_state_snapshot(
+                        world, accumulated_context, completed_rounds, current_year
+                    )
+                    evolution_pattern = _analyze_evolution_pattern(completed_rounds)
+                    pressures = _extract_pressures(world_state_snapshot)
+
                     # RAG 检索：查找与当前阶段场景相关的原始资料
                     rag_context = ""
                     try:
@@ -518,6 +898,10 @@ class WorldEvolutionEngine:
                             "phase_total_rounds": phase_rounds,
                         },
                         cumulative_state=cumulative_state,
+                        # 新工作流上下文
+                        world_state_snapshot=world_state_snapshot,
+                        evolution_pattern=evolution_pattern,
+                        pressures=pressures,
                     )
 
                     round_result = self._validate_round_result(
@@ -541,9 +925,18 @@ class WorldEvolutionEngine:
                         affected_entities=round_result.get("affected_entities") or [],
                         new_events=round_result.get("new_events") or [],
                         warnings=round_result.get("warnings") or [],
+                        # 新工作流字段
+                        world_state_before=world_state_snapshot,
+                        pressures=pressures,
+                        evolution_pattern=evolution_pattern,
+                        causal_links=round_result.get("causal_links") or [],
+                        state_changes=round_result.get("state_changes") or {},
                     )
                     EvolutionManager.add_round(evolution_id, evolution_round)
                     accumulated_narrative.append(round_result.get("narrative", ""))
+
+                    # 更新全局因果图
+                    self._update_global_causal_graph(evolution_id, round_result, display_round_num)
 
             # === 阶段3: 推演后整合 ===
             EvolutionManager.update_status(evolution_id, "consolidating")
@@ -661,7 +1054,7 @@ class WorldEvolutionEngine:
 
         return {"phases": []}
 
-    # ==================== 逐轮执行 ====================
+    # ==================== 逐轮执行（增强版） ====================
 
     def _run_round(
         self,
@@ -677,6 +1070,9 @@ class WorldEvolutionEngine:
         phase_context: Dict[str, Any] = None,
         cumulative_state: str = "",
         rag_context: str = "",
+        world_state_snapshot: Optional[Dict[str, Any]] = None,
+        evolution_pattern: Optional[Dict[str, Any]] = None,
+        pressures: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         focus_text = ""
         if focus_areas:
@@ -714,9 +1110,19 @@ class WorldEvolutionEngine:
         if rag_context and rag_context.strip():
             rag_text = "\n## 知识库相关资料（从原始文本中检索，仅供参考）\n%s\n" % rag_context.strip()
 
-        prompt = """你是一个客观的世界观推演引擎。基于给定的世界观设定，以客观第三方视角陈述世界演化的进程。
+        # ── 新工作流上下文 ──
+        snapshot_text = _format_world_state_for_prompt(world_state_snapshot or {})
+        pattern_text = _format_pattern_for_prompt(evolution_pattern or {})
+        pressures_text = _format_pressures_for_prompt(pressures or [])
 
-## 当前世界观状态
+        prompt = """你是一个客观的世界观推演引擎。基于给定的世界观设定、当前世界状态、历史推进方式和活跃压力，以客观第三方视角推演世界的下一步演化。
+
+## 你的任务
+1. **先理解**当前世界状态、活跃压力和推进方式约束
+2. **内部评估 3 个候选推演方向**，比较它们的因果合理性、设定一致性、压力推进效果
+3. **选择最优方向**，输出完整的本轮推演结果
+
+## 当前世界观设定
 %s
 
 ## 用户的推演需求/场景
@@ -728,15 +1134,52 @@ class WorldEvolutionEngine:
 %s
 %s
 %s
+%s
+%s
 
 ## 当前推演进度
 这是第 %d 轮，共 %d 轮。当前时间为 %s。
 
-请基于当前世界观状态和之前的推演进程，以客观的第三方视角陈述这一轮的世界演化。
+## 内部多候选评估流程（在思维中执行，不输出）
+
+请在思考中完成以下步骤：
+
+### 第一步：理解当前世界
+- 当前有哪些关键实体？它们的状态如何？
+- 有哪些活跃压力和未解决问题？
+- 历史推进方式是什么节奏？
+
+### 第二步：生成 3 个候选推演方向
+候选 A：延续当前主要冲突/压力的自然发展
+候选 B：当前次要压力升级为主导变化
+候选 C：外部因素或结构性变化引发的新走向
+
+每个候选需要：
+- 明确的核心事件
+- 触发原因（引用了哪些旧事件/设定/压力）
+- 涉及的行动者及其动机
+- 后续影响
+
+### 第三步：评分筛选
+对每个候选在以下维度评分（1-10）：
+1. 设定一致性：是否违反已有世界规则？
+2. 因果合理性：是否由已有事件和压力自然推出？
+3. 行动者合理性：人物/组织行为是否合目标、资源和信息？
+4. 推进方式一致性：是否符合历史节奏和演化方式？
+5. 后果丰富度：是否能产生有价值的后续变化？
+6. 新信息控制：是否过度引入新设定/新灾难？(分数越低 = 过度引入新元素)
+7. 戏剧性适度：是否有张力但不刻意狗血？
+
+选择综合分最高的一支作为最终输出，当有接近的候选时可以融合。
+
+### 第四步：输出
+基于选定的最优方向，输出完整的本轮推演结果。
+
+## 输出格式
 
 请严格以 JSON 格式返回：
 {
-    "narrative": "本轮的叙事文本（300-800字），客观第三方视角，类似历史记载或百科全书。要详尽——描述这段时间内发生的重大事件、各方势力的互动、关键人物的作为与变化。",
+    "narrative": "本轮的叙事文本（400-800字），客观第三方视角，类似历史记载或百科全书。要详尽——描述这段时间内发生的重大事件、各方势力的互动、关键人物的作为与变化。",
     "year_advanced_to": "本轮结束时的时间点",
     "affected_entities": [
         {
@@ -749,28 +1192,47 @@ class WorldEvolutionEngine:
         {
             "name": "新事件名称",
             "date": "事件发生时间",
-            "description": "事件描述（起因+经过+结果）",
+            "description": "事件描述（起因+经过+结果，80-200字）",
             "involved_entities": ["涉及的实体名"]
         }
-    ]
+    ],
+    "causal_links": [
+        {
+            "cause": "触发原因描述",
+            "source_type": "old_event | pressure | setting | character_decision | resource_shift",
+            "source_detail": "具体的旧事件名/压力描述/设定内容",
+            "effect": "本轮产生的具体结果"
+        }
+    ],
+    "state_changes": {
+        "resources": "资源变化描述（如：北境粮食储备下降 30%）",
+        "relations": "关系变化描述（如：A 与 B 关系恶化）",
+        "power_balance": "势力均衡变化描述",
+        "new_tensions": ["新出现的紧张关系或矛盾"],
+        "resolved_issues": ["本轮解决或缓解的问题"]
+    },
+    "continuation_hints": ["下一轮最可能自然发展的方向提示（2-3 条）"]
 }
 
-注意事项：
+## 重要约束
 - narrative 必须使用客观第三方视角，平实陈述
-- 叙事要详尽（300-800字），不要过于简短
-- 叙事要有逻辑连贯性，承接前文和累计状态
-- 严格遵守给定的时间/事件锚点，不得另选历史时期作为基点
+- 叙事要详尽（400-800字），不要过于简短
+- 叙事要有逻辑连贯性，**必须明确呼应前文已有的事件、设定和压力**
+- 严格遵守给定的时间/事件锚点
 - 变化要基于世界观设定的内在逻辑
-- 可以在合理范围内引入新的次要角色或组织
-- affected_entities 必须描述具体的变化内容
+- 可以在合理范围内引入新的次要角色或组织，但不能凭空引入大型新势力
+- 必须明确说明本轮事件由哪些旧事件/压力/设定导致（causal_links）
 - 如果是最后一轮，叙事应有一个合理的阶段性收尾
-- new_events 要详尽列出本轮发生的所有重要事件（至少3-5个）""" % (
+- new_events 要详尽列出本轮发生的所有重要事件（至少 3-5 个）""" % (
             world_context[:4000],
             scenario[:800],
             rag_text,
             focus_text,
             phase_text,
-            cumulative_state[:2000] if cumulative_state else "",
+            snapshot_text,
+            pattern_text,
+            pressures_text,
+            cumulative_state[:1500] if cumulative_state else "",
             previous_text,
             anchor_instruction,
             round_number, total_rounds, time_span_start,
@@ -781,7 +1243,7 @@ class WorldEvolutionEngine:
             try:
                 result = self.llm_client.chat_json(
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=max(0.0, temperature - (attempt * 0.1)),
+                    temperature=max(0.1, temperature - (attempt * 0.1)),
                     max_tokens=8192,
                 )
                 if not isinstance(result, dict):
@@ -796,49 +1258,137 @@ class WorldEvolutionEngine:
 
         raise ValueError("轮次%d LLM调用3次均失败: %s" % (round_number, last_error))
 
-    # ==================== 推演后整合 ====================
+    # ==================== 全局因果图维护 ====================
+
+    def _update_global_causal_graph(self, evolution_id: str, round_result: Dict[str, Any], display_round_num: int):
+        """将本轮因果链添加到全局因果图中。"""
+        try:
+            evo = EvolutionManager.get(evolution_id)
+            if not evo:
+                return
+            graph = dict(evo.global_causal_graph or {})
+            if "nodes" not in graph:
+                graph["nodes"] = {}
+            if "edges" not in graph:
+                graph["edges"] = []
+
+            # 注册本轮事件节点
+            for evt in (round_result.get("new_events") or []):
+                name = str(evt.get("name", "")).strip()
+                if name and name not in graph["nodes"]:
+                    graph["nodes"][name] = {
+                        "round": display_round_num,
+                        "date": str(evt.get("date", "")),
+                        "type": "event",
+                    }
+
+            # 注册受影响实体节点
+            for ae in (round_result.get("affected_entities") or []):
+                name = str(ae.get("name", "")).strip()
+                if name and name not in graph["nodes"]:
+                    graph["nodes"][name] = {
+                        "round": display_round_num,
+                        "type": "entity",
+                        "status": str(ae.get("new_status", "")),
+                    }
+
+            # 添加因果边
+            for cl in (round_result.get("causal_links") or []):
+                cause = str(cl.get("cause", cl.get("source_detail", ""))).strip()
+                effect = str(cl.get("effect", "")).strip()
+                if cause and effect:
+                    graph["edges"].append({
+                        "cause": cause[:120],
+                        "effect": effect[:120],
+                        "round": display_round_num,
+                        "source_type": str(cl.get("source_type", "unknown")),
+                    })
+
+            evo.global_causal_graph = graph
+            EvolutionManager.save(evo)
+        except Exception as e:
+            logger.warning("更新全局因果图失败: %s" % str(e)[:100])
+
+    # ==================== 推演后整合（增强版） ====================
 
     def _consolidate_evolution(self, world_context: str, evolution_id: str,
                                total_rounds: int, temperature: float) -> Dict[str, Any]:
-        """推演后 LLM 整合：一致性校验、因果链识别、最终总结"""
+        """推演后 LLM 整合：基于因果图和状态变化做深度整合分析"""
         evo = EvolutionManager.get(evolution_id)
         if not evo or not evo.rounds:
             return {}
 
         rounds_summary = []
         for rd in evo.rounds:
-            rounds_summary.append({
+            summary_entry: Dict[str, Any] = {
                 "round": rd.round_number,
                 "year": rd.year_advanced_to,
                 "narrative": rd.narrative[:300],
                 "affected_entities": [ae.get("name") for ae in (rd.affected_entities or [])],
                 "new_events": [{"name": e.get("name"), "date": e.get("date")}
                               for e in (rd.new_events or [])],
-            })
+            }
+            # 加入因果链和状态变化
+            if rd.causal_links:
+                summary_entry["causal_links"] = [
+                    {"cause": cl.get("cause", ""), "effect": cl.get("effect", "")}
+                    for cl in rd.causal_links[:5]
+                ]
+            if rd.state_changes:
+                summary_entry["state_changes"] = rd.state_changes
+            rounds_summary.append(summary_entry)
 
-        prompt = """你是世界观推演整合专家。请对以下 %d 轮推演结果进行整合分析。
+        # 构建全局因果图摘要
+        causal_graph_summary = ""
+        if evo.global_causal_graph:
+            graph = evo.global_causal_graph
+            nodes = list((graph.get("nodes") or {}).keys())[:30]
+            edges = (graph.get("edges") or [])[-20:]
+            if nodes or edges:
+                causal_graph_summary = "\n## 全局因果图\n"
+                if nodes:
+                    causal_graph_summary += f"节点 ({len(nodes)} 个): {', '.join(nodes)}\n"
+                if edges:
+                    causal_graph_summary += "因果边:\n"
+                    for edge in edges[-10:]:
+                        causal_graph_summary += f"- {edge.get('cause', '?')[:60]} → {edge.get('effect', '?')[:60]}\n"
+
+        prompt = """你是世界观推演整合专家。请对以下 %d 轮推演结果进行深度整合分析。
 
 ## 世界观背景
 %s
 
-## 推演结果
+## 推演轮次数据
+%s
+
 %s
 
 请完成以下分析并返回 JSON：
 {
-  "summary": "整个推演的最终总结（300-500字），以客观视角叙述这一段历史的全貌",
+  "summary": "整个推演的最终总结（400-600字），以客观视角叙述这一段历史的全貌，明确指出主要的因果脉络。",
   "causal_chains": [
-    {"chain": "事件因果链描述（如：A导致B，B引发C和D）", "involved_events": ["事件名1", "事件名2"]}
+    {
+      "chain": "事件因果链描述（如：A导致B，B引发C和D）",
+      "involved_events": ["事件名1", "事件名2"],
+      "chain_type": "conflict | resource | political | social | external"
+    }
   ],
   "final_entity_states": [
-    {"name": "实体名", "final_status": "推演结束时的最终状态"}
+    {"name": "实体名", "final_status": "推演结束时的最终状态", "trajectory": "从开始到结束的变化轨迹简述"}
   ],
   "key_themes": ["推演中突出的主题1", "主题2"],
+  "evolution_pattern_summary": {
+    "dominant_driver": "整个推演期的主要驱动力",
+    "conflict_arc": "冲突的整体弧线（如：积累→爆发→后果）",
+    "key_turning_points": ["关键转折点"],
+    "unresolved_threads": ["推演结束时仍未解决的线索"]
+  },
   "inconsistencies": ["发现的不一致之处（如时间线矛盾），没有则填空数组"],
   "timeline": [
-    {"time": "时间点", "event": "事件描述"}
-  ]
-}""" % (total_rounds, world_context[:2000], json.dumps(rounds_summary, ensure_ascii=False, indent=2)[:6000])
+    {"time": "时间点", "event": "事件描述", "causal_context": "该事件的因果背景"}
+  ],
+  "suggested_continuations": ["基于当前状态建议的后续推演方向（2-4 条）"]
+}""" % (total_rounds, world_context[:1500], json.dumps(rounds_summary, ensure_ascii=False, indent=2)[:6000], causal_graph_summary)
 
         try:
             result = self.llm_client.chat_json(
@@ -847,9 +1397,10 @@ class WorldEvolutionEngine:
                 max_tokens=8192,
             )
             if isinstance(result, dict):
-                logger.info("推演整合完成: 发现 %d 条因果链, %d 个最终实体状态" % (
+                logger.info("推演整合完成: 发现 %d 条因果链, %d 个最终实体状态, %d 条后续建议" % (
                     len(result.get("causal_chains", [])),
                     len(result.get("final_entity_states", [])),
+                    len(result.get("suggested_continuations", [])),
                 ))
                 return result
         except Exception as e:
@@ -857,7 +1408,7 @@ class WorldEvolutionEngine:
 
         return {}
 
-    # ==================== 事实校验 ====================
+    # ==================== 事实校验（增强版） ====================
 
     def _validate_round_result(
         self,
@@ -881,6 +1432,7 @@ class WorldEvolutionEngine:
             warnings.append(f"本轮结束时间可能早于上一轮时间：{year_advanced_to} < {previous_time}")
             logger.warning("轮次%d: 检测到时间倒退: %s < %s" % (round_num, year_advanced_to, previous_time))
 
+        # 验证 affected_entities
         affected = result.get("affected_entities") or []
         if not isinstance(affected, list):
             warnings.append("affected_entities 不是列表，已丢弃")
@@ -906,6 +1458,7 @@ class WorldEvolutionEngine:
             validated_affected.append(ae)
         result["affected_entities"] = validated_affected
 
+        # 验证 new_events
         events = result.get("new_events") or []
         if not isinstance(events, list):
             warnings.append("new_events 不是列表，已丢弃")
@@ -931,6 +1484,36 @@ class WorldEvolutionEngine:
         if len(validated_events) < 3:
             warnings.append(f"本轮重要事件数量少于建议值：{len(validated_events)} < 3")
 
+        # 验证新字段：causal_links
+        causal_links = result.get("causal_links") or []
+        if not isinstance(causal_links, list):
+            warnings.append("causal_links 不是列表，已修正")
+            causal_links = []
+        validated_links = []
+        for cl in causal_links:
+            if not isinstance(cl, dict):
+                continue
+            if not str(cl.get("cause", "")).strip() and not str(cl.get("source_detail", "")).strip():
+                continue
+            cl.setdefault("source_type", "unknown")
+            validated_links.append(cl)
+        result["causal_links"] = validated_links
+        if not validated_links:
+            warnings.append("本轮缺少因果链解释 (causal_links)")
+
+        # 验证新字段：state_changes
+        state_changes = result.get("state_changes") or {}
+        if not isinstance(state_changes, dict):
+            state_changes = {}
+        result["state_changes"] = state_changes
+
+        # 验证新字段：continuation_hints
+        hints = result.get("continuation_hints") or []
+        if not isinstance(hints, list):
+            hints = []
+        result["continuation_hints"] = hints
+
+        # 验证 narrative
         narrative = str(result.get("narrative", "") or "").strip()
         if not narrative:
             warnings.append("narrative 为空，已填充占位文本")

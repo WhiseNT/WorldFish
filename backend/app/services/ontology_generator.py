@@ -26,151 +26,8 @@ def _to_pascal_case(name: str) -> str:
     return result if result else 'Unknown'
 
 
-# 本体生成的系统提示词
-ONTOLOGY_SYSTEM_PROMPT = """你是一个专业的知识图谱本体设计专家。你的任务是分析给定的文本内容和模拟需求，设计适合**社交媒体舆论模拟**的实体类型和关系类型。
-
-**重要：你必须输出有效的JSON格式数据，不要输出任何其他内容。**
-
-## 核心任务背景
-
-我们正在构建一个**社交媒体舆论模拟系统**。在这个系统中：
-- 每个实体都是一个可以在社交媒体上发声、互动、传播信息的"账号"或"主体"
-- 实体之间会相互影响、转发、评论、回应
-- 我们需要模拟舆论事件中各方的反应和信息传播路径
-
-因此，**实体必须是现实中真实存在的、可以在社媒上发声和互动的主体**：
-
-**可以是**：
-- 具体的个人（公众人物、当事人、意见领袖、专家学者、普通人）
-- 公司、企业（包括其官方账号）
-- 组织机构（大学、协会、NGO、工会等）
-- 政府部门、监管机构
-- 媒体机构（报纸、电视台、自媒体、网站）
-- 社交媒体平台本身
-- 特定群体代表（如校友会、粉丝团、维权群体等）
-
-**不可以是**：
-- 抽象概念（如"舆论"、"情绪"、"趋势"）
-- 主题/话题（如"学术诚信"、"教育改革"）
-- 观点/态度（如"支持方"、"反对方"）
-
-## 输出格式
-
-请输出JSON格式，包含以下结构：
-
-```json
-{
-    "entity_types": [
-        {
-            "name": "实体类型名称（英文，PascalCase）",
-            "description": "简短描述（英文，不超过100字符）",
-            "attributes": [
-                {
-                    "name": "属性名（英文，snake_case）",
-                    "type": "text",
-                    "description": "属性描述"
-                }
-            ],
-            "examples": ["示例实体1", "示例实体2"]
-        }
-    ],
-    "edge_types": [
-        {
-            "name": "关系类型名称（英文，UPPER_SNAKE_CASE）",
-            "description": "简短描述（英文，不超过100字符）",
-            "source_targets": [
-                {"source": "源实体类型", "target": "目标实体类型"}
-            ],
-            "attributes": []
-        }
-    ],
-    "analysis_summary": "对文本内容的简要分析说明"
-}
-```
-
-## 设计指南（极其重要！）
-
-### 1. 实体类型设计 - 必须严格遵守
-
-**数量要求：必须正好10个实体类型**
-
-**层次结构要求（必须同时包含具体类型和兜底类型）**：
-
-你的10个实体类型必须包含以下层次：
-
-A. **兜底类型（必须包含，放在列表最后2个）**：
-   - `Person`: 任何自然人个体的兜底类型。当一个人不属于其他更具体的人物类型时，归入此类。
-   - `Organization`: 任何组织机构的兜底类型。当一个组织不属于其他更具体的组织类型时，归入此类。
-
-B. **具体类型（8个，根据文本内容设计）**：
-   - 针对文本中出现的主要角色，设计更具体的类型
-   - 例如：如果文本涉及学术事件，可以有 `Student`, `Professor`, `University`
-   - 例如：如果文本涉及商业事件，可以有 `Company`, `CEO`, `Employee`
-
-**为什么需要兜底类型**：
-- 文本中会出现各种人物，如"中小学教师"、"路人甲"、"某位网友"
-- 如果没有专门的类型匹配，他们应该被归入 `Person`
-- 同理，小型组织、临时团体等应该归入 `Organization`
-
-**具体类型的设计原则**：
-- 从文本中识别出高频出现或关键的角色类型
-- 每个具体类型应该有明确的边界，避免重叠
-- description 必须清晰说明这个类型和兜底类型的区别
-
-### 2. 关系类型设计
-
-- 数量：6-10个
-- 关系应该反映社媒互动中的真实联系
-- 确保关系的 source_targets 涵盖你定义的实体类型
-
-### 3. 属性设计
-
-- 每个实体类型1-3个关键属性
-- **注意**：属性名不能使用 `name`、`uuid`、`group_id`、`created_at`、`summary`（这些是系统保留字）
-- 推荐使用：`full_name`, `title`, `role`, `position`, `location`, `description` 等
-
-## 实体类型参考
-
-**个人类（具体）**：
-- Student: 学生
-- Professor: 教授/学者
-- Journalist: 记者
-- Celebrity: 明星/网红
-- Executive: 高管
-- Official: 政府官员
-- Lawyer: 律师
-- Doctor: 医生
-
-**个人类（兜底）**：
-- Person: 任何自然人（不属于上述具体类型时使用）
-
-**组织类（具体）**：
-- University: 高校
-- Company: 公司企业
-- GovernmentAgency: 政府机构
-- MediaOutlet: 媒体机构
-- Hospital: 医院
-- School: 中小学
-- NGO: 非政府组织
-
-**组织类（兜底）**：
-- Organization: 任何组织机构（不属于上述具体类型时使用）
-
-## 关系类型参考
-
-- WORKS_FOR: 工作于
-- STUDIES_AT: 就读于
-- AFFILIATED_WITH: 隶属于
-- REPRESENTS: 代表
-- REGULATES: 监管
-- REPORTS_ON: 报道
-- COMMENTS_ON: 评论
-- RESPONDS_TO: 回应
-- SUPPORTS: 支持
-- OPPOSES: 反对
-- COLLABORATES_WITH: 合作
-- COMPETES_WITH: 竞争
-"""
+# 兼容旧引用的短提示；实际系统提示由 OntologyGenerator._compose_system_prompt 分段生成。
+ONTOLOGY_SYSTEM_PROMPT = "请输出满足 WorldFish 本体约束的 JSON，不要输出额外文本。"
 
 
 class OntologyGenerator:
@@ -181,6 +38,44 @@ class OntologyGenerator:
     
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient(role="subagent")
+
+    def _compose_system_prompt(self) -> str:
+        """分段组装本体设计提示词，避免单一大块模板。"""
+        role_block = (
+            "你是 WorldFish 的知识图谱本体设计器。请基于原始资料和模拟目标，"
+            "输出适合社会行为推演的实体类型与关系类型。只返回 JSON。"
+        )
+        entity_scope = "\n".join([
+            "实体必须是可行动、可发声或可被观察的主体：个人、机构、媒体、平台、公司、群体代表等。",
+            "不要把抽象概念、情绪、话题、立场本身作为实体类型。",
+            "实体类型数量必须为 10 个：前 8 个根据材料定制，最后保留 Person 与 Organization 兜底。",
+        ])
+        schema_block = """
+输出 JSON 结构：
+{
+  "entity_types": [{"name": "PascalCase", "description": "<=100 chars", "attributes": [], "examples": []}],
+  "edge_types": [{"name": "UPPER_SNAKE_CASE", "description": "<=100 chars", "source_targets": [], "attributes": []}],
+  "analysis_summary": "简要说明"
+}
+""".strip()
+        naming_rules = "\n".join([
+            "命名规则：实体名必须是英文 PascalCase；关系名必须是英文 UPPER_SNAKE_CASE；属性名必须是英文 snake_case。",
+            "保留字段不可用作属性名：name、uuid、group_id、created_at、summary。可使用 full_name、org_name、role、position、location。",
+            "description 与 analysis_summary 使用当前界面语言。",
+        ])
+        design_hints = "\n".join([
+            "关系类型应表达现实中的联系、互动或影响，例如任职、监管、评论、支持、反对、合作、报道。",
+            "每个实体类型保留 1-3 个关键属性，宁可少而清晰，不要制造大量弱属性。",
+            "如果资料不足，优先设计稳健通用类型，而不是编造过细分类。",
+        ])
+        return "\n\n".join([
+            role_block,
+            entity_scope,
+            schema_block,
+            naming_rules,
+            design_hints,
+            get_language_instruction(),
+        ])
     
     def generate(
         self,
@@ -206,8 +101,7 @@ class OntologyGenerator:
             additional_context
         )
         
-        lang_instruction = get_language_instruction()
-        system_prompt = f"{ONTOLOGY_SYSTEM_PROMPT}\n\n{lang_instruction}\nIMPORTANT: Entity type names MUST be in English PascalCase (e.g., 'PersonEntity', 'MediaOrganization'). Relationship type names MUST be in English UPPER_SNAKE_CASE (e.g., 'WORKS_FOR'). Attribute names MUST be in English snake_case. Only description fields and analysis_summary should use the specified language above."
+        system_prompt = self._compose_system_prompt()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
@@ -275,232 +169,167 @@ class OntologyGenerator:
         return message
     
     def _validate_and_process(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """验证和后处理结果"""
-        
-        # 确保必要字段存在
-        if "entity_types" not in result:
-            result["entity_types"] = []
-        if "edge_types" not in result:
-            result["edge_types"] = []
-        if "analysis_summary" not in result:
-            result["analysis_summary"] = ""
-        
-        # 验证实体类型
-        # 记录原始名称到 PascalCase 的映射，用于后续修正 edge 的 source_targets 引用
-        entity_name_map = {}
-        for entity in result["entity_types"]:
-            # 强制将 entity name 转为 PascalCase（Zep API 要求）
-            if "name" in entity:
-                original_name = entity["name"]
-                entity["name"] = _to_pascal_case(original_name)
-                if entity["name"] != original_name:
-                    logger.warning(f"Entity type name '{original_name}' auto-converted to '{entity['name']}'")
-                entity_name_map[original_name] = entity["name"]
-            if "attributes" not in entity:
-                entity["attributes"] = []
-            if "examples" not in entity:
-                entity["examples"] = []
-            # 确保description不超过100字符
+        """标准化 LLM 返回的本体结构。"""
+        result = self._ensure_ontology_shape(result)
+        entity_name_map = self._normalize_entity_types(result["entity_types"])
+        self._normalize_edge_types(result["edge_types"], entity_name_map)
+        result["entity_types"] = self._dedupe_entity_types(result["entity_types"])
+        result["entity_types"] = self._ensure_fallback_entity_types(result["entity_types"])
+        result["edge_types"] = result["edge_types"][:10]
+        return result
+
+    def _ensure_ontology_shape(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(result, dict):
+            result = {}
+        result.setdefault("entity_types", [])
+        result.setdefault("edge_types", [])
+        result.setdefault("analysis_summary", "")
+        return result
+
+    def _normalize_entity_types(self, entities: List[Dict[str, Any]]) -> Dict[str, str]:
+        rename_map: Dict[str, str] = {}
+        for entity in entities:
+            original_name = entity.get("name", "")
+            if original_name:
+                normalized_name = _to_pascal_case(original_name)
+                entity["name"] = normalized_name
+                rename_map[original_name] = normalized_name
+                if normalized_name != original_name:
+                    logger.warning(f"Entity type name '{original_name}' auto-converted to '{normalized_name}'")
+            entity.setdefault("attributes", [])
+            entity.setdefault("examples", [])
             if len(entity.get("description", "")) > 100:
                 entity["description"] = entity["description"][:97] + "..."
-        
-        # 验证关系类型
-        for edge in result["edge_types"]:
-            # 强制将 edge name 转为 SCREAMING_SNAKE_CASE（Zep API 要求）
-            if "name" in edge:
-                original_name = edge["name"]
-                edge["name"] = original_name.upper()
-                if edge["name"] != original_name:
-                    logger.warning(f"Edge type name '{original_name}' auto-converted to '{edge['name']}'")
-            # 修正 source_targets 中的实体名称引用，与转换后的 PascalCase 保持一致
-            for st in edge.get("source_targets", []):
-                if st.get("source") in entity_name_map:
-                    st["source"] = entity_name_map[st["source"]]
-                if st.get("target") in entity_name_map:
-                    st["target"] = entity_name_map[st["target"]]
-            if "source_targets" not in edge:
-                edge["source_targets"] = []
-            if "attributes" not in edge:
-                edge["attributes"] = []
+        return rename_map
+
+    def _normalize_edge_types(self, edges: List[Dict[str, Any]], entity_name_map: Dict[str, str]) -> None:
+        for edge in edges:
+            original_name = edge.get("name", "")
+            if original_name:
+                normalized_name = original_name.upper()
+                edge["name"] = normalized_name
+                if normalized_name != original_name:
+                    logger.warning(f"Edge type name '{original_name}' auto-converted to '{normalized_name}'")
+            edge.setdefault("source_targets", [])
+            edge.setdefault("attributes", [])
+            for source_target in edge["source_targets"]:
+                if source_target.get("source") in entity_name_map:
+                    source_target["source"] = entity_name_map[source_target["source"]]
+                if source_target.get("target") in entity_name_map:
+                    source_target["target"] = entity_name_map[source_target["target"]]
             if len(edge.get("description", "")) > 100:
                 edge["description"] = edge["description"][:97] + "..."
-        
-        # Zep API 限制：最多 10 个自定义实体类型，最多 10 个自定义边类型
-        MAX_ENTITY_TYPES = 10
-        MAX_EDGE_TYPES = 10
 
-        # 去重：按 name 去重，保留首次出现的
+    def _dedupe_entity_types(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        unique_entities = []
         seen_names = set()
-        deduped = []
-        for entity in result["entity_types"]:
+        for entity in entities:
             name = entity.get("name", "")
-            if name and name not in seen_names:
-                seen_names.add(name)
-                deduped.append(entity)
-            elif name in seen_names:
+            if not name:
+                continue
+            if name in seen_names:
                 logger.warning(f"Duplicate entity type '{name}' removed during validation")
-        result["entity_types"] = deduped
+                continue
+            seen_names.add(name)
+            unique_entities.append(entity)
+        return unique_entities
 
-        # 兜底类型定义
-        person_fallback = {
-            "name": "Person",
-            "description": "Any individual person not fitting other specific person types.",
-            "attributes": [
-                {"name": "full_name", "type": "text", "description": "Full name of the person"},
-                {"name": "role", "type": "text", "description": "Role or occupation"}
-            ],
-            "examples": ["ordinary citizen", "anonymous netizen"]
-        }
-        
-        organization_fallback = {
-            "name": "Organization",
-            "description": "Any organization not fitting other specific organization types.",
-            "attributes": [
-                {"name": "org_name", "type": "text", "description": "Name of the organization"},
-                {"name": "org_type", "type": "text", "description": "Type of organization"}
-            ],
-            "examples": ["small business", "community group"]
-        }
-        
-        # 检查是否已有兜底类型
-        entity_names = {e["name"] for e in result["entity_types"]}
-        has_person = "Person" in entity_names
-        has_organization = "Organization" in entity_names
-        
-        # 需要添加的兜底类型
-        fallbacks_to_add = []
-        if not has_person:
-            fallbacks_to_add.append(person_fallback)
-        if not has_organization:
-            fallbacks_to_add.append(organization_fallback)
-        
-        if fallbacks_to_add:
-            current_count = len(result["entity_types"])
-            needed_slots = len(fallbacks_to_add)
-            
-            # 如果添加后会超过 10 个，需要移除一些现有类型
-            if current_count + needed_slots > MAX_ENTITY_TYPES:
-                # 计算需要移除多少个
-                to_remove = current_count + needed_slots - MAX_ENTITY_TYPES
-                # 从末尾移除（保留前面更重要的具体类型）
-                result["entity_types"] = result["entity_types"][:-to_remove]
-            
-            # 添加兜底类型
-            result["entity_types"].extend(fallbacks_to_add)
-        
-        # 最终确保不超过限制（防御性编程）
-        if len(result["entity_types"]) > MAX_ENTITY_TYPES:
-            result["entity_types"] = result["entity_types"][:MAX_ENTITY_TYPES]
-        
-        if len(result["edge_types"]) > MAX_EDGE_TYPES:
-            result["edge_types"] = result["edge_types"][:MAX_EDGE_TYPES]
-        
-        return result
+    def _fallback_entity_types(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": "Person",
+                "description": "Any individual person not fitting other specific person types.",
+                "attributes": [
+                    {"name": "full_name", "type": "text", "description": "Full name of the person"},
+                    {"name": "role", "type": "text", "description": "Role or occupation"},
+                ],
+                "examples": ["ordinary citizen", "anonymous netizen"],
+            },
+            {
+                "name": "Organization",
+                "description": "Any organization not fitting other specific organization types.",
+                "attributes": [
+                    {"name": "org_name", "type": "text", "description": "Name of the organization"},
+                    {"name": "org_type", "type": "text", "description": "Type of organization"},
+                ],
+                "examples": ["small business", "community group"],
+            },
+        ]
+
+    def _ensure_fallback_entity_types(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        max_entity_types = 10
+        current_names = {entity.get("name") for entity in entities}
+        missing_fallbacks = [fallback for fallback in self._fallback_entity_types() if fallback["name"] not in current_names]
+        room_needed = len(missing_fallbacks)
+        if room_needed and len(entities) + room_needed > max_entity_types:
+            entities = entities[:max_entity_types - room_needed]
+        entities.extend(missing_fallbacks)
+        return entities[:max_entity_types]
     
     def generate_python_code(self, ontology: Dict[str, Any]) -> str:
-        """
-        将本体定义转换为Python代码（类似ontology.py）
-        
-        Args:
-            ontology: 本体定义
-            
-        Returns:
-            Python代码字符串
-        """
-        code_lines = [
-            '"""',
-            '自定义实体类型定义',
-            '由WorldFish自动生成，用于社会舆论模拟',
-            '"""',
-            '',
-            'from pydantic import Field',
-            'from zep_cloud.external_clients.ontology import EntityModel, EntityText, EdgeModel',
-            '',
-            '',
-            '# ============== 实体类型定义 ==============',
+        """将本体 JSON 转换为 Zep 可加载的 Python 类型定义。"""
+        builder: List[str] = []
+        builder.extend(self._python_header_lines())
+        builder.extend(self._python_model_block(ontology.get("entity_types", []), "entity"))
+        builder.extend(self._python_model_block(ontology.get("edge_types", []), "edge"))
+        builder.extend(self._python_registry_block(ontology))
+        return '\n'.join(builder)
+
+    def _python_header_lines(self) -> List[str]:
+        return [
+            '"""WorldFish 自动生成的图谱本体类型。"""',
+            '# 注意：当前使用本地图谱，无需 zep_cloud 依赖。',
             '',
         ]
-        
-        # 生成实体类型
+
+    def _python_class_name_for_edge(self, edge_name: str) -> str:
+        return ''.join(piece.capitalize() for piece in edge_name.split('_') if piece)
+
+    def _python_field_lines(self, attrs: List[Dict[str, Any]]) -> List[str]:
+        if not attrs:
+            return ['    pass']
+        lines: List[str] = []
+        for attr in attrs:
+            field_name = attr["name"]
+            field_desc = attr.get("description", field_name)
+            lines.extend([
+                f'    {field_name}: EntityText = Field(',
+                f'        description="{field_desc}",',
+                '        default=None',
+                '    )',
+            ])
+        return lines
+
+    def _python_model_block(self, items: List[Dict[str, Any]], model_kind: str) -> List[str]:
+        # 本地图谱模式：不再生成 Zep ontology model，仅输出实体注册表。
+        title = '# ---- 实体注册 ----' if model_kind == 'entity' else '# ---- 关系注册 ----'
+        lines = [title, '']
+        for item in items:
+            raw_name = item["name"]
+            lines.append(f"# {raw_name}: {item.get('description', '')}")
+        return lines
+
+    def _python_registry_block(self, ontology: Dict[str, Any]) -> List[str]:
+        entity_lines = ['ENTITY_TYPES = {']
         for entity in ontology.get("entity_types", []):
-            name = entity["name"]
-            desc = entity.get("description", f"A {name} entity.")
-            
-            code_lines.append(f'class {name}(EntityModel):')
-            code_lines.append(f'    """{desc}"""')
-            
-            attrs = entity.get("attributes", [])
-            if attrs:
-                for attr in attrs:
-                    attr_name = attr["name"]
-                    attr_desc = attr.get("description", attr_name)
-                    code_lines.append(f'    {attr_name}: EntityText = Field(')
-                    code_lines.append(f'        description="{attr_desc}",')
-                    code_lines.append(f'        default=None')
-                    code_lines.append(f'    )')
-            else:
-                code_lines.append('    pass')
-            
-            code_lines.append('')
-            code_lines.append('')
-        
-        code_lines.append('# ============== 关系类型定义 ==============')
-        code_lines.append('')
-        
-        # 生成关系类型
+            entity_lines.append(f'    "{entity["name"]}": {entity["name"]},')
+        entity_lines.append('}')
+
+        edge_lines = ['EDGE_TYPES = {']
         for edge in ontology.get("edge_types", []):
-            name = edge["name"]
-            # 转换为PascalCase类名
-            class_name = ''.join(word.capitalize() for word in name.split('_'))
-            desc = edge.get("description", f"A {name} relationship.")
-            
-            code_lines.append(f'class {class_name}(EdgeModel):')
-            code_lines.append(f'    """{desc}"""')
-            
-            attrs = edge.get("attributes", [])
-            if attrs:
-                for attr in attrs:
-                    attr_name = attr["name"]
-                    attr_desc = attr.get("description", attr_name)
-                    code_lines.append(f'    {attr_name}: EntityText = Field(')
-                    code_lines.append(f'        description="{attr_desc}",')
-                    code_lines.append(f'        default=None')
-                    code_lines.append(f'    )')
-            else:
-                code_lines.append('    pass')
-            
-            code_lines.append('')
-            code_lines.append('')
-        
-        # 生成类型字典
-        code_lines.append('# ============== 类型配置 ==============')
-        code_lines.append('')
-        code_lines.append('ENTITY_TYPES = {')
-        for entity in ontology.get("entity_types", []):
-            name = entity["name"]
-            code_lines.append(f'    "{name}": {name},')
-        code_lines.append('}')
-        code_lines.append('')
-        code_lines.append('EDGE_TYPES = {')
+            edge_lines.append(f'    "{edge["name"]}": {self._python_class_name_for_edge(edge["name"])},')
+        edge_lines.append('}')
+
+        source_target_lines = ['EDGE_SOURCE_TARGETS = {']
         for edge in ontology.get("edge_types", []):
-            name = edge["name"]
-            class_name = ''.join(word.capitalize() for word in name.split('_'))
-            code_lines.append(f'    "{name}": {class_name},')
-        code_lines.append('}')
-        code_lines.append('')
-        
-        # 生成边的source_targets映射
-        code_lines.append('EDGE_SOURCE_TARGETS = {')
-        for edge in ontology.get("edge_types", []):
-            name = edge["name"]
-            source_targets = edge.get("source_targets", [])
-            if source_targets:
-                st_list = ', '.join([
-                    f'{{"source": "{st.get("source", "Entity")}", "target": "{st.get("target", "Entity")}"}}'
-                    for st in source_targets
-                ])
-                code_lines.append(f'    "{name}": [{st_list}],')
-        code_lines.append('}')
-        
-        return '\n'.join(code_lines)
+            st_list = edge.get("source_targets", [])
+            if not st_list:
+                continue
+            serialized = ', '.join(
+                f'{{"source": "{st.get("source", "Entity")}", "target": "{st.get("target", "Entity")}"}}'
+                for st in st_list
+            )
+            source_target_lines.append(f'    "{edge["name"]}": [{serialized}],')
+        source_target_lines.append('}')
+        return ['', '# ---- 注册表 ----', '', *entity_lines, '', *edge_lines, '', *source_target_lines]
 

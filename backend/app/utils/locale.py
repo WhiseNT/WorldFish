@@ -1,69 +1,67 @@
+"""
+国际化翻译工具
+支持多语言消息查找和插值，线程安全。
+"""
+
 import json
 import os
 import threading
 from flask import request, has_request_context
 
-_thread_local = threading.local()
+_STORAGE = threading.local()
+_ROOT = os.path.dirname(__file__)
+_LOCALE_DIR = os.path.join(_ROOT, '..', '..', '..', 'locales')
 
-_locales_dir = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'locales')
 
-# Load language registry
-with open(os.path.join(_locales_dir, 'languages.json'), 'r', encoding='utf-8') as f:
-    _languages = json.load(f)
+def _load_json(name):
+    with open(os.path.join(_LOCALE_DIR, name), 'r', encoding='utf-8') as handle:
+        return json.load(handle)
 
-# Load translation files
-_translations = {}
-for filename in os.listdir(_locales_dir):
-    if filename.endswith('.json') and filename != 'languages.json':
-        locale_name = filename[:-5]
-        with open(os.path.join(_locales_dir, filename), 'r', encoding='utf-8') as f:
-            _translations[locale_name] = json.load(f)
+
+_LANG_INDEX = _load_json('languages.json')
+_MESSAGE_BUNDLES = {
+    entry.name[:-5]: _load_json(entry.name)
+    for entry in os.scandir(_LOCALE_DIR)
+    if entry.name.endswith('.json') and entry.name != 'languages.json'
+}
+
+
+def _walk_dotted(mapping, key):
+    """沿点分隔键逐层取值，失败返回 None。"""
+    cur = mapping
+    for segment in key.split('.'):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(segment)
+    return cur
 
 
 def set_locale(locale: str):
-    """Set locale for current thread. Call at the start of background threads."""
-    _thread_local.locale = locale
+    _STORAGE.locale = locale
 
 
 def get_locale() -> str:
     if has_request_context():
-        raw = request.headers.get('Accept-Language', 'zh')
-        return raw if raw in _translations else 'zh'
-    return getattr(_thread_local, 'locale', 'zh')
+        candidate = request.headers.get('Accept-Language', 'zh')
+        return candidate if candidate in _MESSAGE_BUNDLES else 'zh'
+    return getattr(_STORAGE, 'locale', 'zh')
 
 
 def t(key: str, **kwargs) -> str:
-    locale = get_locale()
-    messages = _translations.get(locale, _translations.get('zh', {}))
-
-    value = messages
-    for part in key.split('.'):
-        if isinstance(value, dict):
-            value = value.get(part)
-        else:
-            value = None
-            break
-
-    if value is None:
-        value = _translations.get('zh', {})
-        for part in key.split('.'):
-            if isinstance(value, dict):
-                value = value.get(part)
-            else:
-                value = None
-                break
-
+    lang = get_locale()
+    bundle = _MESSAGE_BUNDLES.get(lang, _MESSAGE_BUNDLES.get('zh', {}))
+    value = _walk_dotted(bundle, key)
+    if value is None and lang != 'zh':
+        value = _walk_dotted(_MESSAGE_BUNDLES.get('zh', {}), key)
     if value is None:
         return key
-
     if kwargs:
-        for k, v in kwargs.items():
-            value = value.replace(f'{{{k}}}', str(v))
-
+        for placeholder, replacement in kwargs.items():
+            value = value.replace(f'{{{placeholder}}}', str(replacement))
     return value
 
 
 def get_language_instruction() -> str:
-    locale = get_locale()
-    lang_config = _languages.get(locale, _languages.get('zh', {}))
-    return lang_config.get('llmInstruction', '请使用中文回答。')
+    lang = get_locale()
+    entry = _LANG_INDEX.get(lang, _LANG_INDEX.get('zh', {}))
+    return entry.get('llmInstruction', '请使用中文回答。')

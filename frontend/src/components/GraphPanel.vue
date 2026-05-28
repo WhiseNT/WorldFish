@@ -7,12 +7,12 @@
         <div class="search-box">
           <input 
             type="text" 
-            v-model="searchQuery" 
-            @keyup.enter="handleSearch"
+            v-model="graphSearchText" 
+            @keyup.enter="submitGraphSearch"
             :placeholder="$t('graph.searchEntity', 'Search entities...')" 
             class="search-input"
           />
-          <button class="search-btn" @click="handleSearch" :title="$t('graph.searchEntity', '搜索')">
+          <button class="search-btn" @click="submitGraphSearch" :title="$t('graph.searchEntity', '搜索')">
             <SvgIcon name="search" :size="15" />
           </button>
         </div>
@@ -26,10 +26,10 @@
       </div>
     </div>
     
-    <div class="graph-container" ref="graphContainer">
+    <div class="graph-container" ref="canvasHost">
       <!-- 图谱可视化 -->
       <div v-if="graphData" class="graph-view">
-        <svg ref="graphSvg" class="graph-svg"></svg>
+        <svg ref="canvasSvg" class="graph-svg"></svg>
         
         <!-- 构建中/模拟中提示 -->
         <div v-if="currentPhase === 1 || isSimulating" class="graph-building-hint">
@@ -43,7 +43,7 @@
         </div>
         
         <!-- 模拟结束后的提示 -->
-        <div v-if="showSimulationFinishedHint" class="graph-building-hint finished-hint">
+        <div v-if="showMemorySettledHint" class="graph-building-hint finished-hint">
           <div class="hint-icon-wrapper">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hint-icon">
               <circle cx="12" cy="12" r="10"></circle>
@@ -52,7 +52,7 @@
             </svg>
           </div>
           <span class="hint-text">{{ $t('graph.pendingContentHint') }}</span>
-          <button class="hint-close-btn" @click="dismissFinishedHint" :title="$t('graph.closeHint')">
+          <button class="hint-close-btn" @click="dismissMemorySettledHint" :title="$t('graph.closeHint')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -61,38 +61,38 @@
         </div>
         
         <!-- 节点/边详情面板 -->
-        <div v-if="selectedItem" class="detail-panel">
+        <div v-if="inspectorTarget" class="detail-panel">
           <div class="detail-panel-header">
-            <span class="detail-title">{{ selectedItem.type === 'node' ? $t('graph.nodeDetails') : $t('graph.relationship') }}</span>
-            <span v-if="selectedItem.type === 'node'" class="detail-type-badge" :style="{ background: selectedItem.color, color: '#fff' }">
-              {{ selectedItem.entityType }}
+            <span class="detail-title">{{ inspectorTarget.type === 'node' ? $t('graph.nodeDetails') : $t('graph.relationship') }}</span>
+            <span v-if="inspectorTarget.type === 'node'" class="detail-type-badge" :style="{ background: inspectorTarget.color, color: '#fff' }">
+              {{ inspectorTarget.entityType }}
             </span>
-            <button class="detail-close" @click="closeDetailPanel" title="关闭详情"><SvgIcon name="close" :size="14" /></button>
+            <button class="detail-close" @click="clearInspectorTarget" title="关闭详情"><SvgIcon name="close" :size="14" /></button>
           </div>
           
           <!-- 节点详情 -->
-          <div v-if="selectedItem.type === 'node'" class="detail-content">
+          <div v-if="inspectorTarget.type === 'node'" class="detail-content">
             <div class="detail-row">
               <span class="detail-label">Name:</span>
-              <span class="detail-value">{{ selectedItem.data.name }}</span>
+              <span class="detail-value">{{ inspectorTarget.data.name }}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">UUID:</span>
-              <span class="detail-value uuid-text">{{ selectedItem.data.uuid }}</span>
+              <span class="detail-value uuid-text">{{ inspectorTarget.data.uuid }}</span>
             </div>
-            <div class="detail-row" v-if="selectedItem.data.created_at">
+            <div class="detail-row" v-if="inspectorTarget.data.created_at">
               <span class="detail-label">Created:</span>
-              <span class="detail-value">{{ formatDateTime(selectedItem.data.created_at) }}</span>
+              <span class="detail-value">{{ formatGraphTimestamp(inspectorTarget.data.created_at) }}</span>
             </div>
             
             <!-- Properties -->
-            <div class="detail-section" v-if="selectedItem.data.attributes && Object.keys(selectedItem.data.attributes).length > 0">
-              <div class="section-title" @click="toggleSection('properties')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+            <div class="detail-section" v-if="inspectorTarget.data.attributes && Object.keys(inspectorTarget.data.attributes).length > 0">
+              <div class="section-title" @click="toggleInspectorBlock('properties')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
                 <span>Properties:</span>
-                <span class="toggle-icon">{{ collapsedSections.properties ? '+' : '−' }}</span>
+                <span class="toggle-icon">{{ foldedInspectorBlocks.properties ? '+' : '−' }}</span>
               </div>
-              <div class="properties-list" v-show="!collapsedSections.properties">
-                <div v-for="(value, key) in selectedItem.data.attributes" :key="key" class="property-item">
+              <div class="properties-list" v-show="!foldedInspectorBlocks.properties">
+                <div v-for="(value, key) in inspectorTarget.data.attributes" :key="key" class="property-item">
                   <span class="property-key">{{ key }}:</span>
                   <span class="property-value">{{ value || 'None' }}</span>
                 </div>
@@ -100,22 +100,22 @@
             </div>
             
             <!-- Summary -->
-            <div class="detail-section" v-if="selectedItem.data.summary">
-              <div class="section-title" @click="toggleSection('summary')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+            <div class="detail-section" v-if="inspectorTarget.data.summary">
+              <div class="section-title" @click="toggleInspectorBlock('summary')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
                 <span>Summary:</span>
-                <span class="toggle-icon">{{ collapsedSections.summary ? '+' : '−' }}</span>
+                <span class="toggle-icon">{{ foldedInspectorBlocks.summary ? '+' : '−' }}</span>
               </div>
-              <div class="summary-text" v-show="!collapsedSections.summary">{{ selectedItem.data.summary }}</div>
+              <div class="summary-text" v-show="!foldedInspectorBlocks.summary">{{ inspectorTarget.data.summary }}</div>
             </div>
             
             <!-- Labels -->
-            <div class="detail-section" v-if="selectedItem.data.labels && selectedItem.data.labels.length > 0">
-              <div class="section-title" @click="toggleSection('labels')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+            <div class="detail-section" v-if="inspectorTarget.data.labels && inspectorTarget.data.labels.length > 0">
+              <div class="section-title" @click="toggleInspectorBlock('labels')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
                 <span>Labels:</span>
-                <span class="toggle-icon">{{ collapsedSections.labels ? '+' : '−' }}</span>
+                <span class="toggle-icon">{{ foldedInspectorBlocks.labels ? '+' : '−' }}</span>
               </div>
-              <div class="labels-list" v-show="!collapsedSections.labels">
-                <span v-for="label in selectedItem.data.labels" :key="label" class="label-tag">
+              <div class="labels-list" v-show="!foldedInspectorBlocks.labels">
+                <span v-for="label in inspectorTarget.data.labels" :key="label" class="label-tag">
                   {{ label }}
                 </span>
               </div>
@@ -123,8 +123,8 @@
 
             <!-- 对话按钮 -->
             <div class="detail-actions">
-              <button class="btn btn-primary btn-sm" @click="$emit('entity-click', selectedItem.data)">
-                与「{{ selectedItem.data.name }}」对话
+              <button class="btn btn-primary btn-sm" @click="$emit('entity-click', inspectorTarget.data)">
+                与「{{ inspectorTarget.data.name }}」对话
               </button>
             </div>
           </div>
@@ -132,29 +132,29 @@
           <!-- 边详情 -->
           <div v-else class="detail-content">
             <!-- 自环组详情 -->
-            <template v-if="selectedItem.data.isSelfLoopGroup">
+            <template v-if="inspectorTarget.data.isSelfLoopGroup">
               <div class="edge-relation-header self-loop-header">
-                {{ selectedItem.data.source_name }} - Self Relations
-                <span class="self-loop-count">{{ selectedItem.data.selfLoopCount }} items</span>
+                {{ inspectorTarget.data.source_name }} - Self Relations
+                <span class="self-loop-count">{{ inspectorTarget.data.selfLoopCount }} items</span>
               </div>
               
               <div class="self-loop-list">
                 <div 
-                  v-for="(loop, idx) in selectedItem.data.selfLoopEdges" 
+                  v-for="(loop, idx) in inspectorTarget.data.selfLoopEdges" 
                   :key="loop.uuid || idx" 
                   class="self-loop-item"
-                  :class="{ expanded: expandedSelfLoops.has(loop.uuid || idx) }"
+                  :class="{ expanded: expandedLoopEntries.has(loop.uuid || idx) }"
                 >
                   <div 
                     class="self-loop-item-header"
-                    @click="toggleSelfLoop(loop.uuid || idx)"
+                    @click="toggleLoopEntry(loop.uuid || idx)"
                   >
                     <span class="self-loop-index">#{{ idx + 1 }}</span>
                     <span class="self-loop-name">{{ loop.name || loop.fact_type || 'RELATED' }}</span>
-                    <span class="self-loop-toggle">{{ expandedSelfLoops.has(loop.uuid || idx) ? '−' : '+' }}</span>
+                    <span class="self-loop-toggle">{{ expandedLoopEntries.has(loop.uuid || idx) ? '−' : '+' }}</span>
                   </div>
                   
-                  <div class="self-loop-item-content" v-show="expandedSelfLoops.has(loop.uuid || idx)">
+                  <div class="self-loop-item-content" v-show="expandedLoopEntries.has(loop.uuid || idx)">
                     <div class="detail-row" v-if="loop.uuid">
                       <span class="detail-label">UUID:</span>
                       <span class="detail-value uuid-text">{{ loop.uuid }}</span>
@@ -169,7 +169,7 @@
                     </div>
                     <div class="detail-row" v-if="loop.created_at">
                       <span class="detail-label">Created:</span>
-                      <span class="detail-value">{{ formatDateTime(loop.created_at) }}</span>
+                      <span class="detail-value">{{ formatGraphTimestamp(loop.created_at) }}</span>
                     </div>
                     <div v-if="loop.episodes && loop.episodes.length > 0" class="self-loop-episodes">
                       <span class="detail-label">Episodes:</span>
@@ -185,46 +185,46 @@
             <!-- 普通边详情 -->
             <template v-else>
               <div class="edge-relation-header">
-                {{ selectedItem.data.source_name }} → {{ selectedItem.data.name || 'RELATED_TO' }} → {{ selectedItem.data.target_name }}
+                {{ inspectorTarget.data.source_name }} → {{ inspectorTarget.data.name || 'RELATED_TO' }} → {{ inspectorTarget.data.target_name }}
               </div>
               
               <div class="detail-row">
                 <span class="detail-label">UUID:</span>
-                <span class="detail-value uuid-text">{{ selectedItem.data.uuid }}</span>
+                <span class="detail-value uuid-text">{{ inspectorTarget.data.uuid }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">Label:</span>
-                <span class="detail-value">{{ selectedItem.data.name || 'RELATED_TO' }}</span>
+                <span class="detail-value">{{ inspectorTarget.data.name || 'RELATED_TO' }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">Type:</span>
-                <span class="detail-value">{{ selectedItem.data.fact_type || 'Unknown' }}</span>
+                <span class="detail-value">{{ inspectorTarget.data.fact_type || 'Unknown' }}</span>
               </div>
-              <div class="detail-row" v-if="selectedItem.data.fact">
+              <div class="detail-row" v-if="inspectorTarget.data.fact">
                 <span class="detail-label">Fact:</span>
-                <span class="detail-value fact-text">{{ selectedItem.data.fact }}</span>
+                <span class="detail-value fact-text">{{ inspectorTarget.data.fact }}</span>
               </div>
               
               <!-- Episodes -->
-              <div class="detail-section" v-if="selectedItem.data.episodes && selectedItem.data.episodes.length > 0">
-                <div class="section-title" @click="toggleSection('episodes')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+              <div class="detail-section" v-if="inspectorTarget.data.episodes && inspectorTarget.data.episodes.length > 0">
+                <div class="section-title" @click="toggleInspectorBlock('episodes')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
                   <span>Episodes:</span>
-                  <span class="toggle-icon">{{ collapsedSections.episodes ? '+' : '−' }}</span>
+                  <span class="toggle-icon">{{ foldedInspectorBlocks.episodes ? '+' : '−' }}</span>
                 </div>
-                <div class="episodes-list" v-show="!collapsedSections.episodes">
-                  <span v-for="ep in selectedItem.data.episodes" :key="ep" class="episode-tag">
+                <div class="episodes-list" v-show="!foldedInspectorBlocks.episodes">
+                  <span v-for="ep in inspectorTarget.data.episodes" :key="ep" class="episode-tag">
                     {{ ep }}
                   </span>
                 </div>
               </div>
               
-              <div class="detail-row" v-if="selectedItem.data.created_at">
+              <div class="detail-row" v-if="inspectorTarget.data.created_at">
                 <span class="detail-label">Created:</span>
-                <span class="detail-value">{{ formatDateTime(selectedItem.data.created_at) }}</span>
+                <span class="detail-value">{{ formatGraphTimestamp(inspectorTarget.data.created_at) }}</span>
               </div>
-              <div class="detail-row" v-if="selectedItem.data.valid_at">
+              <div class="detail-row" v-if="inspectorTarget.data.valid_at">
                 <span class="detail-label">Valid From:</span>
-                <span class="detail-value">{{ formatDateTime(selectedItem.data.valid_at) }}</span>
+                <span class="detail-value">{{ formatGraphTimestamp(inspectorTarget.data.valid_at) }}</span>
               </div>
             </template>
           </div>
@@ -245,10 +245,10 @@
     </div>
 
     <!-- 底部图例 (Bottom Left) -->
-    <div v-if="graphData && entityTypes.length" class="graph-legend">
+    <div v-if="graphData && legendEntityTypes.length" class="graph-legend">
       <span class="legend-title">Entity Types</span>
       <div class="legend-items">
-        <div class="legend-item" v-for="type in entityTypes" :key="type.name">
+        <div class="legend-item" v-for="type in legendEntityTypes" :key="type.name">
           <span class="legend-dot" :style="{ background: type.color }"></span>
           <span class="legend-label">{{ type.name }}</span>
         </div>
@@ -258,7 +258,7 @@
     <!-- 显示边标签开关 -->
     <div v-if="graphData" class="edge-labels-toggle">
       <label class="toggle-switch">
-        <input type="checkbox" v-model="showEdgeLabels" />
+        <input type="checkbox" v-model="edgeCaptionVisible" />
         <span class="slider"></span>
       </label>
       <span class="toggle-label">Show Edge Labels</span>
@@ -280,61 +280,61 @@ const props = defineProps({
 
 const emit = defineEmits(['refresh', 'toggle-maximize', 'entity-click'])
 
-const graphContainer = ref(null)
-const graphSvg = ref(null)
-const selectedItem = ref(null)
-const showEdgeLabels = ref(true) // 默认显示边标签
-const expandedSelfLoops = ref(new Set()) // 展开的自环项
-const showSimulationFinishedHint = ref(false) // 模拟结束后的提示
-const wasSimulating = ref(false) // 追踪之前是否在模拟中
+const canvasHost = ref(null)
+const canvasSvg = ref(null)
+const inspectorTarget = ref(null)
+const edgeCaptionVisible = ref(true) // 默认显示边标签
+const expandedLoopEntries = ref(new Set()) // 展开的自环项
+const showMemorySettledHint = ref(false) // 模拟结束后的提示
+const simulationWasActive = ref(false) // 追踪之前是否在模拟中
 
 // 节点详情部分的折叠状态
-const collapsedSections = ref({
+const foldedInspectorBlocks = ref({
   properties: false,
   summary: false,
   labels: false,
   episodes: false
 })
 
-const toggleSection = (section) => {
-  collapsedSections.value[section] = !collapsedSections.value[section]
+const toggleInspectorBlock = (section) => {
+  foldedInspectorBlocks.value[section] = !foldedInspectorBlocks.value[section]
 }
 
 // 关闭模拟结束提示
-const dismissFinishedHint = () => {
-  showSimulationFinishedHint.value = false
+const dismissMemorySettledHint = () => {
+  showMemorySettledHint.value = false
 }
 
 // 监听 isSimulating 变化，检测模拟结束
 watch(() => props.isSimulating, (newValue, oldValue) => {
-  if (wasSimulating.value && !newValue) {
+  if (simulationWasActive.value && !newValue) {
     // 从模拟中变为非模拟状态，显示结束提示
-    showSimulationFinishedHint.value = true
+    showMemorySettledHint.value = true
   }
-  wasSimulating.value = newValue
+  simulationWasActive.value = newValue
 }, { immediate: true })
 
 // 切换自环项展开/折叠状态
-const toggleSelfLoop = (id) => {
-  const newSet = new Set(expandedSelfLoops.value)
+const toggleLoopEntry = (id) => {
+  const newSet = new Set(expandedLoopEntries.value)
   if (newSet.has(id)) {
     newSet.delete(id)
   } else {
     newSet.add(id)
   }
-  expandedSelfLoops.value = newSet
+  expandedLoopEntries.value = newSet
 }
 
 // 搜索相关状态和方法
-const searchQuery = ref('')
+const graphSearchText = ref('')
 let currentZoom = null
 let currentSvgSelection = null
 let d3Nodes = null
 
-const handleSearch = () => {
-  if (!searchQuery.value.trim() || !d3Nodes || !currentSvgSelection || !currentZoom) return
+const submitGraphSearch = () => {
+  if (!graphSearchText.value.trim() || !d3Nodes || !currentSvgSelection || !currentZoom) return
   
-  const query = searchQuery.value.toLowerCase()
+  const query = graphSearchText.value.toLowerCase()
   let targetNodeData = null
   let targetElement = null
   
@@ -347,7 +347,7 @@ const handleSearch = () => {
   })
   
   if (targetNodeData && targetElement) {
-    const container = graphContainer.value
+    const container = canvasHost.value
     const width = container.clientWidth
     const height = container.clientHeight
     
@@ -367,7 +367,7 @@ const handleSearch = () => {
 }
 
 // 计算实体类型用于图例
-const entityTypes = computed(() => {
+const legendEntityTypes = computed(() => {
   if (!props.graphData?.nodes) return []
   const typeMap = {}
   // 美观的颜色调色板
@@ -384,7 +384,7 @@ const entityTypes = computed(() => {
 })
 
 // 格式化时间
-const formatDateTime = (dateStr) => {
+const formatGraphTimestamp = (dateStr) => {
   if (!dateStr) return ''
   try {
     const date = new Date(dateStr)
@@ -401,28 +401,28 @@ const formatDateTime = (dateStr) => {
   }
 }
 
-const closeDetailPanel = () => {
-  selectedItem.value = null
-  expandedSelfLoops.value = new Set() // 重置展开状态
+const clearInspectorTarget = () => {
+  inspectorTarget.value = null
+  expandedLoopEntries.value = new Set() // 重置展开状态
 }
 
 let currentSimulation = null
 let linkLabelsRef = null
 let linkLabelBgRef = null
 
-const renderGraph = () => {
-  if (!graphSvg.value || !props.graphData) return
+const paintGraphCanvas = () => {
+  if (!canvasSvg.value || !props.graphData) return
   
   // 停止之前的仿真
   if (currentSimulation) {
     currentSimulation.stop()
   }
   
-  const container = graphContainer.value
+  const container = canvasHost.value
   const width = container.clientWidth
   const height = container.clientHeight
   
-  const svg = d3.select(graphSvg.value)
+  const svg = d3.select(canvasSvg.value)
     .attr('width', width)
     .attr('height', height)
     .attr('viewBox', `0 0 ${width} ${height}`)
@@ -550,7 +550,7 @@ const renderGraph = () => {
     
   // Color scale
   const colorMap = {}
-  entityTypes.value.forEach(t => colorMap[t.name] = t.color)
+  legendEntityTypes.value.forEach(t => colorMap[t.name] = t.color)
   const getColor = (type) => colorMap[type] || '#999'
 
   // Simulation - 根据边数量动态调整节点间距
@@ -672,7 +672,7 @@ const renderGraph = () => {
       // 高亮当前选中的边
       d3.select(event.target).attr('stroke', '#3498db').attr('stroke-width', 3)
       
-      selectedItem.value = {
+      inspectorTarget.value = {
         type: 'edge',
         data: d.rawData
       }
@@ -687,7 +687,7 @@ const renderGraph = () => {
     .attr('ry', 3)
     .style('cursor', 'pointer')
     .style('pointer-events', 'all')
-    .style('display', showEdgeLabels.value ? 'block' : 'none')
+    .style('display', edgeCaptionVisible.value ? 'block' : 'none')
     .on('click', (event, d) => {
       event.stopPropagation()
       linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
@@ -697,7 +697,7 @@ const renderGraph = () => {
       link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
       d3.select(event.target).attr('fill', 'rgba(52, 152, 219, 0.1)')
       
-      selectedItem.value = {
+      inspectorTarget.value = {
         type: 'edge',
         data: d.rawData
       }
@@ -715,7 +715,7 @@ const renderGraph = () => {
     .style('cursor', 'pointer')
     .style('pointer-events', 'all')
     .style('font-family', 'system-ui, sans-serif')
-    .style('display', showEdgeLabels.value ? 'block' : 'none')
+    .style('display', edgeCaptionVisible.value ? 'block' : 'none')
     .on('click', (event, d) => {
       event.stopPropagation()
       linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
@@ -725,7 +725,7 @@ const renderGraph = () => {
       link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
       d3.select(event.target).attr('fill', '#3498db')
       
-      selectedItem.value = {
+      inspectorTarget.value = {
         type: 'edge',
         data: d.rawData
       }
@@ -795,7 +795,7 @@ const renderGraph = () => {
         .attr('stroke', '#ffffaf')
         .attr('stroke-width', 2.5)
       
-      selectedItem.value = {
+      inspectorTarget.value = {
         type: 'node',
         data: d.rawData,
         entityType: d.type,
@@ -803,12 +803,12 @@ const renderGraph = () => {
       }
     })
     .on('mouseenter', (event, d) => {
-      if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
+      if (!inspectorTarget.value || inspectorTarget.value.data?.uuid !== d.rawData.uuid) {
         d3.select(event.target).attr('stroke', '#333').attr('stroke-width', 3)
       }
     })
     .on('mouseleave', (event, d) => {
-      if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
+      if (!inspectorTarget.value || inspectorTarget.value.data?.uuid !== d.rawData.uuid) {
         d3.select(event.target).attr('stroke', '#fff').attr('stroke-width', 2.5)
       }
     })
@@ -865,7 +865,7 @@ const renderGraph = () => {
   
   // 点击空白处关闭详情面板
   svg.on('click', () => {
-    selectedItem.value = null
+    inspectorTarget.value = null
     node.attr('stroke', '#fff').attr('stroke-width', 2.5)
     linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
     linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
@@ -874,11 +874,11 @@ const renderGraph = () => {
 }
 
 watch(() => props.graphData, () => {
-  nextTick(renderGraph)
+  nextTick(paintGraphCanvas)
 }, { deep: true, immediate: true })
 
 // 监听边标签显示开关
-watch(showEdgeLabels, (newVal) => {
+watch(edgeCaptionVisible, (newVal) => {
   if (linkLabelsRef) {
     linkLabelsRef.style('display', newVal ? 'block' : 'none')
   }
@@ -887,19 +887,19 @@ watch(showEdgeLabels, (newVal) => {
   }
 })
 
-const handleResize = () => {
-  nextTick(renderGraph)
+const repaintAfterResize = () => {
+  nextTick(paintGraphCanvas)
 }
 
 onMounted(() => {
-  window.addEventListener('resize', handleResize)
+  window.addEventListener('resize', repaintAfterResize)
   if (props.graphData) {
-    nextTick(renderGraph)
+    nextTick(paintGraphCanvas)
   }
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
+  window.removeEventListener('resize', repaintAfterResize)
   if (currentSimulation) {
     currentSimulation.stop()
   }

@@ -12,7 +12,6 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from ..utils.logger import get_logger
-from .zep_graph_memory_updater import AgentActivity, ZepGraphMemoryManager
 
 logger = get_logger('worldfish.simulation_runner')
 
@@ -269,14 +268,8 @@ class SimulationRunner:
         cls._save_run_state(state)
 
         if enable_graph_memory_update:
-            if not graph_id:
-                raise ValueError("启用图谱记忆更新时必须提供 graph_id")
-            try:
-                ZepGraphMemoryManager.create_updater(simulation_id, graph_id)
-                cls._graph_memory_enabled[simulation_id] = True
-            except Exception as exc:
-                logger.error(f"创建图谱记忆更新器失败: {exc}")
-                cls._graph_memory_enabled[simulation_id] = False
+            # 图谱记忆更新功能需要 Zep API，当前已移除。
+            logger.info(f"Simulation {simulation_id}: graph memory update requested but Zep is not available, skipping")
         else:
             cls._graph_memory_enabled[simulation_id] = False
 
@@ -407,10 +400,6 @@ class SimulationRunner:
             cls._save_run_state(state)
         finally:
             if cls._graph_memory_enabled.get(simulation_id, False):
-                try:
-                    ZepGraphMemoryManager.stop_updater(simulation_id)
-                except Exception as exc:
-                    logger.error(f"停止图谱记忆更新器失败: {exc}")
                 cls._graph_memory_enabled.pop(simulation_id, None)
             cls._runner_threads.pop(simulation_id, None)
             cls._stop_flags.pop(simulation_id, None)
@@ -509,20 +498,8 @@ class SimulationRunner:
 
     @classmethod
     def _queue_graph_memory_update(cls, simulation_id: str, action: AgentAction):
-        if not cls._graph_memory_enabled.get(simulation_id, False):
-            return
-        updater = ZepGraphMemoryManager.get_updater(simulation_id)
-        if not updater:
-            return
-        updater.add_activity(AgentActivity(
-            stream=action.stream,
-            agent_id=action.agent_id,
-            agent_name=action.agent_name,
-            action_type=action.action_type,
-            action_args={**(action.action_args or {}), "result": action.result},
-            round_num=action.round_num,
-            timestamp=action.timestamp,
-        ))
+        # 图谱记忆更新已移除，保留空方法占位
+        pass
 
     @classmethod
     def _write_log(cls, log_file, message: str):
@@ -594,10 +571,6 @@ class SimulationRunner:
             cls._save_run_state(state)
 
         if cls._graph_memory_enabled.get(simulation_id, False):
-            try:
-                ZepGraphMemoryManager.stop_updater(simulation_id)
-            except Exception as exc:
-                logger.error(f"停止图谱记忆更新器失败: {exc}")
             cls._graph_memory_enabled.pop(simulation_id, None)
         logger.info(f"模拟已停止: {simulation_id}")
         return state
@@ -738,12 +711,11 @@ class SimulationRunner:
                 cls._save_run_state(state)
 
         try:
-            ZepGraphMemoryManager.stop_all()
-        except Exception as exc:
-            logger.error(f"停止图谱记忆更新器失败: {exc}")
-        cls._runner_threads.clear()
-        cls._stop_flags.clear()
-        cls._graph_memory_enabled.clear()
+            cls._runner_threads.clear()
+            cls._stop_flags.clear()
+            cls._graph_memory_enabled.clear()
+        except Exception:
+            pass
         logger.info("模拟线程清理完成")
 
     @classmethod

@@ -11,8 +11,7 @@ from flask import request, jsonify
 from . import graph_bp
 from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
-from ..services.graph_builder import GraphBuilderService
-from ..services.local_graph_builder import LocalGraphBuilder
+from ..services.knowledge_graph import LocalGraphBuilder
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
@@ -176,75 +175,51 @@ def generate_ontology():
     """
     try:
         logger.info("=== 开始生成本体定义 ===")
-        
-        # 获取参数
-        simulation_requirement = request.form.get('simulation_requirement', '')
+
+        sim_req = request.form.get('simulation_requirement', '')
         project_name = request.form.get('project_name', 'Unnamed Project')
-        additional_context = request.form.get('additional_context', '')
-        
+        extra_ctx = request.form.get('additional_context', '')
+
         logger.debug(f"项目名称: {project_name}")
-        logger.debug(f"模拟需求: {simulation_requirement[:100]}...")
+        logger.debug(f"模拟需求: {sim_req[:100]}...")
+
+        if not sim_req:
+            return jsonify({"success": False, "error": t('api.requireSimulationRequirement')}), 400
+
+        uploaded = request.files.getlist('files')
+        if not uploaded or all(not f.filename for f in uploaded):
+            return jsonify({"success": False, "error": t('api.requireFileUpload')}), 400
         
-        if not simulation_requirement:
-            return jsonify({
-                "success": False,
-                "error": t('api.requireSimulationRequirement')
-            }), 400
-        
-        # 获取上传的文件
-        uploaded_files = request.files.getlist('files')
-        if not uploaded_files or all(not f.filename for f in uploaded_files):
-            return jsonify({
-                "success": False,
-                "error": t('api.requireFileUpload')
-            }), 400
-        
-        # 创建项目
         project = ProjectManager.create_project(name=project_name)
-        project.simulation_requirement = simulation_requirement
+        project.simulation_requirement = sim_req
         logger.info(f"创建项目: {project.project_id}")
-        
-        # 保存文件并提取文本
-        document_texts = []
-        all_text = ""
-        
-        for file in uploaded_files:
-            if file and file.filename and allowed_file(file.filename):
-                # 保存文件到项目目录
-                file_info = ProjectManager.save_file_to_project(
-                    project.project_id, 
-                    file, 
-                    file.filename
-                )
-                project.files.append({
-                    "filename": file_info["original_filename"],
-                    "size": file_info["size"]
-                })
-                
-                # 提取文本
-                text = FileParser.extract_text(file_info["path"])
-                text = TextProcessor.preprocess_text(text)
-                document_texts.append(text)
-                all_text += f"\n\n=== {file_info['original_filename']} ===\n{text}"
-        
-        if not document_texts:
+
+        documents, full_text = [], ""
+        for file in uploaded:
+            if not (file and file.filename and allowed_file(file.filename)):
+                continue
+            saved = ProjectManager.save_file_to_project(project.project_id, file, file.filename)
+            project.files.append({"filename": saved["original_filename"], "size": saved["size"]})
+            body = TextProcessor.normalize(FileParser.extract_text(saved["path"]))
+            documents.append(body)
+            full_text += f"\n\n=== {saved['original_filename']} ===\n{body}"
+
+        if not documents:
             ProjectManager.delete_project(project.project_id)
             return jsonify({
                 "success": False,
                 "error": t('api.noDocProcessed')
             }), 400
         
-        # 保存提取的文本
-        project.total_text_length = len(all_text)
-        ProjectManager.save_extracted_text(project.project_id, all_text)
-        logger.info(f"文本提取完成，共 {len(all_text)} 字符")
-        
-        # 生成本体
+        project.total_text_length = len(full_text)
+        ProjectManager.save_extracted_text(project.project_id, full_text)
+        logger.info(f"文本提取完成，共 {len(full_text)} 字符")
+
         ontology = _generate_and_save_project_ontology(
             project,
-            document_texts=document_texts,
-            simulation_requirement=simulation_requirement,
-            additional_context=additional_context,
+            document_texts=documents,
+            simulation_requirement=sim_req,
+            additional_context=extra_ctx,
         )
         logger.info(f"=== 本体生成完成 === 项目ID: {project.project_id}")
         
@@ -641,16 +616,10 @@ def list_tasks():
 @graph_bp.route('/data/<graph_id>', methods=['GET'])
 def get_graph_data(graph_id: str):
     """
-    获取图谱数据（节点和边）
+    获取本地图谱数据（节点和边）
     """
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": t('api.zepApiKeyMissing')
-            }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+        builder = LocalGraphBuilder()
         graph_data = builder.get_graph_data(graph_id)
         
         return jsonify({
@@ -669,16 +638,10 @@ def get_graph_data(graph_id: str):
 @graph_bp.route('/delete/<graph_id>', methods=['DELETE'])
 def delete_graph(graph_id: str):
     """
-    删除Zep图谱
+    删除本地图谱
     """
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": t('api.zepApiKeyMissing')
-            }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+        builder = LocalGraphBuilder()
         builder.delete_graph(graph_id)
         
         return jsonify({

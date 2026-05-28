@@ -1,12 +1,12 @@
 """
-Report Agent服务
-使用LangChain + Zep实现ReACT模式的模拟报告生成
+Report Agent 服务
+使用 ReACT 模式生成模拟分析报告
 
 功能：
-1. 根据模拟需求和Zep图谱信息生成报告
+1. 根据模拟需求和本地图谱信息生成报告
 2. 先规划目录结构，然后分段生成
-3. 每段采用ReACT多轮思考与反思模式
-4. 支持与用户对话，在对话中自主调用检索工具
+3. 每段采用 ReACT 多轮思考与反思模式
+4. 支持与用户对话
 """
 
 import os
@@ -22,80 +22,51 @@ from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
-from .zep_tools import (
-    ZepToolsService, 
-    SearchResult, 
-    InsightForgeResult, 
-    PanoramaResult,
-    InterviewResult
-)
+from .knowledge_graph import GraphEntityReader
 
 logger = get_logger('worldfish.report_agent')
 
 
-class ReportLogger:
+class ReportTraceWriter:
+    """报告生成轨迹写入器。
+
+    该类只负责把结构化事件追加到 `agent_log.jsonl`，业务语义由上层便捷方法提供。
     """
-    Report Agent 详细日志记录器
-    
-    在报告文件夹中生成 agent_log.jsonl 文件，记录每一步详细动作。
-    每行是一个完整的 JSON 对象，包含时间戳、动作类型、详细内容等。
-    """
-    
+
+    TRACE_FILENAME = 'agent_log.jsonl'
+
     def __init__(self, report_id: str):
-        """
-        初始化日志记录器
-        
-        Args:
-            report_id: 报告ID，用于确定日志文件路径
-        """
         self.report_id = report_id
-        self.log_file_path = os.path.join(
-            Config.UPLOAD_FOLDER, 'reports', report_id, 'agent_log.jsonl'
-        )
-        self.start_time = datetime.now()
-        self._ensure_log_file()
-    
-    def _ensure_log_file(self):
-        """确保日志文件所在目录存在"""
-        log_dir = os.path.dirname(self.log_file_path)
-        os.makedirs(log_dir, exist_ok=True)
-    
-    def _get_elapsed_time(self) -> float:
-        """获取从开始到现在的耗时（秒）"""
-        return (datetime.now() - self.start_time).total_seconds()
-    
-    def log(
-        self, 
-        action: str, 
-        stage: str,
-        details: Dict[str, Any],
-        section_title: str = None,
-        section_index: int = None
-    ):
-        """
-        记录一条日志
-        
-        Args:
-            action: 动作类型，如 'start', 'tool_call', 'llm_response', 'section_complete' 等
-            stage: 当前阶段，如 'planning', 'generating', 'completed'
-            details: 详细内容字典，不截断
-            section_title: 当前章节标题（可选）
-            section_index: 当前章节索引（可选）
-        """
-        log_entry = {
+        self.started_at = datetime.now()
+        self.trace_path = self._resolve_trace_path(report_id)
+        os.makedirs(os.path.dirname(self.trace_path), exist_ok=True)
+
+    @classmethod
+    def _resolve_trace_path(cls, report_id: str) -> str:
+        return os.path.join(Config.UPLOAD_FOLDER, 'reports', report_id, cls.TRACE_FILENAME)
+
+    def _elapsed_seconds(self) -> float:
+        return (datetime.now() - self.started_at).total_seconds()
+
+    def _append_event(self, event_name: str, phase: str, payload: Dict[str, Any],
+                      section_title: str = None, section_index: int = None):
+        record = {
             "timestamp": datetime.now().isoformat(),
-            "elapsed_seconds": round(self._get_elapsed_time(), 2),
+            "elapsed_seconds": round(self._elapsed_seconds(), 2),
             "report_id": self.report_id,
-            "action": action,
-            "stage": stage,
+            "action": event_name,
+            "stage": phase,
             "section_title": section_title,
             "section_index": section_index,
-            "details": details
+            "details": payload,
         }
-        
-        # 追加写入 JSONL 文件
-        with open(self.log_file_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        with open(self.trace_path, 'a', encoding='utf-8') as fp:
+            fp.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+    # 兼容旧调用名，同时将实现切换到统一事件写入器。
+    def log(self, action: str, stage: str, details: Dict[str, Any],
+            section_title: str = None, section_index: int = None):
+        self._append_event(action, stage, details, section_title, section_index)
     
     def log_start(self, simulation_id: str, graph_id: str, simulation_requirement: str):
         """记录报告生成开始"""
@@ -304,86 +275,62 @@ class ReportLogger:
         )
 
 
-class ReportConsoleLogger:
+# 对外兼容旧名称，内部使用新的职责命名。
+ReportLogger = ReportTraceWriter
+
+
+class ReportRuntimeLogSink:
+    """报告运行时文本日志接收器。
+
+    该对象将 Python logging 输出复制到报告目录下的 console_log.txt，用于前端查看实时过程。
     """
-    Report Agent 控制台日志记录器
     
-    将控制台风格的日志（INFO、WARNING等）写入报告文件夹中的 console_log.txt 文件。
-    这些日志与 agent_log.jsonl 不同，是纯文本格式的控制台输出。
-    """
-    
+    WATCHED_LOGGERS = ('worldfish.report_agent',)
+    LOG_FILENAME = 'console_log.txt'
+
     def __init__(self, report_id: str):
-        """
-        初始化控制台日志记录器
-        
-        Args:
-            report_id: 报告ID，用于确定日志文件路径
-        """
         self.report_id = report_id
-        self.log_file_path = os.path.join(
-            Config.UPLOAD_FOLDER, 'reports', report_id, 'console_log.txt'
-        )
-        self._ensure_log_file()
+        self.log_file_path = os.path.join(Config.UPLOAD_FOLDER, 'reports', report_id, self.LOG_FILENAME)
+        os.makedirs(os.path.dirname(self.log_file_path), exist_ok=True)
         self._file_handler = None
-        self._setup_file_handler()
-    
-    def _ensure_log_file(self):
-        """确保日志文件所在目录存在"""
-        log_dir = os.path.dirname(self.log_file_path)
-        os.makedirs(log_dir, exist_ok=True)
-    
-    def _setup_file_handler(self):
-        """设置文件处理器，将日志同时写入文件"""
+        self._attach_handler()
+
+    def _attach_handler(self):
+        """为报告生成期间的相关 logger 附加文本输出。"""
         import logging
-        
-        # 创建文件处理器
-        self._file_handler = logging.FileHandler(
-            self.log_file_path,
-            mode='a',
-            encoding='utf-8'
-        )
-        self._file_handler.setLevel(logging.INFO)
-        
-        # 使用与控制台相同的简洁格式
-        formatter = logging.Formatter(
-            '[%(asctime)s] %(levelname)s: %(message)s',
-            datefmt='%H:%M:%S'
-        )
-        self._file_handler.setFormatter(formatter)
-        
-        # 添加到 report_agent 相关的 logger
-        loggers_to_attach = [
-            'worldfish.report_agent',
-            'worldfish.zep_tools',
-        ]
-        
-        for logger_name in loggers_to_attach:
+
+        handler = logging.FileHandler(self.log_file_path, mode='a', encoding='utf-8')
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%H:%M:%S'))
+        self._file_handler = handler
+
+        for logger_name in self.WATCHED_LOGGERS:
             target_logger = logging.getLogger(logger_name)
-            # 避免重复添加
-            if self._file_handler not in target_logger.handlers:
-                target_logger.addHandler(self._file_handler)
+            if handler not in target_logger.handlers:
+                target_logger.addHandler(handler)
     
     def close(self):
-        """关闭文件处理器并从 logger 中移除"""
+        """从 logger 中拆下文件 handler。"""
         import logging
-        
-        if self._file_handler:
-            loggers_to_detach = [
-                'worldfish.report_agent',
-                'worldfish.zep_tools',
-            ]
-            
-            for logger_name in loggers_to_detach:
-                target_logger = logging.getLogger(logger_name)
-                if self._file_handler in target_logger.handlers:
-                    target_logger.removeHandler(self._file_handler)
-            
-            self._file_handler.close()
-            self._file_handler = None
+
+        handler = self._file_handler
+        if not handler:
+            return
+
+        for logger_name in self.WATCHED_LOGGERS:
+            target_logger = logging.getLogger(logger_name)
+            if handler in target_logger.handlers:
+                target_logger.removeHandler(handler)
+
+        handler.close()
+        self._file_handler = None
     
     def __del__(self):
         """析构时确保关闭文件处理器"""
         self.close()
+
+
+ReportConsoleLogger = ReportRuntimeLogSink
 
 
 class ReportStatus(str, Enum):
@@ -766,62 +713,46 @@ SECTION_SYSTEM_PROMPT_TEMPLATE = """\
 7. 【再次强调】不要添加任何标题！用**粗体**代替小节标题"""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
-已完成的章节内容（请仔细阅读，避免重复）：
+【已有章节】
 {previous_content}
 
-═══════════════════════════════════════════════════════════════
-【当前任务】撰写章节: {section_title}
-═══════════════════════════════════════════════════════════════
+【本轮写作目标】
+章节名：{section_title}
 
-【重要提醒】
-1. 仔细阅读上方已完成的章节，避免重复相同的内容！
-2. 开始前必须先调用工具获取模拟数据
-3. 请混合使用不同工具，不要只用一种
-4. 报告内容必须来自检索结果，不要使用自己的知识
-
-【⚠️ 格式警告 - 必须遵守】
-- ❌ 不要写任何标题（#、##、###、####都不行）
-- ❌ 不要写"{section_title}"作为开头
-- ✅ 章节标题由系统自动添加
-- ✅ 直接写正文，用**粗体**代替小节标题
-
-请开始：
-1. 首先思考（Thought）这个章节需要什么信息
-2. 然后调用工具（Action）获取模拟数据
-3. 收集足够信息后输出 Final Answer（纯正文，无任何标题）"""
+执行规则：
+- 先检索，再写作；至少结合多类工具证据。
+- 不复述已完成章节中的同一事实链。
+- 正文中不要出现 Markdown 标题；章节标题由系统统一添加。
+- 输出最终正文时必须以 Final Answer: 开头。
+"""
 
 # ── ReACT 循环内消息模板 ──
 
 REACT_OBSERVATION_TEMPLATE = """\
-Observation（检索结果）:
-
-═══ 工具 {tool_name} 返回 ═══
+工具结果：{tool_name}
 {result}
 
-═══════════════════════════════════════════════════════════════
-已调用工具 {tool_calls_count}/{max_tool_calls} 次（已用: {used_tools_str}）{unused_hint}
-- 如果信息充分：以 "Final Answer:" 开头输出章节内容（必须引用上述原文）
-- 如果需要更多信息：调用一个工具继续检索
-═══════════════════════════════════════════════════════════════"""
+工具进度：{tool_calls_count}/{max_tool_calls}；已使用：{used_tools_str}{unused_hint}
+下一步只能二选一：继续调用一个工具，或以 Final Answer: 输出正文。
+"""
 
 REACT_INSUFFICIENT_TOOLS_MSG = (
-    "【注意】你只调用了{tool_calls_count}次工具，至少需要{min_tool_calls}次。"
-    "请再调用工具获取更多模拟数据，然后再输出 Final Answer。{unused_hint}"
+    "证据不足：当前工具调用 {tool_calls_count}/{min_tool_calls}。"
+    "请继续检索后再给 Final Answer。{unused_hint}"
 )
 
 REACT_INSUFFICIENT_TOOLS_MSG_ALT = (
-    "当前只调用了 {tool_calls_count} 次工具，至少需要 {min_tool_calls} 次。"
-    "请调用工具获取模拟数据。{unused_hint}"
+    "还不能收束：已调用 {tool_calls_count} 次，最低要求 {min_tool_calls} 次。{unused_hint}"
 )
 
 REACT_TOOL_LIMIT_MSG = (
-    "工具调用次数已达上限（{tool_calls_count}/{max_tool_calls}），不能再调用工具。"
-    '请立即基于已获取的信息，以 "Final Answer:" 开头输出章节内容。'
+    "工具预算已用完（{tool_calls_count}/{max_tool_calls}）。"
+    '请基于现有证据直接输出 "Final Answer:"。'
 )
 
-REACT_UNUSED_TOOLS_HINT = "\n💡 你还没有使用过: {unused_list}，建议尝试不同工具获取多角度信息"
+REACT_UNUSED_TOOLS_HINT = "\n可补充工具：{unused_list}"
 
-REACT_FORCE_FINAL_MSG = "已达到工具调用限制，请直接输出 Final Answer: 并生成章节内容。"
+REACT_FORCE_FINAL_MSG = "请停止检索，直接以 Final Answer: 生成章节正文。"
 
 # ── Chat prompt ──
 
@@ -886,33 +817,30 @@ class ReportAgent:
         simulation_id: str,
         simulation_requirement: str,
         llm_client: Optional[LLMClient] = None,
-        zep_tools: Optional[ZepToolsService] = None
     ):
         """
-        初始化Report Agent
-        
+        初始化 Report Agent
+
         Args:
-            graph_id: 图谱ID
-            simulation_id: 模拟ID
+            graph_id: 图谱 ID
+            simulation_id: 模拟 ID
             simulation_requirement: 模拟需求描述
-            llm_client: LLM客户端（可选）
-            zep_tools: Zep工具服务（可选）
+            llm_client: LLM 客户端（可选）
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
-        
+
         self.llm = llm_client or LLMClient(role="subagent")
-        self.zep_tools = zep_tools or ZepToolsService()
-        
+        self.graph_reader = GraphEntityReader()
+
         # 工具定义
         self.tools = self._define_tools()
-        
+
         # 日志记录器（在 generate_report 中初始化）
-        self.report_logger: Optional[ReportLogger] = None
-        # 控制台日志记录器（在 generate_report 中初始化）
-        self.console_logger: Optional[ReportConsoleLogger] = None
-        
+        self.report_logger: Optional[ReportTraceWriter] = None
+        self.console_logger: Optional[ReportRuntimeLogSink] = None
+
         logger.info(t('report.agentInitDone', graphId=graph_id, simulationId=simulation_id))
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
@@ -953,175 +881,132 @@ class ReportAgent:
         }
     
     def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "") -> str:
-        """
-        执行工具调用
-        
-        Args:
-            tool_name: 工具名称
-            parameters: 工具参数
-            report_context: 报告上下文（用于InsightForge）
-            
-        Returns:
-            工具执行结果（文本格式）
-        """
+        """执行报告生成工具。"""
         logger.info(t('report.executingTool', toolName=tool_name, params=parameters))
-        
+        parameters = parameters or {}
+        handlers = {
+            "insight_forge": self._tool_insight_forge,
+            "panorama_search": self._tool_panorama_search,
+            "quick_search": self._tool_quick_search,
+            "interview_agents": self._tool_interview_agents,
+            "get_graph_statistics": self._tool_graph_statistics,
+            "get_entity_summary": self._tool_entity_summary,
+            "get_entities_by_type": self._tool_entities_by_type,
+        }
         try:
-            if tool_name == "insight_forge":
-                query = parameters.get("query", "")
-                ctx = parameters.get("report_context", "") or report_context
-                result = self.zep_tools.insight_forge(
-                    graph_id=self.graph_id,
-                    query=query,
-                    simulation_requirement=self.simulation_requirement,
-                    report_context=ctx
-                )
-                return result.to_text()
-            
-            elif tool_name == "panorama_search":
-                # 广度搜索 - 获取全貌
-                query = parameters.get("query", "")
-                include_expired = parameters.get("include_expired", True)
-                if isinstance(include_expired, str):
-                    include_expired = include_expired.lower() in ['true', '1', 'yes']
-                result = self.zep_tools.panorama_search(
-                    graph_id=self.graph_id,
-                    query=query,
-                    include_expired=include_expired
-                )
-                return result.to_text()
-            
-            elif tool_name == "quick_search":
-                # 简单搜索 - 快速检索
-                query = parameters.get("query", "")
-                limit = parameters.get("limit", 10)
-                if isinstance(limit, str):
-                    limit = int(limit)
-                result = self.zep_tools.quick_search(
-                    graph_id=self.graph_id,
-                    query=query,
-                    limit=limit
-                )
-                return result.to_text()
-            
-            elif tool_name == "interview_agents":
-                # 深度采访 - 调用 WorldFish 采访接口获取模拟 Agent 的回答
-                interview_topic = parameters.get("interview_topic", parameters.get("query", ""))
-                max_agents = parameters.get("max_agents", 5)
-                if isinstance(max_agents, str):
-                    max_agents = int(max_agents)
-                max_agents = min(max_agents, 10)
-                result = self.zep_tools.interview_agents(
-                    simulation_id=self.simulation_id,
-                    interview_requirement=interview_topic,
-                    simulation_requirement=self.simulation_requirement,
-                    max_agents=max_agents
-                )
-                return result.to_text()
-            
-            # ========== 向后兼容的旧工具（内部重定向到新工具） ==========
-            
-            elif tool_name == "search_graph":
-                # 重定向到 quick_search
+            if tool_name == "search_graph":
                 logger.info(t('report.redirectToQuickSearch'))
-                return self._execute_tool("quick_search", parameters, report_context)
-            
-            elif tool_name == "get_graph_statistics":
-                result = self.zep_tools.get_graph_statistics(self.graph_id)
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            
-            elif tool_name == "get_entity_summary":
-                entity_name = parameters.get("entity_name", "")
-                result = self.zep_tools.get_entity_summary(
-                    graph_id=self.graph_id,
-                    entity_name=entity_name
-                )
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            
-            elif tool_name == "get_simulation_context":
-                # 重定向到 insight_forge，因为它更强大
+                return handlers["quick_search"](parameters, report_context)
+            if tool_name == "get_simulation_context":
                 logger.info(t('report.redirectToInsightForge'))
-                query = parameters.get("query", self.simulation_requirement)
-                return self._execute_tool("insight_forge", {"query": query}, report_context)
-            
-            elif tool_name == "get_entities_by_type":
-                entity_type = parameters.get("entity_type", "")
-                nodes = self.zep_tools.get_entities_by_type(
-                    graph_id=self.graph_id,
-                    entity_type=entity_type
-                )
-                result = [n.to_dict() for n in nodes]
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            
-            else:
-                return f"未知工具: {tool_name}。请使用以下工具之一: insight_forge, panorama_search, quick_search"
-                
+                return handlers["insight_forge"]({"query": parameters.get("query", self.simulation_requirement)}, report_context)
+            handler = handlers.get(tool_name)
+            if not handler:
+                return "未知工具: %s。请使用以下工具之一: insight_forge, panorama_search, quick_search" % tool_name
+            return handler(parameters, report_context)
         except Exception as e:
             logger.error(t('report.toolExecFailed', toolName=tool_name, error=str(e)))
             return f"工具执行失败: {str(e)}"
     
+    def _tool_insight_forge(self, parameters: Dict[str, Any], report_context: str) -> str:
+        query = parameters.get("query", "")
+        entities = self.graph_reader.get_entities_by_type(self.graph_id, query, enrich_with_edges=True)
+        if not entities:
+            return f"未找到与 '{query}' 匹配的实体。"
+        parts = [f"## 实体检索：{query}", f"找到 {len(entities)} 个实体："]
+        for entity in entities[:20]:
+            parts.append(f"- {entity.name}（{entity.get_entity_type()}）：{entity.summary[:200]}")
+        return "\n".join(parts)
+
+    def _tool_panorama_search(self, parameters: Dict[str, Any], report_context: str) -> str:
+        all_nodes = self.graph_reader.get_all_nodes(self.graph_id)
+        all_edges = self.graph_reader.get_all_edges(self.graph_id)
+        return f"图谱概况：{len(all_nodes)} 个实体节点，{len(all_edges)} 条关系边。"
+
+    def _tool_quick_search(self, parameters: Dict[str, Any], report_context: str) -> str:
+        return self._tool_insight_forge(parameters, report_context)
+
+    def _tool_interview_agents(self, parameters: Dict[str, Any], report_context: str) -> str:
+        return "实体采访功能暂未开放。请使用全景搜索和实体检索获取信息。"
+
+    def _tool_graph_statistics(self, parameters: Dict[str, Any], report_context: str) -> str:
+        nodes = self.graph_reader.get_all_nodes(self.graph_id)
+        edges = self.graph_reader.get_all_edges(self.graph_id)
+        return json.dumps({
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "node_names": [n.get("name", "") for n in nodes[:50]],
+        }, ensure_ascii=False, indent=2)
+
+    def _tool_entity_summary(self, parameters: Dict[str, Any], report_context: str) -> str:
+        name = parameters.get("entity_name", "")
+        all_nodes = self.graph_reader.get_all_nodes(self.graph_id)
+        matches = [n for n in all_nodes if name.lower() in (n.get("name") or "").lower()]
+        return json.dumps([{"name": n["name"], "summary": n.get("summary", ""), "labels": n.get("labels", [])} for n in matches[:10]], ensure_ascii=False, indent=2)
+
+    def _tool_entities_by_type(self, parameters: Dict[str, Any], report_context: str) -> str:
+        entities = self.graph_reader.get_entities_by_type(
+            self.graph_id, parameters.get("entity_type", ""), enrich_with_edges=False)
+        return json.dumps([{"uuid": e.uuid, "name": e.name, "type": e.get_entity_type()} for e in entities[:50]], ensure_ascii=False, indent=2)
+
     # 合法的工具名称集合，用于裸 JSON 兜底解析时校验
     VALID_TOOL_NAMES = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
 
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
-        """
-        从LLM响应中解析工具调用
+        """从 LLM 输出中提取工具调用。"""
+        tagged_calls = self._extract_tagged_tool_calls(response)
+        if tagged_calls:
+            return tagged_calls
+        fallback = self._extract_json_tool_call_fallback(response)
+        return [fallback] if fallback else []
 
-        支持的格式（按优先级）：
-        1. <tool_call>{"name": "tool_name", "parameters": {...}}</tool_call>
-        2. 裸 JSON（响应整体或单行就是一个工具调用 JSON）
-        """
-        tool_calls = []
-
-        # 格式1: XML风格（标准格式）
-        xml_pattern = r'<tool_call>\s*(\{.*?\})\s*</tool_call>'
-        for match in re.finditer(xml_pattern, response, re.DOTALL):
+    def _extract_tagged_tool_calls(self, response: str) -> List[Dict[str, Any]]:
+        calls: List[Dict[str, Any]] = []
+        for match in re.finditer(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', response, re.DOTALL):
             try:
-                call_data = json.loads(match.group(1))
-                tool_calls.append(call_data)
+                data = json.loads(match.group(1))
             except json.JSONDecodeError:
-                pass
+                continue
+            if self._is_valid_tool_call(data):
+                calls.append(data)
+        return calls
 
-        if tool_calls:
-            return tool_calls
-
-        # 格式2: 兜底 - LLM 直接输出裸 JSON（没包 <tool_call> 标签）
-        # 只在格式1未匹配时尝试，避免误匹配正文中的 JSON
-        stripped = response.strip()
-        if stripped.startswith('{') and stripped.endswith('}'):
+    def _extract_json_tool_call_fallback(self, response: str) -> Optional[Dict[str, Any]]:
+        text = response.strip()
+        candidates = [text]
+        tail_match = re.search(r'(\{"(?:name|tool)"\s*:.*?\})\s*$', text, re.DOTALL)
+        if tail_match:
+            candidates.append(tail_match.group(1))
+        for candidate in candidates:
+            if not (candidate.startswith('{') and candidate.endswith('}')):
+                continue
             try:
-                call_data = json.loads(stripped)
-                if self._is_valid_tool_call(call_data):
-                    tool_calls.append(call_data)
-                    return tool_calls
+                data = json.loads(candidate)
             except json.JSONDecodeError:
-                pass
-
-        # 响应可能包含思考文字 + 裸 JSON，尝试提取最后一个 JSON 对象
-        json_pattern = r'(\{"(?:name|tool)"\s*:.*?\})\s*$'
-        match = re.search(json_pattern, stripped, re.DOTALL)
-        if match:
-            try:
-                call_data = json.loads(match.group(1))
-                if self._is_valid_tool_call(call_data):
-                    tool_calls.append(call_data)
-            except json.JSONDecodeError:
-                pass
-
-        return tool_calls
+                continue
+            if self._is_valid_tool_call(data):
+                return data
+        return None
 
     def _is_valid_tool_call(self, data: dict) -> bool:
-        """校验解析出的 JSON 是否是合法的工具调用"""
-        # 支持 {"name": ..., "parameters": ...} 和 {"tool": ..., "params": ...} 两种键名
+        """规范化并校验工具调用对象。"""
+        normalized = self._normalize_tool_call_payload(data)
+        if not normalized:
+            return False
+        data.clear()
+        data.update(normalized)
+        return True
+
+    def _normalize_tool_call_payload(self, data: dict) -> Optional[Dict[str, Any]]:
+        if not isinstance(data, dict):
+            return None
         tool_name = data.get("name") or data.get("tool")
-        if tool_name and tool_name in self.VALID_TOOL_NAMES:
-            # 统一键名为 name / parameters
-            if "tool" in data:
-                data["name"] = data.pop("tool")
-            if "params" in data and "parameters" not in data:
-                data["parameters"] = data.pop("params")
-            return True
-        return False
+        if tool_name not in self.VALID_TOOL_NAMES:
+            return None
+        return {
+            "name": tool_name,
+            "parameters": data.get("parameters", data.get("params", {})) or {},
+        }
     
     def _get_tools_description(self) -> str:
         """生成工具描述文本"""
@@ -1133,6 +1018,32 @@ class ReportAgent:
                 desc_parts.append(f"  参数: {params_desc}")
         return "\n".join(desc_parts)
     
+    def _build_tool_deficit_message(
+        self,
+        template: str,
+        tool_calls_count: int,
+        min_tool_calls: int,
+        all_tools: set,
+        used_tools: set,
+    ) -> str:
+        remaining = sorted(all_tools - used_tools)
+        hint = f"（建议补充使用：{', '.join(remaining)}）" if remaining else ""
+        return template.format(
+            tool_calls_count=tool_calls_count,
+            min_tool_calls=min_tool_calls,
+            unused_hint=hint,
+        )
+
+    def _record_section_content(self, section: ReportSection, section_index: int,
+                                content: str, tool_calls_count: int):
+        if self.report_logger:
+            self.report_logger.log_section_content(
+                section_title=section.title,
+                section_index=section_index,
+                content=content,
+                tool_calls_count=tool_calls_count,
+            )
+
     def plan_outline(
         self, 
         progress_callback: Optional[Callable] = None
@@ -1154,10 +1065,7 @@ class ReportAgent:
             progress_callback("planning", 0, t('progress.analyzingRequirements'))
         
         # 首先获取模拟上下文
-        context = self.zep_tools.get_simulation_context(
-            graph_id=self.graph_id,
-            simulation_requirement=self.simulation_requirement
-        )
+        context = self.graph_reader.get_all_nodes(self.graph_id)
         
         if progress_callback:
             progress_callback("planning", 30, t('progress.generatingOutline'))
@@ -1165,11 +1073,15 @@ class ReportAgent:
         system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{get_language_instruction()}"
         user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
             simulation_requirement=self.simulation_requirement,
-            total_nodes=context.get('graph_statistics', {}).get('total_nodes', 0),
-            total_edges=context.get('graph_statistics', {}).get('total_edges', 0),
-            entity_types=list(context.get('graph_statistics', {}).get('entity_types', {}).keys()),
-            total_entities=context.get('total_entities', 0),
-            related_facts_json=json.dumps(context.get('related_facts', [])[:10], ensure_ascii=False, indent=2),
+            total_nodes=len(context),
+            total_edges=0,
+            entity_types=list(set(
+                l for n in context
+                for l in (n.get("labels") or [])
+                if l not in ["Entity", "Node"]
+            )),
+            total_entities=len(context),
+            related_facts_json="[]",
         )
 
         try:
@@ -1375,14 +1287,14 @@ class ReportAgent:
                 # 工具调用次数不足，拒绝并要求继续调工具
                 if tool_calls_count < min_tool_calls:
                     messages.append({"role": "assistant", "content": response})
-                    unused_tools = all_tools - used_tools
-                    unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
                     messages.append({
                         "role": "user",
-                        "content": REACT_INSUFFICIENT_TOOLS_MSG.format(
-                            tool_calls_count=tool_calls_count,
-                            min_tool_calls=min_tool_calls,
-                            unused_hint=unused_hint,
+                        "content": self._build_tool_deficit_message(
+                            REACT_INSUFFICIENT_TOOLS_MSG,
+                            tool_calls_count,
+                            min_tool_calls,
+                            all_tools,
+                            used_tools,
                         ),
                     })
                     continue
@@ -1391,13 +1303,7 @@ class ReportAgent:
                 final_answer = response.split("Final Answer:")[-1].strip()
                 logger.info(t('report.sectionGenDone', title=section.title, count=tool_calls_count))
 
-                if self.report_logger:
-                    self.report_logger.log_section_content(
-                        section_title=section.title,
-                        section_index=section_index,
-                        content=final_answer,
-                        tool_calls_count=tool_calls_count
-                    )
+                self._record_section_content(section, section_index, final_answer, tool_calls_count)
                 return final_answer
 
             # ── 情况2：LLM 尝试调用工具 ──
@@ -1470,16 +1376,14 @@ class ReportAgent:
             messages.append({"role": "assistant", "content": response})
 
             if tool_calls_count < min_tool_calls:
-                # 工具调用次数不足，推荐未用过的工具
-                unused_tools = all_tools - used_tools
-                unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
-
                 messages.append({
                     "role": "user",
-                    "content": REACT_INSUFFICIENT_TOOLS_MSG_ALT.format(
-                        tool_calls_count=tool_calls_count,
-                        min_tool_calls=min_tool_calls,
-                        unused_hint=unused_hint,
+                    "content": self._build_tool_deficit_message(
+                        REACT_INSUFFICIENT_TOOLS_MSG_ALT,
+                        tool_calls_count,
+                        min_tool_calls,
+                        all_tools,
+                        used_tools,
                     ),
                 })
                 continue
@@ -1528,6 +1432,29 @@ class ReportAgent:
         
         return final_answer
     
+    def _new_report_record(self, report_id: str) -> Report:
+        return Report(
+            report_id=report_id,
+            simulation_id=self.simulation_id,
+            graph_id=self.graph_id,
+            simulation_requirement=self.simulation_requirement,
+            status=ReportStatus.PENDING,
+            created_at=datetime.now().isoformat(),
+        )
+
+    def _open_report_session(self, report_id: str, report: Report):
+        ReportManager._ensure_report_folder(report_id)
+        self.report_logger = ReportLogger(report_id)
+        self.report_logger.log_start(self.simulation_id, self.graph_id, self.simulation_requirement)
+        self.console_logger = ReportConsoleLogger(report_id)
+        ReportManager.update_progress(report_id, "pending", 0, t('progress.initReport'), completed_sections=[])
+        ReportManager.save_report(report)
+
+    def _close_report_session(self):
+        if self.console_logger:
+            self.console_logger.close()
+            self.console_logger = None
+
     def generate_report(
         self, 
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
@@ -1561,38 +1488,13 @@ class ReportAgent:
             report_id = f"report_{uuid.uuid4().hex[:12]}"
         start_time = datetime.now()
         
-        report = Report(
-            report_id=report_id,
-            simulation_id=self.simulation_id,
-            graph_id=self.graph_id,
-            simulation_requirement=self.simulation_requirement,
-            status=ReportStatus.PENDING,
-            created_at=datetime.now().isoformat()
-        )
+        report = self._new_report_record(report_id)
         
         # 已完成的章节标题列表（用于进度追踪）
         completed_section_titles = []
         
         try:
-            # 初始化：创建报告文件夹并保存初始状态
-            ReportManager._ensure_report_folder(report_id)
-            
-            # 初始化日志记录器（结构化日志 agent_log.jsonl）
-            self.report_logger = ReportLogger(report_id)
-            self.report_logger.log_start(
-                simulation_id=self.simulation_id,
-                graph_id=self.graph_id,
-                simulation_requirement=self.simulation_requirement
-            )
-            
-            # 初始化控制台日志记录器（console_log.txt）
-            self.console_logger = ReportConsoleLogger(report_id)
-            
-            ReportManager.update_progress(
-                report_id, "pending", 0, t('progress.initReport'),
-                completed_sections=[]
-            )
-            ReportManager.save_report(report)
+            self._open_report_session(report_id, report)
             
             # 阶段1: 规划大纲
             report.status = ReportStatus.PLANNING
@@ -1729,11 +1631,7 @@ class ReportAgent:
             
             logger.info(t('report.reportGenDone', reportId=report_id))
             
-            # 关闭控制台日志记录器
-            if self.console_logger:
-                self.console_logger.close()
-                self.console_logger = None
-            
+            self._close_report_session()
             return report
             
         except Exception as e:
@@ -1755,11 +1653,7 @@ class ReportAgent:
             except Exception:
                 pass  # 忽略保存失败的错误
             
-            # 关闭控制台日志记录器
-            if self.console_logger:
-                self.console_logger.close()
-                self.console_logger = None
-            
+            self._close_report_session()
             return report
     
     def chat(
@@ -1901,57 +1795,60 @@ class ReportManager:
     # 报告存储目录
     REPORTS_DIR = os.path.join(Config.UPLOAD_FOLDER, 'reports')
     
+    REPORT_FILES = {
+        "meta": "meta.json",
+        "markdown": "full_report.md",
+        "outline": "outline.json",
+        "progress": "progress.json",
+        "agent_log": "agent_log.jsonl",
+        "console_log": "console_log.txt",
+    }
+
     @classmethod
     def _ensure_reports_dir(cls):
-        """确保报告根目录存在"""
         os.makedirs(cls.REPORTS_DIR, exist_ok=True)
-    
+
     @classmethod
     def _get_report_folder(cls, report_id: str) -> str:
-        """获取报告文件夹路径"""
         return os.path.join(cls.REPORTS_DIR, report_id)
-    
+
     @classmethod
     def _ensure_report_folder(cls, report_id: str) -> str:
-        """确保报告文件夹存在并返回路径"""
         folder = cls._get_report_folder(report_id)
         os.makedirs(folder, exist_ok=True)
         return folder
-    
+
+    @classmethod
+    def _report_file(cls, report_id: str, kind: str) -> str:
+        return os.path.join(cls._get_report_folder(report_id), cls.REPORT_FILES[kind])
+
     @classmethod
     def _get_report_path(cls, report_id: str) -> str:
-        """获取报告元信息文件路径"""
-        return os.path.join(cls._get_report_folder(report_id), "meta.json")
-    
+        return cls._report_file(report_id, "meta")
+
     @classmethod
     def _get_report_markdown_path(cls, report_id: str) -> str:
-        """获取完整报告Markdown文件路径"""
-        return os.path.join(cls._get_report_folder(report_id), "full_report.md")
-    
+        return cls._report_file(report_id, "markdown")
+
     @classmethod
     def _get_outline_path(cls, report_id: str) -> str:
-        """获取大纲文件路径"""
-        return os.path.join(cls._get_report_folder(report_id), "outline.json")
-    
+        return cls._report_file(report_id, "outline")
+
     @classmethod
     def _get_progress_path(cls, report_id: str) -> str:
-        """获取进度文件路径"""
-        return os.path.join(cls._get_report_folder(report_id), "progress.json")
-    
+        return cls._report_file(report_id, "progress")
+
     @classmethod
     def _get_section_path(cls, report_id: str, section_index: int) -> str:
-        """获取章节Markdown文件路径"""
         return os.path.join(cls._get_report_folder(report_id), f"section_{section_index:02d}.md")
-    
+
     @classmethod
     def _get_agent_log_path(cls, report_id: str) -> str:
-        """获取 Agent 日志文件路径"""
-        return os.path.join(cls._get_report_folder(report_id), "agent_log.jsonl")
-    
+        return cls._report_file(report_id, "agent_log")
+
     @classmethod
     def _get_console_log_path(cls, report_id: str) -> str:
-        """获取控制台日志文件路径"""
-        return os.path.join(cls._get_report_folder(report_id), "console_log.txt")
+        return cls._report_file(report_id, "console_log")
     
     @classmethod
     def get_console_log(cls, report_id: str, from_line: int = 0) -> Dict[str, Any]:

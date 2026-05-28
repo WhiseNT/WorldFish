@@ -3,13 +3,16 @@
 """
 
 from .ontology_generator import OntologyGenerator
-from .graph_builder import GraphBuilderService
 from .text_processor import TextProcessor
-from .zep_entity_reader import ZepEntityReader, EntityNode, FilteredEntities
+from .knowledge_graph import (
+    KnowledgeGraph, KnowledgeGraphReader,
+    LocalGraphBuilder, GraphEntityReader, ZepEntityReader,
+    EntityNode, FilteredEntities,
+)
 from .worldfish_profile_generator import WorldFishProfileGenerator, WorldFishAgentProfile
 from .simulation_manager import SimulationManager, SimulationState, SimulationStatus
 from .simulation_config_generator import (
-    SimulationConfigGenerator, 
+    SimulationConfigGenerator,
     SimulationParameters,
     AgentActivityConfig,
     TimeSimulationConfig,
@@ -23,17 +26,15 @@ from .simulation_runner import (
     AgentAction,
     RoundSummary
 )
-from .zep_graph_memory_updater import (
-    ZepGraphMemoryUpdater,
-    ZepGraphMemoryManager,
-    AgentActivity
-)
 
 __all__ = [
-    'OntologyGenerator', 
-    'GraphBuilderService', 
+    'OntologyGenerator',
     'TextProcessor',
-    'ZepEntityReader',
+    'KnowledgeGraph',
+    'KnowledgeGraphReader',
+    'LocalGraphBuilder',   # 兼容别名 → KnowledgeGraph
+    'GraphEntityReader',   # → KnowledgeGraphReader
+    'ZepEntityReader',     # → KnowledgeGraphReader
     'EntityNode',
     'FilteredEntities',
     'WorldFishProfileGenerator',
@@ -52,8 +53,4 @@ __all__ = [
     'RunnerStatus',
     'AgentAction',
     'RoundSummary',
-    'ZepGraphMemoryUpdater',
-    'ZepGraphMemoryManager',
-    'AgentActivity',
 ]
-

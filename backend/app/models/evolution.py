@@ -19,6 +19,12 @@ class EvolutionRound:
         affected_entities: Optional[List[Dict]] = None,
         new_events: Optional[List[Dict]] = None,
         warnings: Optional[List[str]] = None,
+        # ── 新推演工作流字段 ──
+        world_state_before: Optional[Dict[str, Any]] = None,
+        pressures: Optional[List[Dict[str, Any]]] = None,
+        evolution_pattern: Optional[Dict[str, Any]] = None,
+        causal_links: Optional[List[Dict[str, Any]]] = None,
+        state_changes: Optional[Dict[str, Any]] = None,
     ):
         self.round_number = round_number
         self.narrative = narrative
@@ -27,8 +33,19 @@ class EvolutionRound:
         self.new_events = new_events or []
         self.warnings = warnings or []
 
+        # 世界状态快照（推演前）
+        self.world_state_before = world_state_before or {}
+        # 当前压力列表
+        self.pressures = pressures or []
+        # 本轮使用的推进方式分析
+        self.evolution_pattern = evolution_pattern or {}
+        # 因果链：哪些旧事件/压力导致了本轮内容
+        self.causal_links = causal_links or []
+        # 本轮造成的状态变化
+        self.state_changes = state_changes or {}
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             "round_number": self.round_number,
             "narrative": self.narrative,
             "year_advanced_to": self.year_advanced_to,
@@ -36,6 +53,17 @@ class EvolutionRound:
             "new_events": self.new_events,
             "warnings": self.warnings,
         }
+        if self.world_state_before:
+            d["world_state_before"] = self.world_state_before
+        if self.pressures:
+            d["pressures"] = self.pressures
+        if self.evolution_pattern:
+            d["evolution_pattern"] = self.evolution_pattern
+        if self.causal_links:
+            d["causal_links"] = self.causal_links
+        if self.state_changes:
+            d["state_changes"] = self.state_changes
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EvolutionRound":
@@ -46,6 +74,11 @@ class EvolutionRound:
             affected_entities=data.get("affected_entities") or [],
             new_events=data.get("new_events") or [],
             warnings=data.get("warnings") or [],
+            world_state_before=data.get("world_state_before"),
+            pressures=data.get("pressures"),
+            evolution_pattern=data.get("evolution_pattern"),
+            causal_links=data.get("causal_links"),
+            state_changes=data.get("state_changes"),
         )
 
 
@@ -77,6 +110,8 @@ class Evolution:
         self.evolution_type = evolution_type
         self.error = error or ""
         self.consolidation = None  # 推演后整合结果
+        self.global_causal_graph: Dict[str, Any] = {}  # 全局因果图
+        self.world_state_ledger: List[Dict[str, Any]] = []  # 世界状态账本（每轮快照）
         self.created_at = created_at or now
         self.updated_at = updated_at or now
 
@@ -112,6 +147,10 @@ class Evolution:
         }
         if self.consolidation:
             d["consolidation"] = self.consolidation
+        if self.global_causal_graph:
+            d["global_causal_graph"] = self.global_causal_graph
+        if self.world_state_ledger:
+            d["world_state_ledger"] = self.world_state_ledger
         return d
 
     @classmethod
@@ -132,6 +171,10 @@ class Evolution:
         )
         if data.get("consolidation"):
             evo.consolidation = data["consolidation"]
+        if data.get("global_causal_graph"):
+            evo.global_causal_graph = data["global_causal_graph"]
+        if data.get("world_state_ledger"):
+            evo.world_state_ledger = data["world_state_ledger"]
         return evo
 
 

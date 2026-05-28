@@ -11,7 +11,7 @@ from ..utils.locale import t
 from ..utils.logger import get_logger
 from .worldfish_profile_generator import WorldFishProfileGenerator
 from .simulation_config_generator import SimulationConfigGenerator
-from .zep_entity_reader import ZepEntityReader
+from .knowledge_graph import GraphEntityReader
 
 logger = get_logger('worldfish.simulation')
 
@@ -174,9 +174,9 @@ class SimulationManager:
             sim_dir = self._get_simulation_dir(simulation_id)
 
             if progress_callback:
-                progress_callback("reading", 0, t('progress.connectingZepGraph'))
+                progress_callback("reading", 0, t('progress.readingNodeData'))
 
-            reader = ZepEntityReader()
+            reader = GraphEntityReader()
             if progress_callback:
                 progress_callback("reading", 30, t('progress.readingNodeData'))
 
