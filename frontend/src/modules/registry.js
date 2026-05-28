@@ -10,6 +10,8 @@ function normalizeModule(row) {
   return {
     ...(row.manifest || {}),
     runtime: row.runtime || {},
+    dependents: row.dependents || [],
+    enabled_dependents: row.enabled_dependents || [],
     enabled: Boolean(row.runtime?.enabled),
     loaded: Boolean(row.runtime?.loaded),
     error: row.runtime?.error || '',

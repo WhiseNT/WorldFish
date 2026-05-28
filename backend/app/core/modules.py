@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from .events import get_event_bus
+from .module_store import ModuleStateStore
 
 
 def _now_iso() -> str:
@@ -99,18 +100,32 @@ class ManifestModule(ModuleBase):
     """仅声明元数据的内置模块。"""
 
 
+class ModuleDependencyError(ValueError):
+    """模块仍被其他启用模块依赖。"""
+
+    def __init__(self, module_id: str, dependents: List[str]):
+        self.module_id = module_id
+        self.dependents = list(dependents)
+        super().__init__(f'模块 {module_id} 被启用模块依赖: {", ".join(self.dependents)}')
+
+
 class ModuleRegistry:
     """模块注册表，负责生命周期与热启停。"""
 
-    def __init__(self):
+    def __init__(self, store: Optional[ModuleStateStore] = None):
         self._lock = RLock()
         self._modules: Dict[str, ModuleBase] = {}
         self._runtime: Dict[str, ModuleRuntime] = {}
         self._context: Dict[str, Any] = {'events': get_event_bus()}
+        self._store = store or ModuleStateStore()
 
     def bind_context(self, **kwargs):
         with self._lock:
             self._context.update(kwargs)
+
+    def bind_store(self, store: ModuleStateStore):
+        with self._lock:
+            self._store = store
 
     def register(self, module: ModuleBase):
         module_id = module.manifest.id
@@ -123,12 +138,20 @@ class ModuleRegistry:
             self._runtime[module_id] = ModuleRuntime(updated_at=_now_iso())
 
     def load_all(self):
+        state = self._store.load()
+        persisted = state.get('modules', {})
         with self._lock:
             modules = list(self._modules.values())
         for module in modules:
             self.load(module.manifest.id)
-            if module.manifest.enabled_by_default:
-                self.enable(module.manifest.id)
+        for module in modules:
+            module_state = persisted.get(module.manifest.id) if isinstance(persisted, dict) else None
+            if isinstance(module_state, dict) and 'enabled' in module_state:
+                should_enable = bool(module_state.get('enabled'))
+            else:
+                should_enable = module.manifest.enabled_by_default
+            if should_enable:
+                self.enable(module.manifest.id, persist=False)
 
     def load(self, module_id: str):
         module = self._get_module(module_id)
@@ -145,11 +168,11 @@ class ModuleRegistry:
             runtime.updated_at = _now_iso()
             raise
 
-    def enable(self, module_id: str):
+    def enable(self, module_id: str, persist: bool = True):
         module = self._get_module(module_id)
         runtime = self._get_runtime(module_id)
         try:
-            self._ensure_dependencies_enabled(module)
+            self._ensure_dependencies_enabled(module, persist=persist)
             if not runtime.loaded:
                 self.load(module_id)
             module.enable(self._context)
@@ -157,24 +180,31 @@ class ModuleRegistry:
             runtime.error = None
             runtime.started_at = runtime.started_at or _now_iso()
             runtime.updated_at = _now_iso()
+            if persist:
+                self._store.set_module_enabled(module_id, True, runtime.updated_at)
             get_event_bus().emit('module.enabled', {'module_id': module_id})
         except Exception as exc:
             runtime.error = str(exc)
             runtime.updated_at = _now_iso()
             raise
 
-    def disable(self, module_id: str):
+    def disable(self, module_id: str, persist: bool = True, cascade: bool = False):
         module = self._get_module(module_id)
         runtime = self._get_runtime(module_id)
         dependents = self.enabled_dependents(module_id)
-        if dependents:
-            raise ValueError(f'模块 {module_id} 被启用模块依赖: {", ".join(dependents)}')
+        if dependents and not cascade:
+            raise ModuleDependencyError(module_id, dependents)
+        if cascade:
+            for dependent in sorted(dependents):
+                self.disable(dependent, persist=persist, cascade=True)
         try:
             module.disable(self._context)
             get_event_bus().unsubscribe_module(module_id)
             runtime.enabled = False
             runtime.error = None
             runtime.updated_at = _now_iso()
+            if persist:
+                self._store.set_module_enabled(module_id, False, runtime.updated_at)
             get_event_bus().emit('module.disabled', {'module_id': module_id})
         except Exception as exc:
             runtime.error = str(exc)
@@ -207,10 +237,46 @@ class ModuleRegistry:
                 if module_id in item.manifest.depends and self._runtime[item.manifest.id].enabled
             ]
 
+    def dependents(self, module_id: str, enabled_only: bool = False) -> List[str]:
+        with self._lock:
+            items = []
+            for item in self._modules.values():
+                if module_id not in item.manifest.depends:
+                    continue
+                if enabled_only and not self._runtime[item.manifest.id].enabled:
+                    continue
+                items.append(item.manifest.id)
+            return sorted(items)
+
+    def dependency_tree(self, module_id: str, enabled_only: bool = True) -> Dict[str, Any]:
+        seen = set()
+
+        def walk(current: str):
+            children = []
+            for dependent in self.dependents(current, enabled_only=enabled_only):
+                if dependent in seen:
+                    continue
+                seen.add(dependent)
+                children.append({'id': dependent, 'dependents': walk(dependent)})
+            return children
+
+        return {'id': module_id, 'dependents': walk(module_id)}
+
+    def reset_state(self, module_id: Optional[str] = None):
+        if module_id:
+            self._store.remove_module_state(module_id)
+        else:
+            self._store.clear()
+
     def get(self, module_id: str) -> Dict[str, Any]:
         module = self._get_module(module_id)
         runtime = self._get_runtime(module_id)
-        return {'manifest': module.manifest.to_dict(), 'runtime': runtime.to_dict()}
+        return {
+            'manifest': module.manifest.to_dict(),
+            'runtime': runtime.to_dict(),
+            'dependents': self.dependents(module_id),
+            'enabled_dependents': self.enabled_dependents(module_id),
+        }
 
     def list(self, include_private: bool = False) -> List[Dict[str, Any]]:
         with self._lock:
@@ -256,12 +322,12 @@ class ModuleRegistry:
             if not self._runtime[dep].loaded:
                 self.load(dep)
 
-    def _ensure_dependencies_enabled(self, module: ModuleBase):
+    def _ensure_dependencies_enabled(self, module: ModuleBase, persist: bool = True):
         for dep in module.manifest.depends:
             if dep not in self._modules:
                 raise ValueError(f'缺少依赖模块: {dep}')
             if not self._runtime[dep].enabled:
-                self.enable(dep)
+                self.enable(dep, persist=persist)
 
 
 _MODULE_REGISTRY = ModuleRegistry()

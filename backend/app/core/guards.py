@@ -5,9 +5,13 @@ from __future__ import annotations
 from functools import wraps
 from typing import Callable
 
-from flask import jsonify
+from flask import current_app, jsonify
 
 from .modules import get_module_registry
+
+
+def _registry():
+    return current_app.extensions.get('worldfish_modules') or get_module_registry()
 
 
 def module_disabled_response(module_id: str):
@@ -25,7 +29,7 @@ def require_module(module_id: str):
     def decorator(func: Callable):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if not get_module_registry().is_enabled(module_id):
+            if not _registry().is_enabled(module_id):
                 return module_disabled_response(module_id)
             return func(*args, **kwargs)
         return wrapper
@@ -39,7 +43,7 @@ def guard_blueprint(blueprint, module_id: str):
 
     @blueprint.before_request
     def _module_guard():
-        if not get_module_registry().is_enabled(module_id):
+        if not _registry().is_enabled(module_id):
             return module_disabled_response(module_id)
 
     _module_guard.__name__ = endpoint

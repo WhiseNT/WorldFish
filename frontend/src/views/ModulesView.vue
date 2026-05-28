@@ -31,6 +31,7 @@
           <span>版本 {{ module.version }}</span>
           <span>{{ module.loaded ? '已加载' : '未加载' }}</span>
           <span v-if="module.depends?.length">依赖：{{ module.depends.join(', ') }}</span>
+          <span v-if="module.enabled_dependents?.length">被依赖：{{ module.enabled_dependents.join(', ') }}</span>
         </div>
 
         <div v-if="module.routes?.length" class="route-list">
@@ -46,6 +47,14 @@
             @click="toggleModule(module)"
           >
             {{ module.enabled ? '停用' : '启用' }}
+          </button>
+          <button
+            v-if="module.enabled && module.enabled_dependents?.length"
+            class="btn btn-danger"
+            :disabled="workingId === module.id || module.id === 'settings'"
+            @click="cascadeDisable(module)"
+          >
+            级联停用
           </button>
           <button class="btn btn-primary" :disabled="workingId === module.id" @click="reloadModule(module)">
             重载
@@ -85,6 +94,19 @@ async function toggleModule(module) {
     await refreshAll()
   } catch (e) {
     error.value = e.message || '模块状态更新失败'
+  } finally {
+    workingId.value = ''
+  }
+}
+
+async function cascadeDisable(module) {
+  if (!window.confirm(`级联停用会同时停用依赖 ${module.name} 的模块：${module.enabled_dependents.join(', ')}。是否继续？`)) return
+  workingId.value = module.id
+  try {
+    await modulesApi.disableModule(module.id, { cascade: true })
+    await refreshAll()
+  } catch (e) {
+    error.value = e.message || '级联停用失败'
   } finally {
     workingId.value = ''
   }
@@ -223,8 +245,19 @@ onMounted(loadModules)
 .module-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--spacing-sm);
   margin-top: var(--spacing-md);
+}
+
+.btn-danger {
+  color: #ffb4b4;
+  border-color: rgba(255, 82, 82, 0.35);
+  background: rgba(255, 82, 82, 0.08);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 82, 82, 0.16);
 }
 
 .alert {

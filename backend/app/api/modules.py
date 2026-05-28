@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
-from app.core.modules import get_module_registry
+from app.core.modules import ModuleDependencyError, get_module_registry
 from app.utils.logger import get_logger
 
 modules_bp = Blueprint('modules', __name__)
@@ -18,12 +18,17 @@ def _ok(**payload):
 def _handle_error(action: str, module_id: str, exc: Exception):
     logger.error(f'{action}模块失败: {module_id}: {exc}')
     status = 404 if isinstance(exc, KeyError) else 400
-    return jsonify({
+    payload = {
         'success': False,
         'message': f'{action}模块失败: {exc}',
         'error': str(exc),
         'module_id': module_id,
-    }), status
+    }
+    if isinstance(exc, ModuleDependencyError):
+        payload['message'] = '模块被启用模块依赖，请先停用依赖方或使用级联停用'
+        payload['dependents'] = exc.dependents
+        payload['dependency_tree'] = get_module_registry().dependency_tree(module_id)
+    return jsonify(payload), status
 
 
 @modules_bp.route('', methods=['GET'])
@@ -59,6 +64,7 @@ def enable_module(module_id: str):
 
 @modules_bp.route('/<module_id>/disable', methods=['POST'])
 def disable_module(module_id: str):
+    cascade = str(request.args.get('cascade', '')).lower() in {'1', 'true', 'yes', 'on'}
     if module_id == 'settings':
         return jsonify({
             'success': False,
@@ -67,7 +73,7 @@ def disable_module(module_id: str):
         }), 400
     try:
         registry = get_module_registry()
-        registry.disable(module_id)
+        registry.disable(module_id, cascade=cascade)
         return _ok(module=registry.get(module_id), message='模块已停用')
     except Exception as exc:
         return _handle_error('停用', module_id, exc)

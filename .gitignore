@@ -53,6 +53,10 @@ mytest/
 backend/logs/
 *.log
 
+# 本地运行状态
+backend/module_state.json
+backend/module_state.json.tmp
+
 # 上传文件
 backend/uploads/
 

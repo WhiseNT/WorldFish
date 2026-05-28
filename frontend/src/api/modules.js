@@ -13,8 +13,9 @@ export const modulesApi = {
   enableModule(id) {
     return http.post(`/api/modules/${id}/enable`)
   },
-  disableModule(id) {
-    return http.post(`/api/modules/${id}/disable`)
+  disableModule(id, options = {}) {
+    const query = options.cascade ? '?cascade=true' : ''
+    return http.post(`/api/modules/${id}/disable${query}`)
   },
   reloadModule(id) {
     return http.post(`/api/modules/${id}/reload`)
