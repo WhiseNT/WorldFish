@@ -188,6 +188,24 @@ class EvolutionManager:
             return cls.save(evolution)
 
     @classmethod
+    def update_config(cls, evolution_id: str, config: Dict[str, Any]) -> Optional[Evolution]:
+        with cls._lock:
+            evolution = cls.get(evolution_id)
+            if not evolution:
+                return None
+            evolution.config = dict(config or {})
+            return cls.save(evolution)
+
+    @classmethod
+    def clear_consolidation(cls, evolution_id: str) -> Optional[Evolution]:
+        with cls._lock:
+            evolution = cls.get(evolution_id)
+            if not evolution:
+                return None
+            evolution.consolidation = None
+            return cls.save(evolution)
+
+    @classmethod
     def list_by_world(cls, world_id: str) -> List[Evolution]:
         cls._ensure_dir()
         results = []

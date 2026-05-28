@@ -6,7 +6,7 @@ from .ontology_generator import OntologyGenerator
 from .graph_builder import GraphBuilderService
 from .text_processor import TextProcessor
 from .zep_entity_reader import ZepEntityReader, EntityNode, FilteredEntities
-from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
+from .worldfish_profile_generator import WorldFishProfileGenerator, WorldFishAgentProfile
 from .simulation_manager import SimulationManager, SimulationState, SimulationStatus
 from .simulation_config_generator import (
     SimulationConfigGenerator, 
@@ -14,7 +14,7 @@ from .simulation_config_generator import (
     AgentActivityConfig,
     TimeSimulationConfig,
     EventConfig,
-    PlatformConfig
+    WorldFishConfig
 )
 from .simulation_runner import (
     SimulationRunner,
@@ -28,14 +28,6 @@ from .zep_graph_memory_updater import (
     ZepGraphMemoryManager,
     AgentActivity
 )
-from .simulation_ipc import (
-    SimulationIPCClient,
-    SimulationIPCServer,
-    IPCCommand,
-    IPCResponse,
-    CommandType,
-    CommandStatus
-)
 
 __all__ = [
     'OntologyGenerator', 
@@ -44,8 +36,8 @@ __all__ = [
     'ZepEntityReader',
     'EntityNode',
     'FilteredEntities',
-    'OasisProfileGenerator',
-    'OasisAgentProfile',
+    'WorldFishProfileGenerator',
+    'WorldFishAgentProfile',
     'SimulationManager',
     'SimulationState',
     'SimulationStatus',
@@ -54,7 +46,7 @@ __all__ = [
     'AgentActivityConfig',
     'TimeSimulationConfig',
     'EventConfig',
-    'PlatformConfig',
+    'WorldFishConfig',
     'SimulationRunner',
     'SimulationRunState',
     'RunnerStatus',
@@ -63,11 +55,5 @@ __all__ = [
     'ZepGraphMemoryUpdater',
     'ZepGraphMemoryManager',
     'AgentActivity',
-    'SimulationIPCClient',
-    'SimulationIPCServer',
-    'IPCCommand',
-    'IPCResponse',
-    'CommandType',
-    'CommandStatus',
 ]
 

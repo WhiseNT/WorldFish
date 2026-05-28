@@ -820,8 +820,12 @@
 
               <div class="evolution-history-meta">
                 <span>记录 ID: {{ record.id }}</span>
-                <span>轮次: {{ (record.rounds || []).length }}</span>
+                <span>轮次: {{ (record.rounds || []).length }} / {{ getEvolutionTotalRounds(record) }}</span>
+                <span v-if="isEvolutionActive(record)">进度: {{ getEvolutionProgress(record) }}%</span>
                 <span>更新时间: {{ formatDateTime(record.updated_at || record.created_at) }}</span>
+              </div>
+              <div v-if="isEvolutionActive(record)" class="evolution-history-progress">
+                <div class="evolution-history-progress-fill" :style="{ width: getEvolutionProgress(record) + '%' }"></div>
               </div>
 
               <p class="evolution-history-description">{{ record.scenario }}</p>
@@ -3560,6 +3564,7 @@ export default {
       evolutionHistory: [],
       isLoadingEvolutionHistory: false,
       evolutionHistoryError: '',
+      evolutionHistoryPollTimer: null,
       showEntitiesExpanded: true,
       showEventsExpanded: true,
       expandedBios: {},
@@ -4851,24 +4856,55 @@ export default {
         this.openLinkedSetting(entity)
       }
     },
-    async loadEvolutionHistory(worldId = this.worldId) {
+    async loadEvolutionHistory(worldId = this.worldId, options = {}) {
+      const { silent = false } = options
       if (!worldId) {
         this.evolutionHistory = []
         this.evolutionHistoryError = ''
+        this.stopEvolutionHistoryPolling()
         return
       }
 
-      this.isLoadingEvolutionHistory = true
+      if (!silent) {
+        this.isLoadingEvolutionHistory = true
+      }
       this.evolutionHistoryError = ''
       try {
         const response = await service.get(`/api/evolution/world/${worldId}`)
         this.evolutionHistory = Array.isArray(response.evolutions) ? response.evolutions : []
+        this.syncEvolutionHistoryPolling()
       } catch (error) {
         console.error('加载推演记录失败:', error)
-        this.evolutionHistory = []
+        if (!silent) {
+          this.evolutionHistory = []
+        }
         this.evolutionHistoryError = error.message || '加载推演记录失败'
       } finally {
-        this.isLoadingEvolutionHistory = false
+        if (!silent) {
+          this.isLoadingEvolutionHistory = false
+        }
+      }
+    },
+    hasActiveEvolutions() {
+      return (this.evolutionHistory || []).some(record => ['created', 'planning', 'running', 'consolidating'].includes(record?.status))
+    },
+    syncEvolutionHistoryPolling() {
+      if (this.hasActiveEvolutions()) {
+        this.startEvolutionHistoryPolling()
+      } else {
+        this.stopEvolutionHistoryPolling()
+      }
+    },
+    startEvolutionHistoryPolling() {
+      if (this.evolutionHistoryPollTimer || !this.worldId) return
+      this.evolutionHistoryPollTimer = setInterval(() => {
+        this.loadEvolutionHistory(this.worldId, { silent: true })
+      }, 2500)
+    },
+    stopEvolutionHistoryPolling() {
+      if (this.evolutionHistoryPollTimer) {
+        clearInterval(this.evolutionHistoryPollTimer)
+        this.evolutionHistoryPollTimer = null
       }
     },
     openEvolutionRecord(record) {
@@ -4883,11 +4919,24 @@ export default {
     getEvolutionStatusLabel(status) {
       const labels = {
         created: '已创建',
+        planning: '规划中',
         running: '进行中',
+        consolidating: '整合中',
         completed: '已完成',
         failed: '失败',
       }
       return labels[status] || status || '未知'
+    },
+    isEvolutionActive(record) {
+      return ['created', 'planning', 'running', 'consolidating'].includes(record?.status)
+    },
+    getEvolutionTotalRounds(record) {
+      return Math.max(Number(record?.config?.rounds || 5), 1)
+    },
+    getEvolutionProgress(record) {
+      const total = this.getEvolutionTotalRounds(record)
+      const current = Math.min(Math.max((record?.rounds || []).length, 0), total)
+      return Math.min(100, Math.max(0, Math.round((current / total) * 100)))
     },
     getEvolutionTypeLabel(type) {
       const labels = {
@@ -7138,6 +7187,7 @@ export default {
       clearTimeout(this.agentWorldRefreshTimer)
       this.agentWorldRefreshTimer = null
     }
+    this.stopEvolutionHistoryPolling()
   }
 }
 </script>
@@ -10885,9 +10935,26 @@ export default {
   color: #fca5a5;
 }
 
-.evolution-status-badge.is-created {
+.evolution-status-badge.is-created,
+.evolution-status-badge.is-planning,
+.evolution-status-badge.is-consolidating {
   background: rgba(250, 204, 21, 0.16);
   color: #fde68a;
+}
+
+.evolution-history-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  margin: 0 0 var(--spacing-md);
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.evolution-history-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.95), rgba(250, 204, 21, 0.95));
+  transition: width 0.25s ease;
 }
 
 .setting-detail-workbench {

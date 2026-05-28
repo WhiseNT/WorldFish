@@ -1,6 +1,6 @@
 """
-模拟相关API路由
-Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化）
+模拟相关 API 路由
+Step2: Zep 实体读取与过滤、WorldFish 模拟准备与运行（全程自动化）
 """
 
 import os
@@ -10,7 +10,7 @@ from flask import request, jsonify, send_file
 from . import simulation_bp
 from ..config import Config
 from ..services.zep_entity_reader import ZepEntityReader
-from ..services.oasis_profile_generator import OasisProfileGenerator
+from ..services.worldfish_profile_generator import WorldFishProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..utils.logger import get_logger
@@ -170,14 +170,12 @@ def create_simulation():
     """
     创建新的模拟
     
-    注意：max_rounds等参数由LLM智能生成，无需手动设置
+    注意：max_rounds 等参数会由 WorldFish 配置生成器给出推荐值，也可在启动时手动截断
     
     请求（JSON）：
         {
             "project_id": "proj_xxxx",      // 必填
             "graph_id": "worldfish_xxxx",    // 可选，如不提供则从project获取
-            "enable_twitter": true,          // 可选，默认true
-            "enable_reddit": true,           // 可选，默认true
             "simulation_mode": "unknown",    // 可选，unknown或known，默认unknown
             "time_range": "2024-2030"        // 可选，时间范围
         }
@@ -190,8 +188,6 @@ def create_simulation():
                 "project_id": "proj_xxxx",
                 "graph_id": "worldfish_xxxx",
                 "status": "created",
-                "enable_twitter": true,
-                "enable_reddit": true,
                 "simulation_mode": "unknown",
                 "time_range": "2024-2030",
                 "created_at": "2025-12-01T10:00:00"
@@ -226,8 +222,6 @@ def create_simulation():
         state = manager.create_simulation(
             project_id=project_id,
             graph_id=graph_id,
-            enable_twitter=data.get('enable_twitter', True),
-            enable_reddit=data.get('enable_reddit', True),
             simulation_mode=data.get('simulation_mode', 'unknown'),
             time_range=data.get('time_range')
         )
@@ -252,9 +246,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     
     检查条件：
     1. state.json 存在且 status 为 "ready"
-    2. 必要文件存在：reddit_profiles.json, twitter_profiles.csv, simulation_config.json
-    
-    注意：运行脚本(run_*.py)保留在 backend/scripts/ 目录，不再复制到模拟目录
+    2. 必要文件存在：worldfish_profiles.json, simulation_config.json
     
     Args:
         simulation_id: 模拟ID
@@ -265,7 +257,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     import os
     from ..config import Config
     
-    simulation_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+    simulation_dir = os.path.join(Config.WORLD_FISH_SIMULATION_DATA_DIR, simulation_id)
     
     # 检查目录是否存在
     if not os.path.exists(simulation_dir):
@@ -281,12 +273,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         with open(state_file, 'r', encoding='utf-8') as f:
             state_data = json.load(f)
 
-        # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
-        required_files = ["state.json", "simulation_config.json"]
-        if state_data.get("enable_reddit", True):
-            required_files.append("reddit_profiles.json")
-        if state_data.get("enable_twitter", True):
-            required_files.append("twitter_profiles.csv")
+        required_files = ["state.json", "simulation_config.json", "worldfish_profiles.json"]
 
         existing_files = []
         missing_files = []
@@ -321,7 +308,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         prepared_statuses = ["ready", "preparing", "running", "completed", "stopped", "failed"]
         if status in prepared_statuses and config_generated:
             # 获取文件统计信息
-            profiles_file = os.path.join(simulation_dir, "reddit_profiles.json")
+            profiles_file = os.path.join(simulation_dir, "worldfish_profiles.json")
             config_file = os.path.join(simulation_dir, "simulation_config.json")
             
             profiles_count = 0
@@ -369,7 +356,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
 @simulation_bp.route('/prepare', methods=['POST'])
 def prepare_simulation():
     """
-    准备模拟环境（异步任务，LLM智能生成所有参数）
+    准备模拟环境（异步任务，WorldFish 本地规则生成运行配置）
     
     这是一个耗时操作，接口会立即返回task_id，
     使用 GET /api/simulation/prepare/status 查询进度
@@ -382,15 +369,15 @@ def prepare_simulation():
     步骤：
     1. 检查是否已有完成的准备工作
     2. 从Zep图谱读取并过滤实体
-    3. 为每个实体生成OASIS Agent Profile（带重试机制）
-    4. LLM智能生成模拟配置（带重试机制）
-    5. 保存配置文件和预设脚本
+    3. 为每个实体生成 WorldFish Agent Profile
+    4. 生成 WorldFish 模拟配置
+    5. 保存配置文件和兼容 profile 文件
     
     请求（JSON）：
         {
             "simulation_id": "sim_xxxx",                   // 必填，模拟ID
             "entity_types": ["Student", "PublicFigure"],  // 可选，指定实体类型
-            "use_llm_for_profiles": true,                 // 可选，是否用LLM生成人设
+            "use_llm_for_profiles": true,                 // 兼容参数；当前使用本地规则生成人设
             "parallel_profile_count": 5,                  // 可选，并行生成人设数量，默认5
             "force_regenerate": false                     // 可选，强制重新生成，默认false
         }
@@ -532,10 +519,9 @@ def prepare_simulation():
                 def progress_callback(stage, progress, message, **kwargs):
                     # 计算总进度
                     stage_weights = {
-                        "reading": (0, 20),           # 0-20%
-                        "generating_profiles": (20, 70),  # 20-70%
-                        "generating_config": (70, 90),    # 70-90%
-                        "copying_scripts": (90, 100)       # 90-100%
+                        "reading": (0, 20),
+                        "generating_profiles": (20, 70),
+                        "generating_config": (70, 100)
                     }
                     
                     start, end = stage_weights.get(stage, (0, 100))
@@ -545,8 +531,7 @@ def prepare_simulation():
                     stage_names = {
                         "reading": t('progress.readingGraphEntities'),
                         "generating_profiles": t('progress.generatingProfiles'),
-                        "generating_config": t('progress.generatingSimConfig'),
-                        "copying_scripts": t('progress.preparingScripts')
+                        "generating_config": t('progress.generatingSimConfig')
                     }
                     
                     stage_index = list(stage_weights.keys()).index(stage) + 1 if stage in stage_weights else 1
@@ -999,33 +984,26 @@ def get_simulation_history():
 
 @simulation_bp.route('/<simulation_id>/profiles', methods=['GET'])
 def get_simulation_profiles(simulation_id: str):
-    """
-    获取模拟的Agent Profile
-    
-    Query参数：
-        platform: 平台类型（reddit/twitter，默认reddit）
-    """
+    """获取模拟的 WorldFish Agent Profile。"""
     try:
-        platform = request.args.get('platform', 'reddit')
-        
         manager = SimulationManager()
-        profiles = manager.get_profiles(simulation_id, platform=platform)
-        
+        profiles = manager.get_profiles(simulation_id)
+
         return jsonify({
             "success": True,
             "data": {
-                "platform": platform,
+                "stream": "worldfish",
                 "count": len(profiles),
                 "profiles": profiles
             }
         })
-        
+
     except ValueError as e:
         return jsonify({
             "success": False,
             "error": str(e)
         }), 404
-        
+
     except Exception as e:
         logger.error(f"获取Profile失败: {str(e)}")
         return jsonify({
@@ -1045,33 +1023,14 @@ def get_simulation_profiles_realtime(simulation_id: str):
     - 适用于生成过程中的实时查看
     - 返回额外的元数据（如文件修改时间、是否正在生成等）
     
-    Query参数：
-        platform: 平台类型（reddit/twitter，默认reddit）
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "platform": "reddit",
-                "count": 15,
-                "total_expected": 93,  // 预期总数（如果有）
-                "is_generating": true,  // 是否正在生成
-                "file_exists": true,
-                "file_modified_at": "2025-12-04T18:20:00",
-                "profiles": [...]
-            }
-        }
+    返回 profile 文件状态和已生成的 WorldFish profiles。
     """
     import json
-    import csv
     from datetime import datetime
     
     try:
-        platform = request.args.get('platform', 'reddit')
-        
         # 获取模拟目录
-        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        sim_dir = os.path.join(Config.WORLD_FISH_SIMULATION_DATA_DIR, simulation_id)
         
         if not os.path.exists(sim_dir):
             return jsonify({
@@ -1080,10 +1039,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
             }), 404
         
         # 确定文件路径
-        if platform == "reddit":
-            profiles_file = os.path.join(sim_dir, "reddit_profiles.json")
-        else:
-            profiles_file = os.path.join(sim_dir, "twitter_profiles.csv")
+        profiles_file = os.path.join(sim_dir, "worldfish_profiles.json")
         
         # 检查文件是否存在
         file_exists = os.path.exists(profiles_file)
@@ -1096,13 +1052,8 @@ def get_simulation_profiles_realtime(simulation_id: str):
             file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
             
             try:
-                if platform == "reddit":
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        profiles = json.load(f)
-                else:
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        profiles = list(reader)
+                with open(profiles_file, 'r', encoding='utf-8') as f:
+                    profiles = json.load(f)
             except (json.JSONDecodeError, Exception) as e:
                 logger.warning(f"读取 profiles 文件失败（可能正在写入中）: {e}")
                 profiles = []
@@ -1126,7 +1077,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
             "success": True,
             "data": {
                 "simulation_id": simulation_id,
-                "platform": platform,
+                "stream": "worldfish",
                 "count": len(profiles),
                 "total_expected": total_expected,
                 "is_generating": is_generating,
@@ -1174,7 +1125,7 @@ def get_simulation_config_realtime(simulation_id: str):
     
     try:
         # 获取模拟目录
-        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        sim_dir = os.path.join(Config.WORLD_FISH_SIMULATION_DATA_DIR, simulation_id)
         
         if not os.path.exists(sim_dir):
             return jsonify({
@@ -1243,10 +1194,10 @@ def get_simulation_config_realtime(simulation_id: str):
             response_data["summary"] = {
                 "total_agents": len(config.get("agent_configs", [])),
                 "simulation_hours": config.get("time_config", {}).get("total_simulation_hours"),
-                "initial_posts_count": len(config.get("event_config", {}).get("initial_posts", [])),
+                "initial_events_count": len(config.get("event_config", {}).get("initial_events", [])),
                 "hot_topics_count": len(config.get("event_config", {}).get("hot_topics", [])),
-                "has_twitter_config": "twitter_config" in config,
-                "has_reddit_config": "reddit_config" in config,
+                "runner": config.get("worldfish_config", {}).get("runner", config.get("runner")),
+                "has_worldfish_config": bool(config.get("worldfish_config")),
                 "generated_at": config.get("generated_at"),
                 "llm_model": config.get("llm_model")
             }
@@ -1272,10 +1223,10 @@ def get_simulation_config(simulation_id: str):
     
     返回包含：
         - time_config: 时间配置（模拟时长、轮次、高峰/低谷时段）
-        - agent_configs: 每个Agent的活动配置（活跃度、发言频率、立场等）
-        - event_config: 事件配置（初始帖子、热点话题）
-        - platform_configs: 平台配置
-        - generation_reasoning: LLM的配置推理说明
+        - agent_configs: 每个 Agent 的活动配置（活跃度、行动频率、立场等）
+        - event_config: WorldFish 事件配置（初始事件、热点话题）
+        - worldfish_config: 内置 runner 配置
+        - generation_reasoning: 配置生成推理说明
     """
     try:
         manager = SimulationManager()
@@ -1330,71 +1281,19 @@ def download_simulation_config(simulation_id: str):
         }), 500
 
 
-@simulation_bp.route('/script/<script_name>/download', methods=['GET'])
-def download_simulation_script(script_name: str):
-    """
-    下载模拟运行脚本文件（通用脚本，位于 backend/scripts/）
-    
-    script_name可选值：
-        - run_twitter_simulation.py
-        - run_reddit_simulation.py
-        - run_parallel_simulation.py
-        - action_logger.py
-    """
-    try:
-        # 脚本位于 backend/scripts/ 目录
-        scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../scripts'))
-        
-        # 验证脚本名称
-        allowed_scripts = [
-            "run_twitter_simulation.py",
-            "run_reddit_simulation.py", 
-            "run_parallel_simulation.py",
-            "action_logger.py"
-        ]
-        
-        if script_name not in allowed_scripts:
-            return jsonify({
-                "success": False,
-                "error": t('api.unknownScript', name=script_name, allowed=allowed_scripts)
-            }), 400
-        
-        script_path = os.path.join(scripts_dir, script_name)
-        
-        if not os.path.exists(script_path):
-            return jsonify({
-                "success": False,
-                "error": t('api.scriptFileNotFound', name=script_name)
-            }), 404
-        
-        return send_file(
-            script_path,
-            as_attachment=True,
-            download_name=script_name
-        )
-        
-    except Exception as e:
-        logger.error(f"下载脚本失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
-
 # ============== Profile生成接口（独立使用） ==============
 
 @simulation_bp.route('/generate-profiles', methods=['POST'])
 def generate_profiles():
     """
-    直接从图谱生成OASIS Agent Profile（不创建模拟）
+    直接从图谱生成 WorldFish Agent Profile（不创建模拟）
     
     请求（JSON）：
         {
             "graph_id": "worldfish_xxxx",     // 必填
             "entity_types": ["Student"],      // 可选
-            "use_llm": true,                  // 可选
-            "platform": "reddit"              // 可选
+            "use_llm": true,                  // 兼容参数；当前使用本地规则
+
         }
     """
     try:
@@ -1409,7 +1308,6 @@ def generate_profiles():
         
         entity_types = data.get('entity_types')
         use_llm = data.get('use_llm', True)
-        platform = data.get('platform', 'reddit')
         
         reader = ZepEntityReader()
         filtered = reader.filter_defined_entities(
@@ -1424,23 +1322,18 @@ def generate_profiles():
                 "error": t('api.noMatchingEntities')
             }), 400
         
-        generator = OasisProfileGenerator()
+        generator = WorldFishProfileGenerator()
         profiles = generator.generate_profiles_from_entities(
             entities=filtered.entities,
             use_llm=use_llm
         )
         
-        if platform == "reddit":
-            profiles_data = [p.to_reddit_format() for p in profiles]
-        elif platform == "twitter":
-            profiles_data = [p.to_twitter_format() for p in profiles]
-        else:
-            profiles_data = [p.to_dict() for p in profiles]
+        profiles_data = [p.to_dict() for p in profiles]
         
         return jsonify({
             "success": True,
             "data": {
-                "platform": platform,
+                "stream": "worldfish",
                 "entity_types": list(filtered.entity_types),
                 "count": len(profiles_data),
                 "profiles": profiles_data
@@ -1466,7 +1359,6 @@ def start_simulation():
     请求（JSON）：
         {
             "simulation_id": "sim_xxxx",          // 必填，模拟ID
-            "platform": "parallel",                // 可选: twitter / reddit / parallel (默认)
             "max_rounds": 100,                     // 可选: 最大模拟轮数，用于截断过长的模拟
             "enable_graph_memory_update": false,   // 可选: 是否将Agent活动动态更新到Zep图谱记忆
             "force": false                         // 可选: 强制重新开始（会停止运行中的模拟并清理日志）
@@ -1479,7 +1371,7 @@ def start_simulation():
         - 适用于需要重新运行模拟的场景
 
     关于 enable_graph_memory_update：
-        - 启用后，模拟中所有Agent的活动（发帖、评论、点赞等）都会实时更新到Zep图谱
+        - 启用后，模拟中所有 Agent 的 WorldFish 行动都会实时更新到 Zep 图谱
         - 这可以让图谱"记住"模拟过程，用于后续分析或AI对话
         - 需要模拟关联的项目有有效的 graph_id
         - 采用批量更新机制，减少API调用次数
@@ -1491,8 +1383,7 @@ def start_simulation():
                 "simulation_id": "sim_xxxx",
                 "runner_status": "running",
                 "process_pid": 12345,
-                "twitter_running": true,
-                "reddit_running": true,
+                "stream_running": true,
                 "started_at": "2025-12-01T10:00:00",
                 "graph_memory_update_enabled": true,  // 是否启用了图谱记忆更新
                 "force_restarted": true               // 是否是强制重新开始
@@ -1509,7 +1400,6 @@ def start_simulation():
                 "error": t('api.requireSimulationId')
             }), 400
 
-        platform = data.get('platform', 'parallel')
         max_rounds = data.get('max_rounds')  # 可选：最大模拟轮数
         enable_graph_memory_update = data.get('enable_graph_memory_update', False)  # 可选：是否启用图谱记忆更新
         force = data.get('force', False)  # 可选：强制重新开始
@@ -1528,12 +1418,6 @@ def start_simulation():
                     "success": False,
                     "error": t('api.maxRoundsInvalid')
                 }), 400
-
-        if platform not in ['twitter', 'reddit', 'parallel']:
-            return jsonify({
-                "success": False,
-                "error": t('api.invalidPlatform', platform=platform)
-            }), 400
 
         # 检查模拟是否已准备好
         manager = SimulationManager()
@@ -1613,7 +1497,6 @@ def start_simulation():
         # 启动模拟
         run_state = SimulationRunner.start_simulation(
             simulation_id=simulation_id,
-            platform=platform,
             max_rounds=max_rounds,
             enable_graph_memory_update=enable_graph_memory_update,
             graph_id=graph_id
@@ -1728,10 +1611,8 @@ def get_run_status(simulation_id: str):
                 "progress_percent": 3.5,
                 "simulated_hours": 2,
                 "total_simulation_hours": 72,
-                "twitter_running": true,
-                "reddit_running": true,
-                "twitter_actions_count": 150,
-                "reddit_actions_count": 200,
+                "stream_running": true,
+                "actions_count": 350,
                 "total_actions_count": 350,
                 "started_at": "2025-12-01T10:00:00",
                 "updated_at": "2025-12-01T10:30:00"
@@ -1750,8 +1631,7 @@ def get_run_status(simulation_id: str):
                     "current_round": 0,
                     "total_rounds": 0,
                     "progress_percent": 0,
-                    "twitter_actions_count": 0,
-                    "reddit_actions_count": 0,
+                    "actions_count": 0,
                     "total_actions_count": 0,
                 }
             })
@@ -1777,39 +1657,10 @@ def get_run_status_detail(simulation_id: str):
     
     用于前端展示实时动态
     
-    Query参数：
-        platform: 过滤平台（twitter/reddit，可选）
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "runner_status": "running",
-                "current_round": 5,
-                ...
-                "all_actions": [
-                    {
-                        "round_num": 5,
-                        "timestamp": "2025-12-01T10:30:00",
-                        "platform": "twitter",
-                        "agent_id": 3,
-                        "agent_name": "Agent Name",
-                        "action_type": "CREATE_POST",
-                        "action_args": {"content": "..."},
-                        "result": null,
-                        "success": true
-                    },
-                    ...
-                ],
-                "twitter_actions": [...],  # Twitter 平台的所有动作
-                "reddit_actions": [...]    # Reddit 平台的所有动作
-            }
-        }
+    返回包含当前运行状态、完整 actions 和当前轮 recent_actions。
     """
     try:
         run_state = SimulationRunner.get_run_state(simulation_id)
-        platform_filter = request.args.get('platform')
         
         if not run_state:
             return jsonify({
@@ -1818,43 +1669,25 @@ def get_run_status_detail(simulation_id: str):
                     "simulation_id": simulation_id,
                     "runner_status": "idle",
                     "all_actions": [],
-                    "twitter_actions": [],
-                    "reddit_actions": []
+                    "actions": []
                 }
             })
         
         # 获取完整的动作列表
-        all_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform=platform_filter
-        )
-        
-        # 分平台获取动作
-        twitter_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="twitter"
-        ) if not platform_filter or platform_filter == "twitter" else []
-        
-        reddit_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="reddit"
-        ) if not platform_filter or platform_filter == "reddit" else []
-        
-        # 获取当前轮次的动作（recent_actions 只展示最新一轮）
+        all_actions = SimulationRunner.get_all_actions(simulation_id=simulation_id)
+
+        # 获取当前轮次的动作
         current_round = run_state.current_round
         recent_actions = SimulationRunner.get_all_actions(
             simulation_id=simulation_id,
-            platform=platform_filter,
             round_num=current_round
         ) if current_round > 0 else []
         
         # 获取基础状态信息
         result = run_state.to_dict()
         result["all_actions"] = [a.to_dict() for a in all_actions]
-        result["twitter_actions"] = [a.to_dict() for a in twitter_actions]
-        result["reddit_actions"] = [a.to_dict() for a in reddit_actions]
+        result["actions"] = result["all_actions"]
         result["rounds_count"] = len(run_state.rounds)
-        # recent_actions 只展示当前最新一轮两个平台的内容
         result["recent_actions"] = [a.to_dict() for a in recent_actions]
         
         return jsonify({
@@ -1879,7 +1712,6 @@ def get_simulation_actions(simulation_id: str):
     Query参数：
         limit: 返回数量（默认100）
         offset: 偏移量（默认0）
-        platform: 过滤平台（twitter/reddit）
         agent_id: 过滤Agent ID
         round_num: 过滤轮次
     
@@ -1895,7 +1727,6 @@ def get_simulation_actions(simulation_id: str):
     try:
         limit = request.args.get('limit', 100, type=int)
         offset = request.args.get('offset', 0, type=int)
-        platform = request.args.get('platform')
         agent_id = request.args.get('agent_id', type=int)
         round_num = request.args.get('round_num', type=int)
         
@@ -1903,7 +1734,6 @@ def get_simulation_actions(simulation_id: str):
             simulation_id=simulation_id,
             limit=limit,
             offset=offset,
-            platform=platform,
             agent_id=agent_id,
             round_num=round_num
         )
@@ -1992,161 +1822,6 @@ def get_agent_stats(simulation_id: str):
         }), 500
 
 
-# ============== 数据库查询接口 ==============
-
-@simulation_bp.route('/<simulation_id>/posts', methods=['GET'])
-def get_simulation_posts(simulation_id: str):
-    """
-    获取模拟中的帖子
-    
-    Query参数：
-        platform: 平台类型（twitter/reddit）
-        limit: 返回数量（默认50）
-        offset: 偏移量
-    
-    返回帖子列表（从SQLite数据库读取）
-    """
-    try:
-        platform = request.args.get('platform', 'reddit')
-        limit = request.args.get('limit', 50, type=int)
-        offset = request.args.get('offset', 0, type=int)
-        
-        sim_dir = os.path.join(
-            os.path.dirname(__file__),
-            f'../../uploads/simulations/{simulation_id}'
-        )
-        
-        db_file = f"{platform}_simulation.db"
-        db_path = os.path.join(sim_dir, db_file)
-        
-        if not os.path.exists(db_path):
-            return jsonify({
-                "success": True,
-                "data": {
-                    "platform": platform,
-                    "count": 0,
-                    "posts": [],
-                    "message": t('api.dbNotExist')
-                }
-            })
-        
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT * FROM post 
-                ORDER BY created_at DESC 
-                LIMIT ? OFFSET ?
-            """, (limit, offset))
-            
-            posts = [dict(row) for row in cursor.fetchall()]
-            
-            cursor.execute("SELECT COUNT(*) FROM post")
-            total = cursor.fetchone()[0]
-            
-        except sqlite3.OperationalError:
-            posts = []
-            total = 0
-        
-        conn.close()
-        
-        return jsonify({
-            "success": True,
-            "data": {
-                "platform": platform,
-                "total": total,
-                "count": len(posts),
-                "posts": posts
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"获取帖子失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
-
-@simulation_bp.route('/<simulation_id>/comments', methods=['GET'])
-def get_simulation_comments(simulation_id: str):
-    """
-    获取模拟中的评论（仅Reddit）
-    
-    Query参数：
-        post_id: 过滤帖子ID（可选）
-        limit: 返回数量
-        offset: 偏移量
-    """
-    try:
-        post_id = request.args.get('post_id')
-        limit = request.args.get('limit', 50, type=int)
-        offset = request.args.get('offset', 0, type=int)
-        
-        sim_dir = os.path.join(
-            os.path.dirname(__file__),
-            f'../../uploads/simulations/{simulation_id}'
-        )
-        
-        db_path = os.path.join(sim_dir, "reddit_simulation.db")
-        
-        if not os.path.exists(db_path):
-            return jsonify({
-                "success": True,
-                "data": {
-                    "count": 0,
-                    "comments": []
-                }
-            })
-        
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        try:
-            if post_id:
-                cursor.execute("""
-                    SELECT * FROM comment 
-                    WHERE post_id = ?
-                    ORDER BY created_at DESC 
-                    LIMIT ? OFFSET ?
-                """, (post_id, limit, offset))
-            else:
-                cursor.execute("""
-                    SELECT * FROM comment 
-                    ORDER BY created_at DESC 
-                    LIMIT ? OFFSET ?
-                """, (limit, offset))
-            
-            comments = [dict(row) for row in cursor.fetchall()]
-            
-        except sqlite3.OperationalError:
-            comments = []
-        
-        conn.close()
-        
-        return jsonify({
-            "success": True,
-            "data": {
-                "count": len(comments),
-                "comments": comments
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"获取评论失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
-
 # ============== Interview 采访接口 ==============
 
 @simulation_bp.route('/interview', methods=['POST'])
@@ -2154,37 +1829,17 @@ def interview_agent():
     """
     采访单个Agent
 
-    注意：此功能需要模拟环境处于运行状态（完成模拟循环后进入等待命令模式）
+    注意：当前由 WorldFish 内置 runner 基于动作日志生成轻量回答。
 
     请求（JSON）：
         {
             "simulation_id": "sim_xxxx",       // 必填，模拟ID
             "agent_id": 0,                     // 必填，Agent ID
             "prompt": "你对这件事有什么看法？",  // 必填，采访问题
-            "platform": "twitter",             // 可选，指定平台（twitter/reddit）
-                                               // 不指定时：双平台模拟同时采访两个平台
             "timeout": 60                      // 可选，超时时间（秒），默认60
         }
 
-    返回（不指定platform，双平台模式）：
-        {
-            "success": true,
-            "data": {
-                "agent_id": 0,
-                "prompt": "你对这件事有什么看法？",
-                "result": {
-                    "agent_id": 0,
-                    "prompt": "...",
-                    "platforms": {
-                        "twitter": {"agent_id": 0, "response": "...", "platform": "twitter"},
-                        "reddit": {"agent_id": 0, "response": "...", "platform": "reddit"}
-                    }
-                },
-                "timestamp": "2025-12-08T10:00:01"
-            }
-        }
-
-    返回（指定platform）：
+    返回：
         {
             "success": true,
             "data": {
@@ -2193,7 +1848,6 @@ def interview_agent():
                 "result": {
                     "agent_id": 0,
                     "response": "我认为...",
-                    "platform": "twitter",
                     "timestamp": "2025-12-08T10:00:00"
                 },
                 "timestamp": "2025-12-08T10:00:01"
@@ -2206,7 +1860,6 @@ def interview_agent():
         simulation_id = data.get('simulation_id')
         agent_id = data.get('agent_id')
         prompt = data.get('prompt')
-        platform = data.get('platform')  # 可选：twitter/reddit/None
         timeout = data.get('timeout', 60)
         
         if not simulation_id:
@@ -2227,13 +1880,6 @@ def interview_agent():
                 "error": t('api.requirePrompt')
             }), 400
         
-        # 验证platform参数
-        if platform and platform not in ("twitter", "reddit"):
-            return jsonify({
-                "success": False,
-                "error": t('api.invalidInterviewPlatform')
-            }), 400
-        
         # 检查环境状态
         if not SimulationRunner.check_env_alive(simulation_id):
             return jsonify({
@@ -2248,7 +1894,6 @@ def interview_agent():
             simulation_id=simulation_id,
             agent_id=agent_id,
             prompt=optimized_prompt,
-            platform=platform,
             timeout=timeout
         )
 
@@ -2291,16 +1936,13 @@ def interview_agents_batch():
             "interviews": [                    // 必填，采访列表
                 {
                     "agent_id": 0,
-                    "prompt": "你对A有什么看法？",
-                    "platform": "twitter"      // 可选，指定该Agent的采访平台
+                    "prompt": "你对A有什么看法？"
                 },
                 {
                     "agent_id": 1,
-                    "prompt": "你对B有什么看法？"  // 不指定platform则使用默认值
+                    "prompt": "你对B有什么看法？"
                 }
             ],
-            "platform": "reddit",              // 可选，默认平台（被每项的platform覆盖）
-                                               // 不指定时：双平台模拟每个Agent同时采访两个平台
             "timeout": 120                     // 可选，超时时间（秒），默认120
         }
 
@@ -2312,10 +1954,8 @@ def interview_agents_batch():
                 "result": {
                     "interviews_count": 4,
                     "results": {
-                        "twitter_0": {"agent_id": 0, "response": "...", "platform": "twitter"},
-                        "reddit_0": {"agent_id": 0, "response": "...", "platform": "reddit"},
-                        "twitter_1": {"agent_id": 1, "response": "...", "platform": "twitter"},
-                        "reddit_1": {"agent_id": 1, "response": "...", "platform": "reddit"}
+                        "0": {"agent_id": 0, "response": "..."},
+                        "1": {"agent_id": 1, "response": "..."}
                     }
                 },
                 "timestamp": "2025-12-08T10:00:01"
@@ -2327,7 +1967,6 @@ def interview_agents_batch():
 
         simulation_id = data.get('simulation_id')
         interviews = data.get('interviews')
-        platform = data.get('platform')  # 可选：twitter/reddit/None
         timeout = data.get('timeout', 120)
 
         if not simulation_id:
@@ -2342,13 +1981,6 @@ def interview_agents_batch():
                 "error": t('api.requireInterviews')
             }), 400
 
-        # 验证platform参数
-        if platform and platform not in ("twitter", "reddit"):
-            return jsonify({
-                "success": False,
-                "error": t('api.invalidInterviewPlatform')
-            }), 400
-
         # 验证每个采访项
         for i, interview in enumerate(interviews):
             if 'agent_id' not in interview:
@@ -2361,14 +1993,6 @@ def interview_agents_batch():
                     "success": False,
                     "error": t('api.interviewListMissingPrompt', index=i+1)
                 }), 400
-            # 验证每项的platform（如果有）
-            item_platform = interview.get('platform')
-            if item_platform and item_platform not in ("twitter", "reddit"):
-                return jsonify({
-                    "success": False,
-                    "error": t('api.interviewListInvalidPlatform', index=i+1)
-                }), 400
-
         # 检查环境状态
         if not SimulationRunner.check_env_alive(simulation_id):
             return jsonify({
@@ -2386,7 +2010,6 @@ def interview_agents_batch():
         result = SimulationRunner.interview_agents_batch(
             simulation_id=simulation_id,
             interviews=optimized_interviews,
-            platform=platform,
             timeout=timeout
         )
 
@@ -2427,8 +2050,6 @@ def interview_all_agents():
         {
             "simulation_id": "sim_xxxx",            // 必填，模拟ID
             "prompt": "你对这件事整体有什么看法？",  // 必填，采访问题（所有Agent使用相同问题）
-            "platform": "reddit",                   // 可选，指定平台（twitter/reddit）
-                                                    // 不指定时：双平台模拟每个Agent同时采访两个平台
             "timeout": 180                          // 可选，超时时间（秒），默认180
         }
 
@@ -2440,8 +2061,7 @@ def interview_all_agents():
                 "result": {
                     "interviews_count": 100,
                     "results": {
-                        "twitter_0": {"agent_id": 0, "response": "...", "platform": "twitter"},
-                        "reddit_0": {"agent_id": 0, "response": "...", "platform": "reddit"},
+                        "0": {"agent_id": 0, "response": "..."},
                         ...
                     }
                 },
@@ -2454,7 +2074,6 @@ def interview_all_agents():
 
         simulation_id = data.get('simulation_id')
         prompt = data.get('prompt')
-        platform = data.get('platform')  # 可选：twitter/reddit/None
         timeout = data.get('timeout', 180)
 
         if not simulation_id:
@@ -2467,13 +2086,6 @@ def interview_all_agents():
             return jsonify({
                 "success": False,
                 "error": t('api.requirePrompt')
-            }), 400
-
-        # 验证platform参数
-        if platform and platform not in ("twitter", "reddit"):
-            return jsonify({
-                "success": False,
-                "error": t('api.invalidInterviewPlatform')
             }), 400
 
         # 检查环境状态
@@ -2489,7 +2101,6 @@ def interview_all_agents():
         result = SimulationRunner.interview_all_agents(
             simulation_id=simulation_id,
             prompt=optimized_prompt,
-            platform=platform,
             timeout=timeout
         )
 
@@ -2524,13 +2135,11 @@ def get_interview_history():
     """
     获取Interview历史记录
 
-    从模拟数据库中读取所有Interview记录
+    从 WorldFish 动作日志读取采访历史
 
     请求（JSON）：
         {
             "simulation_id": "sim_xxxx",  // 必填，模拟ID
-            "platform": "reddit",          // 可选，平台类型（reddit/twitter）
-                                           // 不指定则返回两个平台的所有历史
             "agent_id": 0,                 // 可选，只获取该Agent的采访历史
             "limit": 100                   // 可选，返回数量，默认100
         }
@@ -2545,8 +2154,7 @@ def get_interview_history():
                         "agent_id": 0,
                         "response": "我认为...",
                         "prompt": "你对这件事有什么看法？",
-                        "timestamp": "2025-12-08T10:00:00",
-                        "platform": "reddit"
+                        "timestamp": "2025-12-08T10:00:00"
                     },
                     ...
                 ]
@@ -2557,7 +2165,6 @@ def get_interview_history():
         data = request.get_json() or {}
         
         simulation_id = data.get('simulation_id')
-        platform = data.get('platform')  # 不指定则返回两个平台的历史
         agent_id = data.get('agent_id')
         limit = data.get('limit', 100)
         
@@ -2569,7 +2176,6 @@ def get_interview_history():
 
         history = SimulationRunner.get_interview_history(
             simulation_id=simulation_id,
-            platform=platform,
             agent_id=agent_id,
             limit=limit
         )
@@ -2609,8 +2215,8 @@ def get_env_status():
             "data": {
                 "simulation_id": "sim_xxxx",
                 "env_alive": true,
-                "twitter_available": true,
-                "reddit_available": true,
+                "available": true,
+                "stream": "worldfish",
                 "message": "环境正在运行，可以接收Interview命令"
             }
         }
@@ -2641,8 +2247,8 @@ def get_env_status():
             "data": {
                 "simulation_id": simulation_id,
                 "env_alive": env_alive,
-                "twitter_available": env_status.get("twitter_available", False),
-                "reddit_available": env_status.get("reddit_available", False),
+                "available": env_status.get("available", False),
+                "stream": env_status.get("stream", "worldfish"),
                 "message": message
             }
         })

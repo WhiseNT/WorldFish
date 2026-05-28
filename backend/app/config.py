@@ -243,18 +243,11 @@ class Config:
     DEFAULT_CHUNK_SIZE = 500  # 默认切块大小
     DEFAULT_CHUNK_OVERLAP = 50  # 默认重叠大小
     
-    # OASIS模拟配置
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
-    OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
-    
-    # OASIS平台可用动作配置
-    OASIS_TWITTER_ACTIONS = [
-        'CREATE_POST', 'LIKE_POST', 'REPOST', 'FOLLOW', 'DO_NOTHING', 'QUOTE_POST'
-    ]
-    OASIS_REDDIT_ACTIONS = [
-        'LIKE_POST', 'DISLIKE_POST', 'CREATE_POST', 'CREATE_COMMENT',
-        'LIKE_COMMENT', 'DISLIKE_COMMENT', 'SEARCH_POSTS', 'SEARCH_USER',
-        'TREND', 'REFRESH', 'DO_NOTHING', 'FOLLOW', 'MUTE'
+    # WorldFish 模拟配置
+    WORLD_FISH_DEFAULT_MAX_ROUNDS = int(os.environ.get('WORLD_FISH_DEFAULT_MAX_ROUNDS', '10'))
+    WORLD_FISH_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+    WORLD_FISH_ACTIONS = [
+        'observe_world', 'state_position', 'adjust_plan', 'spread_influence'
     ]
     
     # Report Agent配置
@@ -303,7 +296,9 @@ class Config:
         cls.EXTRACTION_MAX_WORKERS = int(os.environ.get("EXTRACTION_MAX_WORKERS", "12"))
         cls.EXTRACTION_HUGE_WORKERS = int(os.environ.get("EXTRACTION_HUGE_WORKERS", "10"))
         cls.EXTRACTION_MASSIVE_WORKERS = int(os.environ.get("EXTRACTION_MASSIVE_WORKERS", "12"))
-        cls.OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
+        cls.WORLD_FISH_DEFAULT_MAX_ROUNDS = int(os.environ.get('WORLD_FISH_DEFAULT_MAX_ROUNDS', '10'))
+        cls.WORLD_FISH_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+        cls.WORLD_FISH_ACTIONS = ['observe_world', 'state_position', 'adjust_plan', 'spread_influence']
         cls.REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
         cls.REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
         cls.REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))

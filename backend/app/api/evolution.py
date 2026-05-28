@@ -457,6 +457,119 @@ def create_evolution():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@evolution_bp.route('/<evolution_id>/continue', methods=['POST'])
+def continue_evolution(evolution_id: str):
+    """在当前推演项目内继续向后推演，追加新轮次。"""
+    try:
+        evolution = EvolutionManager.get(evolution_id)
+        if not evolution:
+            return jsonify({'success': False, 'message': '推演不存在'}), 404
+        if evolution.status in {'planning', 'running', 'consolidating'}:
+            return jsonify({'success': False, 'message': '当前推演仍在进行中，不能重复启动继续推演'}), 409
+
+        data = request.get_json(silent=True) or {}
+        scenario = str(data.get('scenario') or '').strip()
+        config = data.get('config') or {}
+        if not isinstance(config, dict):
+            config = {}
+        else:
+            config = dict(config)
+
+        if not scenario:
+            return jsonify({'success': False, 'message': '请提供继续推演场景'}), 400
+        if not Config.get_llm_config('subagent').get('api_key'):
+            return jsonify({'success': False, 'message': 'LLM API Key 未配置'}), 400
+
+        world = WorldManager.get_world(evolution.world_id)
+        if not world:
+            return jsonify({'success': False, 'message': '世界观不存在'}), 404
+
+        existing_rounds = [r for r in (evolution.rounds or []) if getattr(r, 'round_number', 0) > 0]
+        round_offset = len(existing_rounds)
+        last_round = existing_rounds[-1] if existing_rounds else None
+        append_rounds = _coerce_rounds(config.get('rounds', 3))
+        previous_config = dict(evolution.config or {})
+
+        config['rounds'] = append_rounds
+        config['temperature'] = _coerce_temperature(config.get('temperature', previous_config.get('temperature', 0.7)))
+        config['focus_areas'] = _coerce_focus_areas(config.get('focus_areas') or previous_config.get('focus_areas') or [])
+        if last_round and not str(config.get('time_span_start') or '').strip():
+            config['time_span_start'] = last_round.year_advanced_to
+
+        accumulated_context = {
+            'parent_evolution_id': evolution_id,
+            'parent_round': round_offset,
+            'parent_narratives': [r.narrative for r in existing_rounds],
+            'parent_affected_entities': [],
+            'parent_new_events': [],
+            'parent_rounds': [],
+        }
+        if last_round:
+            accumulated_context['parent_anchor'] = {
+                'round_number': last_round.round_number,
+                'year_advanced_to': last_round.year_advanced_to,
+                'time_span_start': last_round.year_advanced_to,
+            }
+        for r in existing_rounds:
+            round_affected_entities = [ent for ent in (r.affected_entities or []) if isinstance(ent, dict)]
+            round_new_events = [evt for evt in (r.new_events or []) if isinstance(evt, dict)]
+            accumulated_context['parent_affected_entities'].extend(round_affected_entities)
+            accumulated_context['parent_new_events'].extend(round_new_events)
+            accumulated_context['parent_rounds'].append({
+                'round_number': r.round_number,
+                'year_advanced_to': r.year_advanced_to,
+                'affected_entities': round_affected_entities,
+                'new_events': round_new_events,
+            })
+
+        engine = WorldEvolutionEngine()
+        resolved_anchor = engine.resolve_anchor(
+            world,
+            scenario,
+            config,
+            accumulated_context=accumulated_context,
+        )
+        if resolved_anchor:
+            config['resolved_anchor'] = resolved_anchor
+            if resolved_anchor.get('start_time') and not str(config.get('time_span_start') or '').strip():
+                config['time_span_start'] = resolved_anchor['start_time']
+            if resolved_anchor.get('event_name') and not str(config.get('anchor_event') or '').strip():
+                config['anchor_event'] = resolved_anchor['event_name']
+
+        evolution.scenario = f"{evolution.scenario}\n\n继续推演：{scenario}" if evolution.scenario else scenario
+        evolution.config = {
+            **previous_config,
+            **config,
+            'rounds': round_offset + append_rounds,
+            'last_continue_rounds': append_rounds,
+        }
+        evolution.status = 'running'
+        evolution.error = ''
+        evolution.consolidation = None
+        EvolutionManager.save(evolution)
+
+        engine.evolve_async(
+            evolution_id,
+            world,
+            scenario,
+            config,
+            accumulated_context=accumulated_context,
+            round_offset=round_offset,
+        )
+
+        logger.info(f"继续推演已启动: {evolution_id}, append_rounds={append_rounds}, round_offset={round_offset}")
+        return jsonify({
+            'success': True,
+            'evolution_id': evolution_id,
+            'appended_rounds': append_rounds,
+            'total_rounds': round_offset + append_rounds,
+        })
+
+    except Exception as e:
+        logger.error(f"继续进化推演失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @evolution_bp.route('/world/<world_id>', methods=['GET'])
 def list_world_evolutions(world_id: str):
     """获取某世界观的所有进化推演（用于推演树）"""

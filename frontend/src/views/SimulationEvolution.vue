@@ -61,20 +61,26 @@
           </div>
         </div>
 
-        <div v-if="status === 'planning' || status === 'consolidating'" class="inline-status card">
+        <div v-if="isActiveEvolution" class="inline-status card">
           <div class="loading-spinner"></div>
-          <div>
-            <h4>{{ status === 'planning' ? '正在规划推演阶段' : '正在整合推演结果' }}</h4>
-            <p>{{ status === 'planning' ? '正在根据你给定的时间/事件锚点拆分阶段。' : '正在汇总关键主题、时间线与最终状态。' }}</p>
+          <div class="inline-status-main">
+            <h4>{{ activeStatusTitle }}</h4>
+            <p>{{ activeStatusMessage }}</p>
+            <div class="inline-progress-meta">
+              <span>进度 {{ safeCurrentRound }} / {{ safeTotalRounds }} 轮</span>
+              <span>{{ progressPercent }}%</span>
+            </div>
+            <div class="progress-bar compact"><div class="progress-fill" :style="{ width: progressPercent + '%' }"></div></div>
+            <p v-if="lastNarrative" class="last-narrative">最新进展：{{ lastNarrative }}</p>
           </div>
         </div>
 
-        <div v-if="consolidationSummary" class="result-summary card">
+        <div v-if="consolidationSummary || (status === 'completed' && rounds.length)" class="result-summary card">
           <div class="result-summary-header">
             <h3>推演结果</h3>
             <span class="tag tag-accent">总结</span>
           </div>
-          <p class="result-summary-text">{{ consolidationSummary.summary }}</p>
+          <p class="result-summary-text">{{ resultSummaryText }}</p>
 
           <div v-if="consolidationSummary.key_themes?.length" class="result-chip-list">
             <span v-for="theme in consolidationSummary.key_themes" :key="theme" class="tag tag-primary">{{ theme }}</span>
@@ -111,12 +117,12 @@
           </div>
         </div>
 
-        <div v-if="status === 'running'" class="progress-section">
+        <div v-if="isActiveEvolution" class="progress-section">
           <div class="progress-info">
-            <span>第 {{ currentRound }} / {{ totalRounds }} 轮</span>
-            <span class="progress-pct">{{ Math.round((currentRound / totalRounds) * 100) }}%</span>
+            <span>第 {{ safeCurrentRound }} / {{ safeTotalRounds }} 轮</span>
+            <span class="progress-pct">{{ progressPercent }}%</span>
           </div>
-          <div class="progress-bar"><div class="progress-fill" :style="{ width: (currentRound / totalRounds * 100) + '%' }"></div></div>
+          <div class="progress-bar"><div class="progress-fill" :style="{ width: progressPercent + '%' }"></div></div>
         </div>
 
         <div class="rounds-scroll">
@@ -148,8 +154,12 @@
             </div>
           </div>
 
-          <div v-if="rounds.length === 0 && status === 'running'" class="state-box">
-            <div class="loading-spinner"></div><p>正在生成第一轮...</p>
+          <div v-if="rounds.length === 0 && isActiveEvolution" class="state-box">
+            <div class="loading-spinner"></div><p>{{ status === 'planning' ? '正在规划第一轮...' : '正在生成第一轮...' }}</p>
+          </div>
+
+          <div v-if="status === 'completed' && rounds.length === 0" class="state-box">
+            <p class="message-warning">推演已结束，但暂未返回可展示的轮次内容。</p>
           </div>
 
           <!-- 向后推演 -->
@@ -166,7 +176,7 @@
           </div>
         </div>
 
-        <div v-if="status === 'failed'" class="state-box"><p class="message-error">推演失败</p></div>
+        <div v-if="status === 'failed'" class="state-box"><p class="message-error">{{ loadError || '推演失败' }}</p></div>
       </div>
     </div>
 
@@ -268,8 +278,12 @@ const parentEvoId = ref('')
 const evolutionScenario = ref('')
 const evolutionConfig = ref({})
 const consolidationSummary = ref(null)
+const lastNarrative = ref('')
+const latestWarnings = ref([])
+const warningCount = ref(0)
 let pollTimer = null
 
+const activeStatuses = new Set(['created', 'planning', 'running', 'consolidating'])
 const terminalStatuses = new Set(['completed', 'failed'])
 
 const graphData = ref(null)
@@ -278,12 +292,38 @@ const graphMessage = ref('暂无可用图谱数据。')
 const showApplyDialog = ref(false)
 
 const statusText = computed(() => ({
+  created: '已创建，等待启动',
   planning: '正在规划',
   running: '正在推演',
   consolidating: '正在整合结果',
   completed: '已完成',
   failed: '推演失败',
 })[status.value] || status.value || '未知状态')
+
+const isActiveEvolution = computed(() => activeStatuses.has(status.value))
+const safeTotalRounds = computed(() => Math.max(Number(totalRounds.value) || 1, 1))
+const safeCurrentRound = computed(() => Math.min(Math.max(Number(currentRound.value) || 0, 0), safeTotalRounds.value))
+const progressPercent = computed(() => Math.min(100, Math.max(0, Math.round((safeCurrentRound.value / safeTotalRounds.value) * 100))))
+const activeStatusTitle = computed(() => ({
+  created: '推演卡片已创建',
+  planning: '正在规划推演阶段',
+  running: '正在推演世界变化',
+  consolidating: '正在整合推演结果',
+})[status.value] || '正在推演')
+const activeStatusMessage = computed(() => {
+  if (status.value === 'created') return '后端任务已创建，正在等待推演引擎接手。'
+  if (status.value === 'planning') return '正在根据你给定的时间/事件锚点拆分阶段。'
+  if (status.value === 'consolidating') return '正在汇总关键主题、时间线与最终状态。'
+  if (lastNarrative.value) return '推演正在进行，页面会持续同步最新轮次。'
+  return '推演正在进行，正在等待第一轮内容生成。'
+})
+
+const resultSummaryText = computed(() => {
+  if (consolidationSummary.value?.summary) return consolidationSummary.value.summary
+  const latestRound = rounds.value?.[rounds.value.length - 1]
+  if (latestRound?.narrative) return latestRound.narrative
+  return '推演已完成，结果正在整理。'
+})
 
 const resolvedAnchorText = computed(() => {
   const anchor = evolutionConfig.value?.resolved_anchor || {}
@@ -533,28 +573,72 @@ async function loadGraph() {
 
 function toggleGraphMax() {}
 
+function applyEvolutionDetail(evo = {}) {
+  status.value = evo.status || 'running'
+  worldId.value = evo.world_id || worldId.value || ''
+  evolutionScenario.value = evo.scenario || evolutionScenario.value || ''
+  evolutionConfig.value = evo.config || evolutionConfig.value || {}
+  consolidationSummary.value = evo.consolidation || null
+  rounds.value = Array.isArray(evo.rounds)
+    ? evo.rounds
+        .filter(round => Number(round?.round_number || 0) > 0)
+        .sort((left, right) => Number(left.round_number || 0) - Number(right.round_number || 0))
+    : []
+  currentRound.value = rounds.value.length
+  totalRounds.value = Number(evo.config?.rounds || totalRounds.value || 5)
+  evoType.value = evo.evolution_type || evoType.value || 'forward'
+  parentEvoId.value = evo.parent_evolution_id || parentEvoId.value || ''
+  if (rounds.value.length) {
+    const latestRound = rounds.value[rounds.value.length - 1]
+    lastNarrative.value = String(latestRound?.narrative || '').slice(0, 200)
+  }
+}
+
 async function fetchEvolution() {
   try {
     const res = await service.get(`/api/evolution/${evolutionId.value}`)
     const evo = res.evolution || res
-    status.value = evo.status || 'running'
-    worldId.value = evo.world_id || ''
-    evolutionScenario.value = evo.scenario || ''
-    evolutionConfig.value = evo.config || {}
-    consolidationSummary.value = evo.consolidation || null
-    rounds.value = Array.isArray(evo.rounds)
-      ? evo.rounds
-          .filter(round => Number(round?.round_number || 0) > 0)
-          .sort((left, right) => Number(left.round_number || 0) - Number(right.round_number || 0))
-      : []
-    currentRound.value = rounds.value.length
-    totalRounds.value = (evo.config && evo.config.rounds) || 5
-    evoType.value = evo.evolution_type || 'forward'
-    parentEvoId.value = evo.parent_evolution_id || ''
+    applyEvolutionDetail(evo)
     if (worldId.value) {
       await loadGraph()
     }
   } catch (e) { loadError.value = '加载失败: ' + (e.message || '') } finally { loading.value = false }
+}
+
+async function refreshEvolutionDetail({ forceGraph = false } = {}) {
+  const previousRoundCount = rounds.value.length
+  const previousStatus = status.value
+  const res = await service.get(`/api/evolution/${evolutionId.value}`)
+  const evo = res.evolution || res
+  applyEvolutionDetail(evo)
+  if (worldId.value && (forceGraph || previousRoundCount !== rounds.value.length || previousStatus !== status.value || !graphData.value)) {
+    await loadGraph()
+  }
+}
+
+async function refreshEvolutionStatus() {
+  const res = await service.get(`/api/evolution/${evolutionId.value}/status`)
+  status.value = res.status || status.value || 'running'
+  currentRound.value = Number(res.current_round ?? currentRound.value ?? 0)
+  totalRounds.value = Number(res.total_rounds || totalRounds.value || 5)
+  lastNarrative.value = res.last_narrative || lastNarrative.value || ''
+  latestWarnings.value = Array.isArray(res.latest_warnings) ? res.latest_warnings : []
+  warningCount.value = Number(res.warning_count || 0)
+  if (res.error) {
+    loadError.value = res.error
+  }
+  if (terminalStatuses.has(status.value)) {
+    await refreshEvolutionDetail({ forceGraph: true })
+  } else if (currentRound.value !== rounds.value.length) {
+    await refreshEvolutionDetail()
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 }
 
 function startPolling() {
@@ -563,33 +647,29 @@ function startPolling() {
   }
   pollTimer = setInterval(async () => {
     try {
-      const res = await service.get(`/api/evolution/${evolutionId.value}`)
-      const evo = res.evolution || res
-      const previousRoundCount = rounds.value.length
-      const previousStatus = status.value
-      status.value = evo.status || 'running'
-      evolutionScenario.value = evo.scenario || ''
-      evolutionConfig.value = evo.config || {}
-      consolidationSummary.value = evo.consolidation || null
-      rounds.value = Array.isArray(evo.rounds)
-        ? evo.rounds
-            .filter(round => Number(round?.round_number || 0) > 0)
-            .sort((left, right) => Number(left.round_number || 0) - Number(right.round_number || 0))
-        : []
-      currentRound.value = rounds.value.length
-      if (!worldId.value && evo.world_id) {
-        worldId.value = evo.world_id
+      await refreshEvolutionStatus()
+      if (terminalStatuses.has(status.value)) {
+        stopPolling()
       }
-      if (worldId.value && (previousRoundCount !== rounds.value.length || previousStatus !== status.value || !graphData.value)) {
-        await loadGraph()
-      }
-      if (terminalStatuses.has(status.value)) { clearInterval(pollTimer); pollTimer = null }
-    } catch (e) { /* ignore */ }
-  }, 3000)
+    } catch (e) {
+      try {
+        await refreshEvolutionDetail()
+        if (terminalStatuses.has(status.value)) {
+          stopPolling()
+        }
+      } catch (_) { /* ignore transient polling errors */ }
+    }
+  }, 2000)
 }
 
-onMounted(async () => { await fetchEvolution(); if (!terminalStatuses.has(status.value)) startPolling() })
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onMounted(async () => {
+  await fetchEvolution()
+  if (!terminalStatuses.has(status.value)) {
+    startPolling()
+    refreshEvolutionStatus().catch(() => {})
+  }
+})
+onUnmounted(stopPolling)
 
 function startBranchFrom(roundNum) {
   router.push({ name: 'SimulationSetup', query: { worldId: worldId.value, parentEvolutionId: evolutionId.value, parentRound: roundNum, evolutionType: 'branch' } })
@@ -599,6 +679,7 @@ const forwardScenario = ref('')
 const forwardRounds = ref(3)
 const forwarding = ref(false)
 async function startForward() {
+  if (!forwardScenario.value.trim() || forwarding.value) return
   forwarding.value = true
   try {
     const lastRound = rounds.value[rounds.value.length - 1]
@@ -611,14 +692,21 @@ async function startForward() {
     if (lastYear) {
       config.time_span_start = lastYear
     }
-    const res = await service.post('/api/evolution/create', {
-      world_id: worldId.value, scenario: forwardScenario.value,
+    const response = await service.post(`/api/evolution/${evolutionId.value}/continue`, {
+      scenario: forwardScenario.value,
       config,
-      evolution_type: 'forward', parent_evolution_id: evolutionId.value,
-      parent_round: lastRound?.round_number || rounds.value.length,
     })
-    router.push({ name: 'SimulationEvolution', params: { id: res.evolution_id } })
-  } catch (e) { alert('启动失败: ' + (e.message || '')) } finally { forwarding.value = false }
+    totalRounds.value = Number(response.total_rounds || (rounds.value.length + Number(forwardRounds.value || 0)) || totalRounds.value)
+    status.value = 'running'
+    consolidationSummary.value = null
+    forwardScenario.value = ''
+    startPolling()
+    await refreshEvolutionDetail({ forceGraph: true })
+  } catch (e) {
+    alert('继续推演失败: ' + (e.message || ''))
+  } finally {
+    forwarding.value = false
+  }
 }
 
 const selectedEntities = ref([])
@@ -887,8 +975,12 @@ async function sendChat() {
 .meta-value { margin: 0; font-size: 0.88rem; line-height: 1.6; color: var(--wf-text-primary); white-space: pre-wrap; }
 
 .inline-status { margin: var(--spacing-md); margin-bottom: 0; display: flex; align-items: center; gap: var(--spacing-md); }
+.inline-status-main { flex: 1; min-width: 0; }
 .inline-status h4 { margin: 0 0 4px; font-size: 0.95rem; color: var(--wf-text-primary); }
 .inline-status p { margin: 0; font-size: 0.84rem; color: var(--wf-text-secondary); }
+.inline-progress-meta { display: flex; justify-content: space-between; gap: var(--spacing-md); margin: var(--spacing-sm) 0 6px; font-size: 0.78rem; color: var(--wf-text-muted); }
+.progress-bar.compact { height: 6px; }
+.last-narrative { margin-top: var(--spacing-sm) !important; color: var(--wf-text-primary) !important; }
 
 .result-summary { margin: var(--spacing-md); margin-bottom: 0; display: flex; flex-direction: column; gap: var(--spacing-sm); }
 .result-summary-header { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-sm); }

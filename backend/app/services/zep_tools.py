@@ -1280,14 +1280,14 @@ class ZepToolsService:
         """
         【InterviewAgents - 深度采访】
         
-        调用真实的OASIS采访API，采访模拟中正在运行的Agent：
-        1. 自动读取人设文件，了解所有模拟Agent
-        2. 使用LLM分析采访需求，智能选择最相关的Agent
+        调用 WorldFish 采访接口，采访模拟中正在运行的 Agent：
+        1. 自动读取人设文件，了解所有模拟 Agent
+        2. 使用LLM分析采访需求，智能选择最相关的 Agent
         3. 使用LLM生成采访问题
-        4. 调用 /api/simulation/interview/batch 接口进行真实采访（双平台同时采访）
+        4. 调用 /api/simulation/interview/batch 接口进行采访
         5. 整合所有采访结果，生成采访报告
         
-        【重要】此功能需要模拟环境处于运行状态（OASIS环境未关闭）
+        【重要】此功能需要 WorldFish 模拟环境处于运行状态
         
         【使用场景】
         - 需要从不同角色视角了解事件看法
@@ -1362,75 +1362,46 @@ class ZepToolsService:
         )
         optimized_prompt = f"{INTERVIEW_PROMPT_PREFIX}{combined_prompt}"
         
-        # Step 4: 调用真实的采访API（不指定platform，默认双平台同时采访）
+        # Step 4: 调用 WorldFish 采访接口
         try:
-            # 构建批量采访列表（不指定platform，双平台采访）
-            interviews_request = []
-            for agent_idx in selected_indices:
-                interviews_request.append({
-                    "agent_id": agent_idx,
-                    "prompt": optimized_prompt  # 使用优化后的prompt
-                    # 不指定platform，API会在twitter和reddit两个平台都采访
-                })
-            
+            interviews_request = [
+                {"agent_id": agent_idx, "prompt": optimized_prompt}
+                for agent_idx in selected_indices
+            ]
             logger.info(t("console.callingBatchInterviewApi", count=len(interviews_request)))
-            
-            # 调用 SimulationRunner 的批量采访方法（不传platform，双平台采访）
+
             api_result = SimulationRunner.interview_agents_batch(
                 simulation_id=simulation_id,
                 interviews=interviews_request,
-                platform=None,  # 不指定platform，双平台采访
-                timeout=180.0   # 双平台需要更长超时
+                timeout=180.0
             )
-            
             logger.info(t("console.interviewApiReturned", count=api_result.get('interviews_count', 0), success=api_result.get('success')))
-            
-            # 检查API调用是否成功
+
             if not api_result.get("success", False):
                 error_msg = api_result.get("error", "未知错误")
                 logger.warning(t("console.interviewApiReturnedFailure", error=error_msg))
-                result.summary = f"采访API调用失败：{error_msg}。请检查OASIS模拟环境状态。"
+                result.summary = f"采访API调用失败：{error_msg}。请检查 WorldFish 模拟环境状态。"
                 return result
-            
-            # Step 5: 解析API返回结果，构建AgentInterview对象
-            # 双平台模式返回格式: {"twitter_0": {...}, "reddit_0": {...}, "twitter_1": {...}, ...}
+
             api_data = api_result.get("result", {})
             results_dict = api_data.get("results", {}) if isinstance(api_data, dict) else {}
-            
+
             for i, agent_idx in enumerate(selected_indices):
                 agent = selected_agents[i]
-                agent_name = agent.get("realname", agent.get("username", f"Agent_{agent_idx}"))
+                agent_name = agent.get("display_name") or agent.get("agent_name") or agent.get("name") or f"Agent_{agent_idx}"
                 agent_role = agent.get("profession", "未知")
                 agent_bio = agent.get("bio", "")
-                
-                # 获取该Agent在两个平台的采访结果
-                twitter_result = results_dict.get(f"twitter_{agent_idx}", {})
-                reddit_result = results_dict.get(f"reddit_{agent_idx}", {})
-                
-                twitter_response = twitter_result.get("response", "")
-                reddit_response = reddit_result.get("response", "")
 
-                # 清理可能的工具调用 JSON 包裹
-                twitter_response = self._clean_tool_call_response(twitter_response)
-                reddit_response = self._clean_tool_call_response(reddit_response)
+                response_result = results_dict.get(str(agent_idx), {})
+                response_text = self._clean_tool_call_response(response_result.get("response", ""))
 
-                # 始终输出双平台标记
-                twitter_text = twitter_response if twitter_response else "（该平台未获得回复）"
-                reddit_text = reddit_response if reddit_response else "（该平台未获得回复）"
-                response_text = f"【Twitter平台回答】\n{twitter_text}\n\n【Reddit平台回答】\n{reddit_text}"
-
-                # 提取关键引言（从两个平台的回答中）
                 import re
-                combined_responses = f"{twitter_response} {reddit_response}"
-
-                # 清理响应文本：去掉标记、编号、Markdown 等干扰
-                clean_text = re.sub(r'#{1,6}\s+', '', combined_responses)
+                clean_text = re.sub(r'#{1,6}\s+', '', response_text)
                 clean_text = re.sub(r'\{[^}]*tool_name[^}]*\}', '', clean_text)
                 clean_text = re.sub(r'[*_`|>~\-]{2,}', '', clean_text)
                 clean_text = re.sub(r'问题\d+[：:]\s*', '', clean_text)
                 clean_text = re.sub(r'【[^】]+】', '', clean_text)
 
-                # 策略1（主）: 提取完整的有实质内容的句子
                 sentences = re.split(r'[。！？]', clean_text)
                 meaningful = [
                     s.strip() for s in sentences
@@ -1441,28 +1412,25 @@ class ZepToolsService:
                 meaningful.sort(key=len, reverse=True)
                 key_quotes = [s + "。" for s in meaningful[:3]]
 
-                # 策略2（补充）: 正确配对的中文引号「」内长文本
                 if not key_quotes:
                     paired = re.findall(r'\u201c([^\u201c\u201d]{15,100})\u201d', clean_text)
                     paired += re.findall(r'\u300c([^\u300c\u300d]{15,100})\u300d', clean_text)
                     key_quotes = [q for q in paired if not re.match(r'^[，,；;：:、]', q)][:3]
-                
-                interview = AgentInterview(
+
+                result.interviews.append(AgentInterview(
                     agent_name=agent_name,
                     agent_role=agent_role,
-                    agent_bio=agent_bio[:1000],  # 扩大bio长度限制
+                    agent_bio=agent_bio[:1000],
                     question=combined_prompt,
                     response=response_text,
                     key_quotes=key_quotes[:5]
-                )
-                result.interviews.append(interview)
-            
+                ))
+
             result.interviewed_count = len(result.interviews)
-            
+
         except ValueError as e:
-            # 模拟环境未运行
             logger.warning(t("console.interviewApiCallFailed", error=e))
-            result.summary = f"采访失败：{str(e)}。模拟环境可能已关闭，请确保OASIS环境正在运行。"
+            result.summary = f"采访失败：{str(e)}。模拟环境可能已关闭，请确保 WorldFish 环境正在运行。"
             return result
         except Exception as e:
             logger.error(t("console.interviewApiCallException", error=e))
@@ -1503,50 +1471,25 @@ class ZepToolsService:
         return response
 
     def _load_agent_profiles(self, simulation_id: str) -> List[Dict[str, Any]]:
-        """加载模拟的Agent人设文件"""
+        """加载 WorldFish Agent 人设文件"""
         import os
-        import csv
-        
-        # 构建人设文件路径
+
         sim_dir = os.path.join(
-            os.path.dirname(__file__), 
+            os.path.dirname(__file__),
             f'../../uploads/simulations/{simulation_id}'
         )
-        
-        profiles = []
-        
-        # 优先尝试读取Reddit JSON格式
-        reddit_profile_path = os.path.join(sim_dir, "reddit_profiles.json")
-        if os.path.exists(reddit_profile_path):
-            try:
-                with open(reddit_profile_path, 'r', encoding='utf-8') as f:
-                    profiles = json.load(f)
-                logger.info(t("console.loadedRedditProfiles", count=len(profiles)))
-                return profiles
-            except Exception as e:
-                logger.warning(t("console.readRedditProfilesFailed", error=e))
-        
-        # 尝试读取Twitter CSV格式
-        twitter_profile_path = os.path.join(sim_dir, "twitter_profiles.csv")
-        if os.path.exists(twitter_profile_path):
-            try:
-                with open(twitter_profile_path, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        # CSV格式转换为统一格式
-                        profiles.append({
-                            "realname": row.get("name", ""),
-                            "username": row.get("username", ""),
-                            "bio": row.get("description", ""),
-                            "persona": row.get("user_char", ""),
-                            "profession": "未知"
-                        })
-                logger.info(t("console.loadedTwitterProfiles", count=len(profiles)))
-                return profiles
-            except Exception as e:
-                logger.warning(t("console.readTwitterProfilesFailed", error=e))
-        
-        return profiles
+        profile_path = os.path.join(sim_dir, "worldfish_profiles.json")
+        if not os.path.exists(profile_path):
+            return []
+
+        try:
+            with open(profile_path, 'r', encoding='utf-8') as f:
+                profiles = json.load(f)
+            logger.info(t("console.loadedProfiles", count=len(profiles)))
+            return profiles if isinstance(profiles, list) else []
+        except Exception as e:
+            logger.warning(f"读取 WorldFish profiles 失败: {e}")
+            return []
     
     def _select_agents_for_interview(
         self,

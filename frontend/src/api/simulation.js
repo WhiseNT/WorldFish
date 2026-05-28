@@ -2,7 +2,7 @@ import service, { requestWithRetry } from './index'
 
 /**
  * 创建模拟
- * @param {Object} data - { project_id, graph_id?, enable_twitter?, enable_reddit? }
+ * @param {Object} data - { project_id, graph_id? }
  */
 export const createSimulation = (data) => {
   return requestWithRetry(() => service.post('/api/simulation/create', data), 3, 1000)
@@ -35,19 +35,17 @@ export const getSimulation = (simulationId) => {
 /**
  * 获取模拟的 Agent Profiles
  * @param {string} simulationId
- * @param {string} platform - 'reddit' | 'twitter'
  */
-export const getSimulationProfiles = (simulationId, platform = 'reddit') => {
-  return service.get(`/api/simulation/${simulationId}/profiles`, { params: { platform } })
+export const getSimulationProfiles = (simulationId) => {
+  return service.get(`/api/simulation/${simulationId}/profiles`)
 }
 
 /**
  * 实时获取生成中的 Agent Profiles
  * @param {string} simulationId
- * @param {string} platform - 'reddit' | 'twitter'
  */
-export const getSimulationProfilesRealtime = (simulationId, platform = 'reddit') => {
-  return service.get(`/api/simulation/${simulationId}/profiles/realtime`, { params: { platform } })
+export const getSimulationProfilesRealtime = (simulationId) => {
+  return service.get(`/api/simulation/${simulationId}/profiles/realtime`)
 }
 
 /**
@@ -78,7 +76,7 @@ export const listSimulations = (projectId) => {
 
 /**
  * 启动模拟
- * @param {Object} data - { simulation_id, platform?, max_rounds?, enable_graph_memory_update? }
+ * @param {Object} data - { simulation_id, max_rounds?, enable_graph_memory_update?, force? }
  */
 export const startSimulation = (data) => {
   return requestWithRetry(() => service.post('/api/simulation/start', data), 3, 1000)
@@ -109,15 +107,14 @@ export const getRunStatusDetail = (simulationId) => {
 }
 
 /**
- * 获取模拟中的帖子
+ * 获取模拟动作历史
  * @param {string} simulationId
- * @param {string} platform - 'reddit' | 'twitter'
  * @param {number} limit - 返回数量
  * @param {number} offset - 偏移量
  */
-export const getSimulationPosts = (simulationId, platform = 'reddit', limit = 50, offset = 0) => {
-  return service.get(`/api/simulation/${simulationId}/posts`, {
-    params: { platform, limit, offset }
+export const getSimulationPosts = (simulationId, limit = 50, offset = 0) => {
+  return service.get(`/api/simulation/${simulationId}/actions`, {
+    params: { limit, offset }
   })
 }
 
@@ -146,7 +143,7 @@ export const getAgentStats = (simulationId) => {
 /**
  * 获取模拟动作历史
  * @param {string} simulationId
- * @param {Object} params - { limit, offset, platform, agent_id, round_num }
+ * @param {Object} params - { limit, offset, agent_id, round_num }
  */
 export const getSimulationActions = (simulationId, params = {}) => {
   return service.get(`/api/simulation/${simulationId}/actions`, { params })

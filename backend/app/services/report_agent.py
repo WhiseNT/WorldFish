@@ -521,31 +521,30 @@ TOOL_DESC_QUICK_SEARCH = """\
 - 与查询最相关的事实列表"""
 
 TOOL_DESC_INTERVIEW_AGENTS = """\
-【深度采访 - 真实Agent采访（双平台）】
-调用OASIS模拟环境的采访API，对正在运行的模拟Agent进行真实采访！
-这不是LLM模拟，而是调用真实的采访接口获取模拟Agent的原始回答。
-默认在Twitter和Reddit两个平台同时采访，获取更全面的观点。
+【深度采访 - WorldFish Agent采访】
+调用 WorldFish 内置采访接口，对正在运行的模拟 Agent 进行采访。
+这不是重新生成一段泛化文本，而是基于当前模拟动作日志组织 Agent 回答。
 
 功能流程：
-1. 自动读取人设文件，了解所有模拟Agent
-2. 智能选择与采访主题最相关的Agent（如学生、媒体、官方等）
+1. 自动读取人设文件，了解所有模拟 Agent
+2. 智能选择与采访主题最相关的 Agent（如学生、媒体、官方等）
 3. 自动生成采访问题
-4. 调用 /api/simulation/interview/batch 接口在双平台进行真实采访
+4. 调用 /api/simulation/interview/batch 接口进行采访
 5. 整合所有采访结果，提供多视角分析
 
 【使用场景】
 - 需要从不同角色视角了解事件看法（学生怎么看？媒体怎么看？官方怎么说？）
 - 需要收集多方意见和立场
-- 需要获取模拟Agent的真实回答（来自OASIS模拟环境）
+- 需要获取模拟 Agent 基于动作日志的回答
 - 想让报告更生动，包含"采访实录"
 
 【返回内容】
-- 被采访Agent的身份信息
-- 各Agent在Twitter和Reddit两个平台的采访回答
+- 被采访 Agent 的身份信息
+- 各 Agent 的采访回答
 - 关键引言（可直接引用）
 - 采访摘要和观点对比
 
-【重要】需要OASIS模拟环境正在运行才能使用此功能！"""
+【重要】需要 WorldFish 模拟环境正在运行才能使用此功能！"""
 
 # ── 大纲规划 prompt ──
 
@@ -1006,7 +1005,7 @@ class ReportAgent:
                 return result.to_text()
             
             elif tool_name == "interview_agents":
-                # 深度采访 - 调用真实的OASIS采访API获取模拟Agent的回答（双平台）
+                # 深度采访 - 调用 WorldFish 采访接口获取模拟 Agent 的回答
                 interview_topic = parameters.get("interview_topic", parameters.get("query", ""))
                 max_agents = parameters.get("max_agents", 5)
                 if isinstance(max_agents, str):

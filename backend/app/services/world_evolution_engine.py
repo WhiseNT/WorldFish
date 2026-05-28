@@ -401,17 +401,17 @@ class WorldEvolutionEngine:
         return normalized
 
     def evolve_async(self, evolution_id: str, world: WorldSetting, scenario: str, config: Dict[str, Any],
-                     accumulated_context: Dict[str, Any] = None):
-        """在后台线程中运行进化推演"""
+                     accumulated_context: Dict[str, Any] = None, round_offset: int = 0):
+        """在后台线程中运行进化推演。round_offset > 0 时会在当前推演记录后追加轮次。"""
         thread = threading.Thread(
             target=self._evolve_worker,
-            args=(evolution_id, world, scenario, config, accumulated_context),
+            args=(evolution_id, world, scenario, config, accumulated_context, round_offset),
             daemon=True,
         )
         thread.start()
 
     def _evolve_worker(self, evolution_id: str, world: WorldSetting, scenario: str, config: Dict[str, Any],
-                       accumulated_context: Dict[str, Any] = None):
+                       accumulated_context: Dict[str, Any] = None, round_offset: int = 0):
         try:
             config = dict(config or {})
             rounds = _coerce_rounds(config.get("rounds", 5))
@@ -459,7 +459,8 @@ class WorldEvolutionEngine:
 
             # === 阶段2: 逐轮执行 ===
             EvolutionManager.update_status(evolution_id, "running")
-            round_num = 0
+            round_offset = max(0, int(round_offset or 0))
+            local_round_num = 0
             current_year = time_span_start
 
             for phase_idx, phase in enumerate(phases):
@@ -472,11 +473,16 @@ class WorldEvolutionEngine:
                 logger.info(f"阶段 {phase_idx + 1}/{len(phases)}: {phase_name} ({phase_rounds} 轮)")
 
                 for pr in range(phase_rounds):
-                    round_num += 1
-                    logger.info(f"轮次 {round_num}/{rounds} [{phase_name}] (evolution_id={evolution_id})")
+                    local_round_num += 1
+                    display_round_num = round_offset + local_round_num
+                    display_total_rounds = round_offset + rounds
+                    logger.info(f"轮次 {display_round_num}/{display_total_rounds} [{phase_name}] (evolution_id={evolution_id})")
 
-                    # 构建累计状态上下文
-                    completed_rounds = parent_rounds_data + self._get_completed_rounds(evolution_id, round_num - 1)
+                    # 构建累计状态上下文。
+                    # 追加当前推演时，已有轮次已经能从当前 evolution 读取，避免再叠加 parent_rounds_data 导致重复。
+                    completed_rounds = self._get_completed_rounds(evolution_id, display_round_num - 1)
+                    if round_offset == 0:
+                        completed_rounds = parent_rounds_data + completed_rounds
                     cumulative_state = _build_cumulative_state(completed_rounds, known_entity_names)
 
                     # RAG 检索：查找与当前阶段场景相关的原始资料
@@ -495,8 +501,8 @@ class WorldEvolutionEngine:
                     round_result = self._run_round(
                         world_context=world_context,
                         scenario=scenario,
-                        round_number=round_num,
-                        total_rounds=rounds,
+                        round_number=display_round_num,
+                        total_rounds=display_total_rounds,
                         time_span_start=current_year,
                         focus_areas=focus_areas,
                         previous_rounds=accumulated_narrative,
@@ -517,7 +523,7 @@ class WorldEvolutionEngine:
                     round_result = self._validate_round_result(
                         round_result,
                         known_entity_names,
-                        round_num,
+                        display_round_num,
                         previous_time=current_year,
                     )
 
@@ -529,7 +535,7 @@ class WorldEvolutionEngine:
                         current_year = round_result["year_advanced_to"]
 
                     evolution_round = EvolutionRound(
-                        round_number=round_num,
+                        round_number=display_round_num,
                         narrative=round_result.get("narrative", ""),
                         year_advanced_to=round_result.get("year_advanced_to", ""),
                         affected_entities=round_result.get("affected_entities") or [],
@@ -543,7 +549,7 @@ class WorldEvolutionEngine:
             EvolutionManager.update_status(evolution_id, "consolidating")
             logger.info(f"开始推演后整合 (evolution_id={evolution_id})")
             try:
-                summary = self._consolidate_evolution(world_context, evolution_id, rounds, temperature)
+                summary = self._consolidate_evolution(world_context, evolution_id, round_offset + rounds, temperature)
                 if summary:
                     # 将整合结果附加到 evolution 的额外数据中
                     evo = EvolutionManager.get(evolution_id)
