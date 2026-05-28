@@ -1,108 +1,165 @@
 # WorldFish｜创世鱼缸
 
-> 用于创作者的世界观构建、管理与推演工具。
+WorldFish 是一个面向创作者的世界观构建、知识组织与推演工具。当前仓库侧重于**项目管理、知识图谱、RAG 检索、Agent 协作、模拟推演与报告生成**，前端采用 Vue 3，后端采用 Flask。
 
----
+## 主要能力
 
-## 主要说明
+- 世界观与项目结构化管理：角色、地点、势力、时间线、关系等
+- 知识图谱与关系可视化
+- 资料导入与 RAG 检索
+- Agent 协作式提取、整理与补全
+- 世界演化与模拟运行链路
+- 自动化报告生成与总结
+- 前后端分离：Vue 3 + Vite 前端，Flask 后端
 
-- 目标：将文本资料与创意转为结构化的世界观数据，支持 AI 协助的补全与推演。
-- 技术栈：后端（Flask/Python）、前端（Vue 3 + Vite）、RAG/向量检索与 LLM 集成；可通过 Docker 部署。
+## 技术栈
 
----
+- 后端：Python 3.11+、Flask、Flask-CORS
+- 前端：Vue 3、Vite、D3、Vue Router、Vue I18n
+- 工具：uv、npm、Docker / Docker Compose
 
-## 开发者指南（本地运行）
+## 仓库结构
 
-先决条件：`Python 3.10+`、`node`/`npm`、可选 `docker`/`docker-compose`。
+- `backend/`：Flask 后端，主要代码位于 `backend/app/`
+- `frontend/`：Vue 3 前端应用
+- `prompts/`：提取、校验、写作相关提示词
+- `locales/`：多语言资源
+- `uploads/`：上传与模拟数据目录
 
-1) 后端（本地）
+## 本地快速开始
+
+### 1. 安装依赖
+
+建议在仓库根目录执行：
 
 ```bash
-# 进入后端目录
-cd backend
-# 创建并激活虚拟环境（Windows PowerShell 示例）
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-# 安装依赖
-pip install -r requirements.txt
-# 启动后端
-python run.py
+npm run setup:all
 ```
 
-后端默认监听 `0.0.0.0:5001`（可通过环境变量 `FLASK_HOST` / `FLASK_PORT` 调整）。注意：运行时至少需配置一组 LLM API Key（详见下文）。
+该命令会：
 
-2) 前端（本地）
+- 安装根目录依赖
+- 安装 `frontend/` 依赖
+- 同步 `backend/` 的 Python 依赖（通过 `uv sync`）
+
+如果你想分开执行，也可以：
 
 ```bash
-cd frontend
 npm install
-npm run dev
-# 默认 Vite 开发服务器地址： http://localhost:5173
+cd frontend && npm install
+cd backend && uv sync
 ```
 
-（在使用 `docker-compose` 部署时，仓库的 compose 文件会将前端暴露在 `3000` 端口。）
+### 2. 配置环境变量
 
-3) 必要环境变量（示例 `.env`）
+项目根目录需要一个 `.env` 文件。后端启动时会检查至少一组 LLM Key 是否存在：
 
-```
-LLM_API_KEY=your-llm-key
+- `LLM_API_KEY`
+- `SUBAGENT_LLM_API_KEY`
+- `PARSER_LLM_API_KEY`
+
+示例：
+
+```env
+SECRET_KEY=change-me
 FLASK_HOST=0.0.0.0
 FLASK_PORT=5001
-SECRET_KEY=change-me
+
+LLM_API_KEY=your-key
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL_NAME=gpt-4o-mini
+
+# 可选：用于子代理 / 解析器
+SUBAGENT_LLM_API_KEY=
+PARSER_LLM_API_KEY=
+
+# 可选：用于 RAG Embedding
 EMBEDDING_API_KEY=
-ZEP_API_KEY=
+EMBEDDING_BASE_URL=
+EMBEDDING_MODEL_NAME=text-embedding-3-small
 ```
 
-后端在启动时会验证是否存在至少一组 LLM Key（`LLM_API_KEY` / `SUBAGENT_LLM_API_KEY` / `PARSER_LLM_API_KEY`）。
+说明：
 
----
+- `backend/app/config.py` 会从仓库根目录读取 `.env`
+- 如果你使用兼容 OpenAI 协议的模型服务，通常只需要调整 `*_BASE_URL` 和 `*_MODEL_NAME`
+- 如需使用 RAG 的 Embedding 能力，可单独配置 `EMBEDDING_*`，否则会复用 LLM 配置
 
-## 部署（Docker / 生产）
+### 3. 启动开发环境
 
-推荐使用 `docker-compose` 做快速部署：
+推荐在仓库根目录启动：
 
 ```bash
-# 构建并启动（后台）
-docker-compose up -d --build
-# 查看容器日志
-docker-compose logs -f worldfish
-# 停止并删除容器
-docker-compose down
+npm run dev
 ```
 
-默认端口映射（见 `docker-compose.yml`）：
-- 前端：宿主机 `3000` -> 容器 `3000`
-- 后端：宿主机 `5001` -> 容器 `5001`
+默认情况下：
 
-手动部署建议：使用生产级 WSGI 服务器（如 `gunicorn`/`uwsgi`）运行后端，并通过 `nginx` 做反向代理与静态文件服务；前端使用 `npm run build` 构建并由静态服务器或 CDN 托管。
+- 前端开发服务器：`http://localhost:3000`
+- 后端服务：`http://localhost:5001`
+- 前端会通过 Vite 代理把 `/api` 转发到后端
 
----
+如果你想单独启动：
 
-## 简化的功能概述（仓库层面）
+```bash
+# 后端
+npm run backend
 
-- 世界观结构化管理（实体、地点、势力、时间线等）。
-- 基于 LLM 的文本提取与 Agent 协作（用于补全与推演）。
-- RAG 支持，用于引用用户提供的世界观资料。
-- 简要地图系统用于空间关系管理。
+# 前端
+npm run frontend
+```
 
-（此处故意保留为简短说明，仓库 README 更侧重于开发、运行与部署说明。）
+也可以直接进入子目录运行：
 
----
+```bash
+cd backend && uv run python run.py
+cd frontend && npm run dev
+```
 
-## 代码位置概览
+## Docker 部署
 
-- 后端：`backend/`（Flask 应用，主要代码在 `backend/app/`）
-- 前端：`frontend/`（Vue 3 + Vite）
-- 脚本与示例：`scripts/` 与 `uploads/`（数据与演示文件）
+仓库提供了 `docker-compose.yml`，默认使用镜像方式部署。
 
----
+```bash
+docker compose up -d
+```
 
-## 贡献与联系方式
+说明：
 
-欢迎通过 Issue 报告问题或提出功能建议。提交代码请基于 `main` 建立 feature 分支并发起 Pull Request，描述变更目的与运行验证步骤。
+- 需要先准备好根目录 `.env`
+- 默认端口：前端 `3000`、后端 `5001`
+- `backend/uploads` 会被挂载到容器中，用于保存上传数据与模拟数据
 
----
+如果你需要查看日志：
+
+```bash
+docker compose logs -f worldfish
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+## 常用脚本
+
+根目录 `package.json` 提供了这些脚本：
+
+- `npm run setup`：安装根目录依赖并安装前端依赖
+- `npm run setup:backend`：同步后端 Python 依赖
+- `npm run setup:all`：一次性完成全部依赖安装
+- `npm run dev`：同时启动后端和前端开发环境
+- `npm run backend`：仅启动后端
+- `npm run frontend`：仅启动前端
+- `npm run build`：构建前端生产包
+
+## 说明
+
+- 本仓库当前更偏向开发与迭代状态，README 重点放在实际运行方式和项目结构上
+- 如果你要快速了解后端入口，可以从 `backend/run.py` 和 `backend/app/__init__.py` 开始
+- 如果你要查看 API 路由，可从 `backend/app/api/` 目录入手
 
 ## 许可证
 
-本项目使用仓库中的 `LICENSE`（请查看仓库根目录的 LICENSE 文件）。
+本项目许可证见仓库根目录的 `LICENSE` 文件。
