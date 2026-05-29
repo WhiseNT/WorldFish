@@ -11,6 +11,10 @@ export const builtinFrontendModules = {
     routes: ['/simulation/new', '/simulation/:id'],
     entryLabel: '开始推演',
   },
+  collaboration: {
+    routes: ['/collab'],
+    entryLabel: '联机房间',
+  },
   settings: {
     routes: ['/settings/llm', '/settings/modules'],
     entryLabel: '设置',

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.core.modules import ModuleManifest, ModuleRegistry
-from app.api import agent_bp, evolution_bp, graph_bp, modules_bp, project_bp, rag_bp, report_bp, simulation_bp, world_build_bp
+from app.api import agent_bp, collab_bp, evolution_bp, graph_bp, modules_bp, project_bp, rag_bp, report_bp, simulation_bp, world_build_bp
 
 from .definitions import BackendModuleDefinition, BlueprintBinding
 
@@ -118,6 +118,18 @@ def get_builtin_module_definitions():
                 capabilities=['api', 'agent', 'tools'],
             ),
             blueprints=[_binding(agent_bp, '/api/agent')],
+        ),
+        BackendModuleDefinition(
+            manifest=_manifest(
+                'collaboration',
+                '联机房间',
+                '提供工作区、房间、成员在线状态、事件日志和 HTTP 同步基础设施。',
+                'system',
+                routes=['/api/collab'],
+                nav=[{'label': '联机房间', 'path': '/collab', 'order': 40}],
+                capabilities=['api', 'ui', 'workspace', 'room', 'presence', 'event-log', 'sync'],
+            ),
+            blueprints=[_binding(collab_bp, '/api/collab')],
         ),
         BackendModuleDefinition(
             manifest=_manifest(

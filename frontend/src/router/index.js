@@ -35,6 +35,12 @@ const routes = [
     meta: { moduleId: 'rag' },
   },
   {
+    path: '/collab',
+    name: 'Collab',
+    component: () => import('../views/CollabView.vue'),
+    meta: { moduleId: 'collaboration' },
+  },
+  {
     path: '/settings/llm',
     name: 'LlmConfig',
     component: () => import('../views/LlmConfigView.vue'),

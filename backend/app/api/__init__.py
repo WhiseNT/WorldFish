@@ -22,10 +22,12 @@ from . import evolution  # noqa: E402, F401
 from . import rag  # noqa: E402, F401
 from . import agent  # noqa: E402, F401
 from . import modules  # noqa: E402, F401
+from . import collab  # noqa: E402, F401
 
 # 从模块获取蓝图
 project_bp = project.project_bp
 evolution_bp = evolution.evolution_bp
 rag_bp = rag.rag_bp
 modules_bp = modules.modules_bp
+collab_bp = collab.collab_bp
 
