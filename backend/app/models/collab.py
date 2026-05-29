@@ -1,17 +1,24 @@
-"""联机协作模型与文件持久化仓库。"""
+"""联机协作模型与持久化仓库。
+
+数据访问走 SQLite（collab_store），提供并发安全的房间 / 成员 / 事件存储。
+对外方法签名保持向后兼容，新增权限校验与乐观并发能力。
+"""
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
+from ..core import identity
+from .collab_store import CollabStore, migrate_json_if_needed
+
+MEMBER_ONLINE_WINDOW_SECONDS = 45
+MAX_EVENT_LIMIT = 500
 
 
 def _now() -> str:
@@ -21,7 +28,7 @@ def _now() -> str:
 def _parse_time(value: str) -> Optional[datetime]:
     try:
         return datetime.fromisoformat(value)
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -115,7 +122,7 @@ class RoomMember:
     def to_dict(self) -> Dict[str, Any]:
         data = self.__dict__.copy()
         seen_at = _parse_time(self.last_seen_at)
-        data['online'] = bool(seen_at and datetime.now() - seen_at < timedelta(seconds=45))
+        data['online'] = bool(seen_at and datetime.now() - seen_at < timedelta(seconds=MEMBER_ONLINE_WINDOW_SECONDS))
         return data
 
     @classmethod
@@ -156,124 +163,131 @@ class RoomEvent:
         )
 
 
+class ConflictError(Exception):
+    """乐观并发冲突。"""
+
+    def __init__(self, message: str, latest_event: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.message = message
+        self.latest_event = latest_event
+
+
 class CollabManager:
-    """文件持久化协作仓库。"""
+    """基于 SQLite 的协作仓库。对外方法保持向后兼容。"""
 
     BASE_DIR = os.path.join(Config.UPLOAD_FOLDER, 'collab')
+    _store: Optional[CollabStore] = None
+    _store_path: Optional[str] = None
     _lock = threading.RLock()
+    _defaults_ready = False
+
+    # ---------- 存储管理 ----------
 
     @classmethod
     def configure_base_dir(cls, base_dir: str):
-        cls.BASE_DIR = base_dir
+        with cls._lock:
+            cls.BASE_DIR = base_dir
+            cls._store = None
+            cls._store_path = None
+            cls._defaults_ready = False
 
     @classmethod
-    def _base(cls) -> Path:
-        base = Path(cls.BASE_DIR)
-        base.mkdir(parents=True, exist_ok=True)
-        (base / 'events').mkdir(parents=True, exist_ok=True)
-        return base
+    def _db_path(cls) -> str:
+        return os.path.join(cls.BASE_DIR, 'collab.db')
 
     @classmethod
-    def _json_file(cls, name: str) -> Path:
-        return cls._base() / name
+    def store(cls) -> CollabStore:
+        with cls._lock:
+            db_path = cls._db_path()
+            if cls._store is None or cls._store_path != db_path:
+                cls._store = CollabStore(db_path)
+                cls._store_path = db_path
+                migrate_json_if_needed(cls._store, cls.BASE_DIR)
+            return cls._store
 
-    @classmethod
-    def _read_list(cls, name: str) -> List[Dict[str, Any]]:
-        path = cls._json_file(name)
-        if not path.exists():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding='utf-8'))
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
-
-    @classmethod
-    def _write_list(cls, name: str, rows: List[Dict[str, Any]]):
-        path = cls._json_file(name)
-        temp = path.with_suffix(path.suffix + '.tmp')
-        temp.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-        temp.replace(path)
+    # ---------- 默认本地数据 ----------
 
     @classmethod
     def ensure_local_defaults(cls) -> Dict[str, Any]:
         with cls._lock:
-            users = [CollabUser.from_dict(item) for item in cls._read_list('users.json')]
-            if not any(user.id == 'local_user' for user in users):
-                users.append(CollabUser(id='local_user', name='本地用户'))
-                cls._write_list('users.json', [user.to_dict() for user in users])
-
-            workspaces = [Workspace.from_dict(item) for item in cls._read_list('workspaces.json')]
-            if not any(ws.id == 'local_workspace' for ws in workspaces):
-                workspaces.append(Workspace(id='local_workspace', name='本地工作区', owner_id='local_user'))
-                cls._write_list('workspaces.json', [ws.to_dict() for ws in workspaces])
-
-            rooms = [Room.from_dict(item) for item in cls._read_list('rooms.json')]
-            if not any(room.id == 'local_room' for room in rooms):
-                rooms.append(Room(id='local_room', workspace_id='local_workspace', name='本地房间', owner_id='local_user'))
-                cls._write_list('rooms.json', [room.to_dict() for room in rooms])
-
-            cls.join_room('local_room', 'local_user', '本地用户', role='owner', emit_event=False)
+            store = cls.store()
+            if not store.get_user('local_user'):
+                store.upsert_user(CollabUser(id='local_user', name='本地用户').to_dict())
+            if not store.get_workspace('local_workspace'):
+                store.upsert_workspace(Workspace(id='local_workspace', name='本地工作区', owner_id='local_user').to_dict())
+            if not store.get_room('local_room'):
+                store.upsert_room(Room(id='local_room', workspace_id='local_workspace', name='本地房间', owner_id='local_user').to_dict())
+            if not store.get_member('local_room', 'local_user'):
+                store.upsert_member(RoomMember(room_id='local_room', user_id='local_user', role=identity.ROLE_OWNER, display_name='本地用户').to_dict(), update_existing=False)
             return {
-                'user': cls.get_user('local_user').to_dict(),
-                'workspace': cls.get_workspace('local_workspace').to_dict(),
+                'user': store.get_user('local_user'),
+                'workspace': store.get_workspace('local_workspace'),
                 'room': cls.get_room('local_room').to_dict(),
             }
 
+    # ---------- 用户 / 工作区 ----------
+
     @classmethod
     def get_user(cls, user_id: str) -> Optional[CollabUser]:
-        for item in cls._read_list('users.json'):
-            user = CollabUser.from_dict(item)
-            if user.id == user_id:
-                return user
-        return None
+        data = cls.store().get_user(user_id)
+        return CollabUser.from_dict(data) if data else None
 
     @classmethod
     def get_workspace(cls, workspace_id: str) -> Optional[Workspace]:
-        for item in cls._read_list('workspaces.json'):
-            ws = Workspace.from_dict(item)
-            if ws.id == workspace_id:
-                return ws
-        return None
+        data = cls.store().get_workspace(workspace_id)
+        return Workspace.from_dict(data) if data else None
 
     @classmethod
     def list_workspaces(cls) -> List[Workspace]:
         cls.ensure_local_defaults()
-        return [Workspace.from_dict(item) for item in cls._read_list('workspaces.json')]
+        return [Workspace.from_dict(item) for item in cls.store().list_workspaces()]
 
     @classmethod
     def create_workspace(cls, name: str, owner_id: str = 'local_user', description: str = '') -> Workspace:
         with cls._lock:
             cls.ensure_local_defaults()
-            rows = cls._read_list('workspaces.json')
             workspace = Workspace(id=f'ws_{uuid.uuid4().hex[:12]}', name=name or '新工作区', owner_id=owner_id, description=description)
-            rows.append(workspace.to_dict())
-            cls._write_list('workspaces.json', rows)
+            cls.store().upsert_workspace(workspace.to_dict())
             return workspace
+
+    # ---------- 房间 ----------
 
     @classmethod
     def list_rooms(cls, workspace_id: str = '') -> List[Room]:
         cls.ensure_local_defaults()
-        rooms = [Room.from_dict(item) for item in cls._read_list('rooms.json')]
-        return [room for room in rooms if not workspace_id or room.workspace_id == workspace_id]
+        return [Room.from_dict(item) for item in cls.store().list_rooms(workspace_id)]
 
     @classmethod
     def get_room(cls, room_id: str) -> Optional[Room]:
-        for item in cls._read_list('rooms.json'):
-            room = Room.from_dict(item)
-            if room.id == room_id:
-                return room
-        return None
+        data = cls.store().get_room(room_id)
+        return Room.from_dict(data) if data else None
 
     @classmethod
     def find_room_by_world(cls, world_id: str) -> Optional[Room]:
         target = str(world_id or '').strip()
         if not target:
             return None
-        for room in cls.list_rooms():
-            if room.linked_world_id == target:
-                return room
-        return None
+        data = cls.store().find_room_by_world(target)
+        return Room.from_dict(data) if data else None
+
+    @classmethod
+    def create_room(cls, name: str, workspace_id: str = 'local_workspace', owner_id: str = 'local_user', **kwargs) -> Room:
+        with cls._lock:
+            cls.ensure_local_defaults()
+            room = Room(
+                id=f'room_{uuid.uuid4().hex[:12]}',
+                workspace_id=workspace_id,
+                name=name or '新房间',
+                owner_id=owner_id,
+                description=kwargs.get('description') or '',
+                room_type=kwargs.get('room_type') or 'general',
+                linked_world_id=kwargs.get('linked_world_id') or '',
+                settings=kwargs.get('settings') if isinstance(kwargs.get('settings'), dict) else {},
+            )
+            cls.store().upsert_room(room.to_dict())
+            cls.join_room(room.id, owner_id, kwargs.get('display_name') or '本地用户', role=identity.ROLE_OWNER, emit_event=False)
+            cls.append_event(room.id, 'room.created', owner_id, {'room': room.to_dict()})
+            return room
 
     @classmethod
     def ensure_world_room(cls, world_id: str, world_name: str = '', workspace_id: str = 'local_workspace', owner_id: str = 'local_user') -> Room:
@@ -284,7 +298,7 @@ class CollabManager:
             cls.ensure_local_defaults()
             existing = cls.find_room_by_world(target)
             if existing:
-                cls.join_room(existing.id, owner_id, '本地用户', role='owner', emit_event=False)
+                cls.join_room(existing.id, owner_id, '本地用户', role=identity.ROLE_OWNER, emit_event=False)
                 return existing
             room = cls.create_room(
                 name=world_name or f'世界观房间 {target}',
@@ -297,35 +311,16 @@ class CollabManager:
             cls.append_event(room.id, 'world.room.created', owner_id, {'world_id': target, 'world_name': world_name or ''})
             return room
 
-    @classmethod
-    def create_room(cls, name: str, workspace_id: str = 'local_workspace', owner_id: str = 'local_user', **kwargs) -> Room:
-        with cls._lock:
-            cls.ensure_local_defaults()
-            rows = cls._read_list('rooms.json')
-            room = Room(
-                id=f'room_{uuid.uuid4().hex[:12]}',
-                workspace_id=workspace_id,
-                name=name or '新房间',
-                owner_id=owner_id,
-                description=kwargs.get('description') or '',
-                room_type=kwargs.get('room_type') or 'general',
-                linked_world_id=kwargs.get('linked_world_id') or '',
-                settings=kwargs.get('settings') if isinstance(kwargs.get('settings'), dict) else {},
-            )
-            rows.append(room.to_dict())
-            cls._write_list('rooms.json', rows)
-            cls.join_room(room.id, owner_id, kwargs.get('display_name') or '本地用户', role='owner', emit_event=False)
-            cls.append_event(room.id, 'room.created', owner_id, {'room': room.to_dict()})
-            return room
-
-    @classmethod
-    def _members_file(cls) -> str:
-        return 'members.json'
+    # ---------- 成员 ----------
 
     @classmethod
     def list_members(cls, room_id: str) -> List[RoomMember]:
-        members = [RoomMember.from_dict(item) for item in cls._read_list(cls._members_file())]
-        return [member for member in members if member.room_id == room_id]
+        return [RoomMember.from_dict(item) for item in cls.store().list_members(room_id)]
+
+    @classmethod
+    def get_member(cls, room_id: str, user_id: str) -> Optional[RoomMember]:
+        data = cls.store().get_member(room_id, user_id)
+        return RoomMember.from_dict(data) if data else None
 
     @classmethod
     def join_room(cls, room_id: str, user_id: str = 'local_user', display_name: str = '本地用户', role: str = 'member', emit_event: bool = True) -> RoomMember:
@@ -333,22 +328,18 @@ class CollabManager:
             room = cls.get_room(room_id)
             if not room:
                 raise ValueError(f'房间不存在: {room_id}')
-            rows = cls._read_list(cls._members_file())
-            now = _now()
-            found = None
-            joined_new = False
-            for item in rows:
-                if item.get('room_id') == room_id and item.get('user_id') == user_id:
-                    found = item
-                    break
-            if found:
-                found.update({'display_name': display_name or found.get('display_name'), 'role': role or found.get('role'), 'last_seen_at': now})
-                member = RoomMember.from_dict(found)
-            else:
-                member = RoomMember(room_id=room_id, user_id=user_id, role=role, display_name=display_name, joined_at=now, last_seen_at=now)
-                rows.append(member.to_dict())
-                joined_new = True
-            cls._write_list(cls._members_file(), rows)
+            normalized_role = identity.normalize_role(role, default=identity.ROLE_EDITOR)
+            member = RoomMember(
+                room_id=room_id,
+                user_id=user_id,
+                role=normalized_role,
+                display_name=display_name or '成员',
+                joined_at=_now(),
+                last_seen_at=_now(),
+            )
+            joined_new = cls.store().upsert_member(member.to_dict())
+            stored = cls.store().get_member(room_id, user_id)
+            member = RoomMember.from_dict(stored) if stored else member
             if emit_event and joined_new:
                 cls.append_event(room_id, 'member.joined', user_id, {'member': member.to_dict()})
             return member
@@ -356,10 +347,7 @@ class CollabManager:
     @classmethod
     def leave_room(cls, room_id: str, user_id: str = 'local_user') -> bool:
         with cls._lock:
-            rows = cls._read_list(cls._members_file())
-            kept = [item for item in rows if not (item.get('room_id') == room_id and item.get('user_id') == user_id)]
-            changed = len(kept) != len(rows)
-            cls._write_list(cls._members_file(), kept)
+            changed = cls.store().remove_member(room_id, user_id)
             if changed:
                 cls.append_event(room_id, 'member.left', user_id, {'user_id': user_id})
             return changed
@@ -367,59 +355,39 @@ class CollabManager:
     @classmethod
     def heartbeat(cls, room_id: str, user_id: str = 'local_user') -> RoomMember:
         with cls._lock:
-            members = cls.list_members(room_id)
-            target = next((member for member in members if member.user_id == user_id), None)
-            if not target:
-                return cls.join_room(room_id, user_id=user_id, role='member')
-            rows = cls._read_list(cls._members_file())
-            now = _now()
-            for item in rows:
-                if item.get('room_id') == room_id and item.get('user_id') == user_id:
-                    item['last_seen_at'] = now
-                    target = RoomMember.from_dict(item)
-                    break
-            cls._write_list(cls._members_file(), rows)
-            return target
+            if not cls.get_room(room_id):
+                raise ValueError(f'房间不存在: {room_id}')
+            updated = cls.store().touch_member(room_id, user_id, _now())
+            if not updated:
+                return cls.join_room(room_id, user_id=user_id, role=identity.ROLE_EDITOR)
+            return cls.get_member(room_id, user_id)
+
+    # ---------- 权限 ----------
 
     @classmethod
-    def _events_file(cls, room_id: str) -> Path:
-        safe = ''.join(ch for ch in room_id if ch.isalnum() or ch in {'_', '-'}) or 'room'
-        return cls._base() / 'events' / f'{safe}.jsonl'
+    def require_member(cls, room_id: str, user_id: str) -> RoomMember:
+        member = cls.get_member(room_id, user_id)
+        if not member:
+            raise identity.PermissionError(f'用户 {user_id} 不是房间成员', status=403)
+        return member
 
     @classmethod
-    def _read_events(cls, room_id: str) -> List[RoomEvent]:
-        path = cls._events_file(room_id)
-        if not path.exists():
-            return []
-        events = []
-        for line in path.read_text(encoding='utf-8').splitlines():
-            if not line.strip():
-                continue
-            try:
-                events.append(RoomEvent.from_dict(json.loads(line)))
-            except Exception:
-                continue
-        return events
+    def require_writer(cls, room_id: str, user_id: str) -> RoomMember:
+        member = cls.require_member(room_id, user_id)
+        if not identity.can_write(member.role):
+            raise identity.PermissionError(f'用户 {user_id} 没有写入权限（当前角色 {member.role}）', status=403)
+        return member
+
+    # ---------- 事件 ----------
 
     @classmethod
     def append_event(cls, room_id: str, event_type: str, actor_id: str = 'system', payload: Optional[Dict[str, Any]] = None) -> RoomEvent:
-        with cls._lock:
-            if not cls.get_room(room_id):
-                raise ValueError(f'房间不存在: {room_id}')
-            events = cls._read_events(room_id)
-            seq = (events[-1].seq if events else 0) + 1
-            event = RoomEvent(
-                id=f'evt_{uuid.uuid4().hex[:12]}',
-                room_id=room_id,
-                seq=seq,
-                type=event_type,
-                actor_id=actor_id,
-                payload=payload or {},
-            )
-            path = cls._events_file(room_id)
-            with path.open('a', encoding='utf-8') as handle:
-                handle.write(json.dumps(event.to_dict(), ensure_ascii=False) + '\n')
-            return event
+        if not cls.get_room(room_id):
+            raise ValueError(f'房间不存在: {room_id}')
+        event_id = f'evt_{uuid.uuid4().hex[:12]}'
+        created_at = _now()
+        seq = cls.store().append_event(event_id, room_id, event_type, actor_id, payload or {}, created_at)
+        return RoomEvent(id=event_id, room_id=room_id, seq=seq, type=event_type, actor_id=actor_id, payload=payload or {}, created_at=created_at)
 
     @classmethod
     def post_message(cls, room_id: str, content: str, actor_id: str = 'local_user') -> RoomEvent:
@@ -429,12 +397,38 @@ class CollabManager:
         return cls.append_event(room_id, 'message', actor_id, {'content': text})
 
     @classmethod
+    def append_world_event(cls, room_id: str, event_type: str, actor_id: str, payload: Dict[str, Any], base_seq: Optional[int] = None) -> RoomEvent:
+        """世界观事件写入，支持乐观并发检测。
+
+        若 base_seq 不为 None，且房间内已存在更新的、来自其他 client 的 world.saved 事件，
+        则抛出 ConflictError。
+        """
+        if base_seq is not None and event_type == 'world.saved':
+            latest = cls.store().find_latest_event(room_id, 'world.saved')
+            if latest and latest['seq'] > int(base_seq):
+                latest_client = (latest.get('payload') or {}).get('client_id')
+                current_client = (payload or {}).get('client_id')
+                if latest_client and latest_client != current_client:
+                    raise ConflictError('世界观已被其他成员更新，请先同步', latest_event=latest)
+        return cls.append_event(room_id, event_type, actor_id, payload)
+
+    @classmethod
     def list_events(cls, room_id: str, since: int = 0, limit: int = 100) -> Dict[str, Any]:
-        events = [event for event in cls._read_events(room_id) if event.seq > int(since or 0)]
-        limited = events[:max(1, min(int(limit or 100), 500))]
-        latest_seq = cls._read_events(room_id)[-1].seq if cls._read_events(room_id) else 0
+        bounded_limit = max(1, min(int(limit or 100), MAX_EVENT_LIMIT))
+        events = cls.store().list_events(room_id, since=int(since or 0), limit=bounded_limit)
+        latest_seq = cls.store().latest_seq(room_id)
+        remaining = cls.store().count_remaining(room_id, since=int(since or 0), limit=bounded_limit)
         return {
-            'events': [event.to_dict() for event in limited],
+            'events': events,
             'latest_seq': latest_seq,
-            'has_more': len(events) > len(limited),
+            'cursor': events[-1]['seq'] if events else int(since or 0),
+            'has_more': remaining > 0,
         }
+
+    @classmethod
+    def latest_seq(cls, room_id: str) -> int:
+        return cls.store().latest_seq(room_id)
+
+    @classmethod
+    def stats(cls) -> Dict[str, Any]:
+        return cls.store().stats()

@@ -29,6 +29,14 @@ http.interceptors.response.use(
   err => {
     if (err.code === 'ECONNABORTED') console.error('Request timed out')
     if (err.message === 'Network Error') console.error('Network unreachable')
+    const body = err.response?.data
+    if (body && typeof body === 'object') {
+      const normalized = new Error(body.message || body.error || err.message)
+      normalized.status = err.response.status
+      normalized.data = body
+      return Promise.reject(normalized)
+    }
+    if (err.response) err.status = err.response.status
     return Promise.reject(err)
   },
 )

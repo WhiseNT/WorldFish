@@ -5346,6 +5346,7 @@ export default {
           world_name: this.world.name || '未命名世界观',
           summary: payload.summary || '',
           client_id: this.ensureCollabClientId(),
+          base_seq: this.collabLatestSeq,
           payload: {
             ...payload,
             client_id: this.collabClientId,
@@ -5353,7 +5354,12 @@ export default {
         })
         await this.pollWorldCollabEvents()
       } catch (error) {
-        console.warn('发布世界观协作事件失败:', error)
+        if (error?.status === 409 || /已被其他成员更新/.test(error?.message || '')) {
+          this.hasRemoteWorldUpdate = true
+          this.collabStatus = '保存冲突：需先同步远端更新'
+        } else {
+          console.warn('发布世界观协作事件失败:', error)
+        }
       }
     },
     async syncRemoteWorldUpdate() {

@@ -35,6 +35,12 @@ export const collabApi = {
   listEvents(roomId, since = 0, limit = 100) {
     return http.get(`/api/collab/rooms/${roomId}/events?since=${since}&limit=${limit}`)
   },
+  syncEvents(roomId, since = 0, limit = 100) {
+    return http.get(`/api/collab/rooms/${roomId}/sync?since=${since}&limit=${limit}`, { timeout: 35000 })
+  },
+  health() {
+    return http.get('/api/collab/health')
+  },
   ensureWorldRoom(worldId, data = {}) {
     return http.post(`/api/collab/worlds/${worldId}/room`, data)
   },
