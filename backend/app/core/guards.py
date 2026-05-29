@@ -36,8 +36,11 @@ def require_module(module_id: str):
     return decorator
 
 
-def guard_blueprint(blueprint, module_id: str):
-    """蓝图级模块保护。"""
+def register_module_guard(blueprint, module_id: str):
+    """给蓝图注册一次模块保护。"""
+    guard_key = f'_worldfish_guard_{module_id}'
+    if getattr(blueprint, guard_key, False):
+        return blueprint
 
     endpoint = f'_worldfish_module_guard_{module_id.replace("-", "_")}'
 
@@ -47,4 +50,10 @@ def guard_blueprint(blueprint, module_id: str):
             return module_disabled_response(module_id)
 
     _module_guard.__name__ = endpoint
+    setattr(blueprint, guard_key, True)
     return blueprint
+
+
+def guard_blueprint(blueprint, module_id: str):
+    """蓝图级模块保护。"""
+    return register_module_guard(blueprint, module_id)

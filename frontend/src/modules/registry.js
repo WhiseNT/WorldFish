@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { modulesApi } from '../api/modules'
+import { builtinFrontendModules } from './builtin'
 
 const modules = ref([])
 const navigation = ref([])
@@ -12,6 +13,8 @@ function normalizeModule(row) {
     runtime: row.runtime || {},
     dependents: row.dependents || [],
     enabled_dependents: row.enabled_dependents || [],
+    blueprints: row.blueprints || [],
+    frontend: builtinFrontendModules[row.manifest?.id] || null,
     enabled: Boolean(row.runtime?.enabled),
     loaded: Boolean(row.runtime?.loaded),
     error: row.runtime?.error || '',
@@ -20,6 +23,7 @@ function normalizeModule(row) {
 
 export function useModuleRegistry() {
   const enabledModules = computed(() => modules.value.filter(item => item.enabled))
+  const availableRoutes = computed(() => enabledModules.value.flatMap(item => item.frontend?.routes || []))
 
   async function refreshModules() {
     loading.value = true
@@ -55,6 +59,7 @@ export function useModuleRegistry() {
     modules,
     enabledModules,
     navigation,
+    availableRoutes,
     loading,
     error,
     refreshModules,

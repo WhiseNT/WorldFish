@@ -34,8 +34,8 @@
           <span v-if="module.enabled_dependents?.length">被依赖：{{ module.enabled_dependents.join(', ') }}</span>
         </div>
 
-        <div v-if="module.routes?.length" class="route-list">
-          <span v-for="route in module.routes" :key="route">{{ route }}</span>
+        <div v-if="module.blueprints?.length" class="route-list">
+          <span v-for="binding in module.blueprints" :key="binding.blueprint">{{ binding.url_prefix }}</span>
         </div>
 
         <div v-if="module.error" class="alert error small">{{ module.error }}</div>

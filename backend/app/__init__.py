@@ -13,9 +13,6 @@ from flask import Flask, request
 from flask_cors import CORS
 
 from .config import Config
-from .core.guards import guard_blueprint
-from .core.modules import get_module_registry
-from .modules import register_builtin_modules
 from .utils.logger import setup_logger, get_logger
 
 
@@ -65,26 +62,11 @@ def create_app(config_class=Config):
         logger.debug(f"响应: {response.status_code}")
         return response
     
-    # 初始化模块注册表
-    module_registry = get_module_registry()
-    module_registry.bind_context(app=app, config=config_class)
-    register_builtin_modules(module_registry)
-    module_registry.load_all()
-    app.extensions['worldfish_modules'] = module_registry
+    # 初始化并安装模块
+    from .modules.loader import install_modules
+    module_registry = install_modules(app, config_class)
     if should_log_startup:
         logger.info(f"已加载模块: {len(module_registry.list(include_private=True))}")
-
-    # 注册蓝图
-    from .api import graph_bp, simulation_bp, report_bp, world_build_bp, project_bp, evolution_bp, rag_bp, agent_bp, modules_bp
-    app.register_blueprint(guard_blueprint(graph_bp, 'knowledge-graph'), url_prefix='/api/graph')
-    app.register_blueprint(guard_blueprint(simulation_bp, 'simulation'), url_prefix='/api/simulation')
-    app.register_blueprint(guard_blueprint(report_bp, 'report'), url_prefix='/api/report')
-    app.register_blueprint(guard_blueprint(world_build_bp, 'world-builder'), url_prefix='/api/world')
-    app.register_blueprint(guard_blueprint(project_bp, 'world-builder'), url_prefix='/api/project')
-    app.register_blueprint(guard_blueprint(evolution_bp, 'simulation'), url_prefix='/api/evolution')
-    app.register_blueprint(guard_blueprint(rag_bp, 'rag'), url_prefix='/api')
-    app.register_blueprint(guard_blueprint(agent_bp, 'agent'), url_prefix='/api/agent')
-    app.register_blueprint(modules_bp, url_prefix='/api/modules')
     
     # 健康检查
     @app.route('/health')
