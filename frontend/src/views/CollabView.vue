@@ -144,6 +144,7 @@ async function createRoom() {
 }
 
 async function selectRoom(room) {
+  if (currentRoom.value?.id === room.id) return
   await enterRoom(room)
 }
 

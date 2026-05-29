@@ -35,6 +35,12 @@ export const collabApi = {
   listEvents(roomId, since = 0, limit = 100) {
     return http.get(`/api/collab/rooms/${roomId}/events?since=${since}&limit=${limit}`)
   },
+  ensureWorldRoom(worldId, data = {}) {
+    return http.post(`/api/collab/worlds/${worldId}/room`, data)
+  },
+  appendWorldEvent(worldId, data = {}) {
+    return http.post(`/api/collab/worlds/${worldId}/events`, data)
+  },
   appendEvent(roomId, data) {
     return http.post(`/api/collab/rooms/${roomId}/events`, data)
   },

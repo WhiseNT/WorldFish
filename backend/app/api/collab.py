@@ -120,6 +120,63 @@ def list_members(room_id: str):
     return _ok(members=[member.to_dict() for member in CollabManager.list_members(room_id)])
 
 
+@collab_bp.route('/worlds/<world_id>/room', methods=['POST'])
+def ensure_world_room(world_id: str):
+    data = _body()
+    try:
+        room = CollabManager.ensure_world_room(
+            world_id,
+            world_name=data.get('world_name') or data.get('name') or '',
+            workspace_id=data.get('workspace_id') or 'local_workspace',
+            owner_id=_actor_id(data),
+        )
+        member = CollabManager.join_room(
+            room.id,
+            user_id=_actor_id(data),
+            display_name=data.get('display_name') or '本地用户',
+            role=data.get('role') or 'owner',
+            emit_event=False,
+        )
+        event_state = CollabManager.list_events(room.id, since=0, limit=1)
+        return _ok(
+            room=room.to_dict(),
+            member=member.to_dict(),
+            members=[item.to_dict() for item in CollabManager.list_members(room.id)],
+            latest_seq=event_state['latest_seq'],
+        )
+    except ValueError as exc:
+        return _error(str(exc), 400)
+
+
+@collab_bp.route('/worlds/<world_id>/events', methods=['POST'])
+def append_world_event(world_id: str):
+    data = _body()
+    try:
+        room = CollabManager.ensure_world_room(
+            world_id,
+            world_name=data.get('world_name') or '',
+            workspace_id=data.get('workspace_id') or 'local_workspace',
+            owner_id=_actor_id(data),
+        )
+        payload = data.get('payload') if isinstance(data.get('payload'), dict) else {}
+        payload = {
+            **payload,
+            'world_id': world_id,
+            'world_name': data.get('world_name') or payload.get('world_name') or '',
+            'summary': data.get('summary') or payload.get('summary') or '',
+            'client_id': data.get('client_id') or payload.get('client_id') or '',
+        }
+        event = CollabManager.append_event(
+            room.id,
+            event_type=data.get('type') or 'world.updated',
+            actor_id=_actor_id(data),
+            payload=payload,
+        )
+        return _ok(room=room.to_dict(), event=event.to_dict())
+    except ValueError as exc:
+        return _error(str(exc), 400)
+
+
 @collab_bp.route('/rooms/<room_id>/events', methods=['GET'])
 def list_events(room_id: str):
     if not CollabManager.get_room(room_id):

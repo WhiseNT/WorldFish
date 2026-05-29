@@ -30,6 +30,13 @@
             <SvgIcon name="redo" :size="17" :stroke-width="2.2" />
           </button>
         </div>
+        <div class="collab-status-card" :class="{ active: collabRoom, warning: hasRemoteWorldUpdate }">
+          <span>{{ collabStatus }}</span>
+          <strong v-if="collabRoom">{{ collabRoom.name }}</strong>
+          <small v-if="collabRoom">在线 {{ collabOnlineCount }}/{{ collabMembers.length }} · seq {{ collabLatestSeq }}</small>
+          <button v-if="hasRemoteWorldUpdate" type="button" class="inline-sync-btn" @click="syncRemoteWorldUpdate">同步远端更新</button>
+          <button v-else-if="collabRoom" type="button" class="inline-sync-btn" @click="openCollabRoom">打开房间</button>
+        </div>
         <span v-if="saveStatus" class="save-status">{{ saveStatus }}</span>
         <span v-if="worldId" class="world-id-badge">{{ worldId }}</span>
         <span v-if="linkedProjectId" class="project-id-badge">{{ linkedProjectId }}</span>
@@ -1694,6 +1701,7 @@
 <script>
 import { worldApi } from '../api/world'
 import { projectApi } from '../api/project'
+import { collabApi } from '../api/collab'
 import { generateOntologyFromProject } from '../api/graph'
 import service from '../api/index'
 import WorldMapEditor from '../components/map/WorldMapEditor.vue'
@@ -1703,6 +1711,7 @@ const LAST_EXTRACT_TASK_KEY = 'worldfish:lastExtractTaskId'
 const EXTRACT_TASK_DELETED_EVENT = 'worldfish:extract-task-deleted'
 const EXTRACT_TASK_SYNC_EVENT = 'worldfish:extract-task-sync'
 const WORLD_UPDATED_EVENT = 'worldfish:world-updated'
+const CLIENT_ID_KEY = 'worldfish:clientId'
 const EDIT_HISTORY_LIMIT = 80
 const EDIT_HISTORY_CAPTURE_DELAY = 350
 
@@ -3629,7 +3638,18 @@ export default {
       showCalendarDetailEdit: false,
       currentCalendar: null,
       calendars: createDefaultCalendars(),
-      editCalendars: []
+      editCalendars: [],
+      collabClientId: '',
+      collabRoom: null,
+      collabMembers: [],
+      collabEvents: [],
+      collabLatestSeq: 0,
+      collabStatus: '协作未连接',
+      collabPollTimer: null,
+      collabHeartbeatTimer: null,
+      hasRemoteWorldUpdate: false,
+      remoteWorldEvent: null,
+      lastPublishedWorldSignature: ''
     }
   },
   computed: {
@@ -4509,6 +4529,9 @@ export default {
     redoButtonTitle() {
       return this.canRedo ? `重做下一步（Ctrl+Y）· 还有 ${this.redoStack.length} 步` : '暂无可重做的修改'
     },
+    collabOnlineCount() {
+      return this.collabMembers.filter(member => member.online).length
+    },
     // 根据时间线内容计算高度，确保所有卡片都在可视区域内
     timelineHeight() {
       const totalHeight = this.timelineStageTop + this.timelineStageHeight + 86
@@ -5252,6 +5275,97 @@ export default {
         this.showSettingDetail = false
       }
     },
+    ensureCollabClientId() {
+      let clientId = localStorage.getItem(CLIENT_ID_KEY)
+      if (!clientId) {
+        clientId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        localStorage.setItem(CLIENT_ID_KEY, clientId)
+      }
+      this.collabClientId = clientId
+      return clientId
+    },
+    async ensureWorldCollabRoom() {
+      if (!this.worldId) return
+      this.ensureCollabClientId()
+      try {
+        const response = await collabApi.ensureWorldRoom(this.worldId, {
+          world_name: this.world.name || '未命名世界观',
+          user_id: 'local_user',
+          display_name: '本地用户',
+        })
+        this.collabRoom = response.room
+        this.collabMembers = response.members || []
+        this.collabLatestSeq = response.latest_seq || this.collabLatestSeq || 0
+        this.collabStatus = '协作已连接'
+        this.startWorldCollabSync()
+      } catch (error) {
+        this.collabStatus = '协作未启用'
+      }
+    },
+    startWorldCollabSync() {
+      if (this.collabPollTimer) clearInterval(this.collabPollTimer)
+      if (this.collabHeartbeatTimer) clearInterval(this.collabHeartbeatTimer)
+      this.collabPollTimer = setInterval(() => this.pollWorldCollabEvents().catch(() => {}), 3000)
+      this.collabHeartbeatTimer = setInterval(() => this.sendWorldCollabHeartbeat().catch(() => {}), 10000)
+    },
+    async sendWorldCollabHeartbeat() {
+      if (!this.collabRoom) return
+      await collabApi.heartbeat(this.collabRoom.id, { user_id: 'local_user' })
+      const members = await collabApi.listMembers(this.collabRoom.id)
+      this.collabMembers = members.members || []
+    },
+    async pollWorldCollabEvents() {
+      if (!this.collabRoom) return
+      const response = await collabApi.listEvents(this.collabRoom.id, this.collabLatestSeq, 100)
+      const incoming = response.events || []
+      if (incoming.length) {
+        this.collabEvents.push(...incoming)
+        incoming.forEach(this.handleWorldCollabEvent)
+      }
+      this.collabLatestSeq = response.latest_seq || this.collabLatestSeq
+    },
+    handleWorldCollabEvent(event) {
+      if (!event || event.type !== 'world.saved') return
+      const payload = event.payload || {}
+      if (payload.world_id !== this.worldId) return
+      if (payload.client_id && payload.client_id === this.collabClientId) return
+      this.hasRemoteWorldUpdate = true
+      this.remoteWorldEvent = event
+      this.collabStatus = '检测到远端更新'
+    },
+    async publishWorldCollabEvent(type, payload = {}) {
+      if (!this.worldId) return
+      if (!this.collabRoom) {
+        await this.ensureWorldCollabRoom()
+      }
+      if (!this.collabRoom) return
+      try {
+        await collabApi.appendWorldEvent(this.worldId, {
+          type,
+          user_id: 'local_user',
+          world_name: this.world.name || '未命名世界观',
+          summary: payload.summary || '',
+          client_id: this.ensureCollabClientId(),
+          payload: {
+            ...payload,
+            client_id: this.collabClientId,
+          },
+        })
+        await this.pollWorldCollabEvents()
+      } catch (error) {
+        console.warn('发布世界观协作事件失败:', error)
+      }
+    },
+    async syncRemoteWorldUpdate() {
+      if (!this.worldId) return
+      await this.loadWorld(this.worldId, { preserveSettingState: true, successStatus: '已同步远端更新' })
+      this.hasRemoteWorldUpdate = false
+      this.remoteWorldEvent = null
+      this.collabStatus = '协作已连接'
+    },
+    openCollabRoom() {
+      this.$router.push({ name: 'Collab', query: { roomId: this.collabRoom?.id || '' } })
+    },
     async handleWorldUpdated(event) {
       const worldId = String(event?.detail?.worldId || '').trim()
       if (!worldId || !this.worldId || worldId !== this.worldId) {
@@ -5344,6 +5458,7 @@ export default {
         this.applyStoredWorld(response.world, { settingsViewState })
         await this.loadLinkedProject(worldId)
         await this.loadEvolutionHistory(worldId)
+        await this.ensureWorldCollabRoom()
         this.saveStatus = successStatus
       } catch (error) {
         console.error('加载世界观失败:', error)
@@ -5496,6 +5611,7 @@ export default {
           })
           this.worldId = createResponse.world_id
           this.syncRouteWorldId()
+          await this.ensureWorldCollabRoom()
         }
 
         const settingsViewState = this.captureSettingsViewState()
@@ -5510,6 +5626,14 @@ export default {
           await this.loadEvolutionHistory(this.worldId)
         }
         this.saveStatus = successMessage || '已自动保存'
+        if (signature !== this.lastPublishedWorldSignature) {
+          this.lastPublishedWorldSignature = signature
+          await this.publishWorldCollabEvent('world.saved', {
+            summary: this.saveStatus,
+            version_signature: signature,
+            saved_at: new Date().toISOString(),
+          })
+        }
 
         if (!silent) {
           alert(successMessage || '世界观已自动保存！')
@@ -7187,6 +7311,14 @@ export default {
       clearTimeout(this.agentWorldRefreshTimer)
       this.agentWorldRefreshTimer = null
     }
+    if (this.collabPollTimer) {
+      clearInterval(this.collabPollTimer)
+      this.collabPollTimer = null
+    }
+    if (this.collabHeartbeatTimer) {
+      clearInterval(this.collabHeartbeatTimer)
+      this.collabHeartbeatTimer = null
+    }
     this.stopEvolutionHistoryPolling()
   }
 }
@@ -7225,6 +7357,52 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.collab-status-card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--neutral-gray-200);
+  background: var(--neutral-gray-100);
+  color: var(--wf-text-secondary);
+  font-size: 0.78rem;
+}
+
+.collab-status-card.active {
+  border-color: rgba(14, 165, 233, 0.25);
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.collab-status-card.warning {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.collab-status-card strong {
+  color: var(--wf-text-primary);
+  font-size: 0.86rem;
+}
+
+.collab-status-card small {
+  color: var(--wf-text-muted);
+}
+
+.inline-sync-btn {
+  margin-top: 3px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--primary-blue);
+  cursor: pointer;
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+.inline-sync-btn:hover {
+  text-decoration: underline;
 }
 
 .history-btn {

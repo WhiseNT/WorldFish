@@ -266,6 +266,38 @@ class CollabManager:
         return None
 
     @classmethod
+    def find_room_by_world(cls, world_id: str) -> Optional[Room]:
+        target = str(world_id or '').strip()
+        if not target:
+            return None
+        for room in cls.list_rooms():
+            if room.linked_world_id == target:
+                return room
+        return None
+
+    @classmethod
+    def ensure_world_room(cls, world_id: str, world_name: str = '', workspace_id: str = 'local_workspace', owner_id: str = 'local_user') -> Room:
+        target = str(world_id or '').strip()
+        if not target:
+            raise ValueError('world_id 不能为空')
+        with cls._lock:
+            cls.ensure_local_defaults()
+            existing = cls.find_room_by_world(target)
+            if existing:
+                cls.join_room(existing.id, owner_id, '本地用户', role='owner', emit_event=False)
+                return existing
+            room = cls.create_room(
+                name=world_name or f'世界观房间 {target}',
+                workspace_id=workspace_id,
+                owner_id=owner_id,
+                room_type='world',
+                linked_world_id=target,
+                display_name='本地用户',
+            )
+            cls.append_event(room.id, 'world.room.created', owner_id, {'world_id': target, 'world_name': world_name or ''})
+            return room
+
+    @classmethod
     def create_room(cls, name: str, workspace_id: str = 'local_workspace', owner_id: str = 'local_user', **kwargs) -> Room:
         with cls._lock:
             cls.ensure_local_defaults()
@@ -304,6 +336,7 @@ class CollabManager:
             rows = cls._read_list(cls._members_file())
             now = _now()
             found = None
+            joined_new = False
             for item in rows:
                 if item.get('room_id') == room_id and item.get('user_id') == user_id:
                     found = item
@@ -314,8 +347,9 @@ class CollabManager:
             else:
                 member = RoomMember(room_id=room_id, user_id=user_id, role=role, display_name=display_name, joined_at=now, last_seen_at=now)
                 rows.append(member.to_dict())
+                joined_new = True
             cls._write_list(cls._members_file(), rows)
-            if emit_event:
+            if emit_event and joined_new:
                 cls.append_event(room_id, 'member.joined', user_id, {'member': member.to_dict()})
             return member
 
