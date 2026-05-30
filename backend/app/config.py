@@ -1,6 +1,6 @@
 """
 配置管理
-统一从项目根目录的 .env 文件加载配置
+启动时不强制要求 .env；API Key 可通过 GUI 配置页保存。
 """
 
 import os
@@ -8,8 +8,9 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 
-# 加载项目根目录的 .env 文件
+# 可选加载项目根目录的 .env 文件
 # 路径: WorldFish/.env (相对于 backend/app/config.py)
+# GUI 配置页会在需要时创建/更新该文件，但后端启动不依赖它存在。
 project_root_env = os.path.join(os.path.dirname(__file__), '../../.env')
 
 
@@ -534,15 +535,12 @@ class Config:
     
     @classmethod
     def validate(cls):
-        """验证必要配置"""
-        errors = []
-        if not any([
-            cls.LLM_API_KEY,
-            cls.SUBAGENT_LLM_API_KEY,
-            cls.PARSER_LLM_API_KEY,
-        ]):
-            errors.append("至少需要配置一组 LLM API Key（LLM_API_KEY / SUBAGENT_LLM_API_KEY / PARSER_LLM_API_KEY）")
-        return errors
+        """验证启动所需配置。
+
+        LLM / Embedding API Key 改为通过 GUI 配置页按需保存，
+        因此后端启动阶段不再强制要求 .env 或 API Key 存在。
+        """
+        return []
 
 
 Config.reload()

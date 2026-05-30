@@ -4,8 +4,6 @@ services:
     # 加速镜像（如拉取缓慢可替换上方地址）
     # image: ghcr.nju.edu.cn/666ghj/worldfish:latest
     container_name: worldfish
-    env_file:
-      - .env
     ports:
       - "3000:3000"
       - "5001:5001"

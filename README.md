@@ -50,40 +50,19 @@ cd frontend && npm install
 cd backend && uv sync
 ```
 
-### 2. 配置环境变量
+### 2. 配置 API Key
 
-项目根目录需要一个 `.env` 文件。后端启动时会检查至少一组 LLM Key 是否存在：
+后端启动不再要求项目根目录存在 `.env` 文件，也不会在启动时强制检查 LLM API Key。
 
-- `LLM_API_KEY`
-- `SUBAGENT_LLM_API_KEY`
-- `PARSER_LLM_API_KEY`
-
-示例：
-
-```env
-SECRET_KEY=change-me
-FLASK_HOST=0.0.0.0
-FLASK_PORT=5001
-
-LLM_API_KEY=your-key
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL_NAME=gpt-4o-mini
-
-# 可选：用于子代理 / 解析器
-SUBAGENT_LLM_API_KEY=
-PARSER_LLM_API_KEY=
-
-# 可选：用于 RAG Embedding
-EMBEDDING_API_KEY=
-EMBEDDING_BASE_URL=
-EMBEDDING_MODEL_NAME=text-embedding-3-small
-```
+首次打开前端后，请进入 **LLM 配置** 页面填写 API Key、Base URL 和模型名称。保存后，后端会把配置写入根目录 `.env`，后续启动会自动读取。
 
 说明：
 
-- `backend/app/config.py` 会从仓库根目录读取 `.env`
-- 如果你使用兼容 OpenAI 协议的模型服务，通常只需要调整 `*_BASE_URL` 和 `*_MODEL_NAME`
-- 如需使用 RAG 的 Embedding 能力，可单独配置 `EMBEDDING_*`，否则会复用 LLM 配置
+- 推荐通过 GUI 维护 API Key，不需要手动创建 `.env`
+- 如果暂未配置 API Key，应用仍可启动；调用世界构建、推演、RAG 等依赖模型的功能时会提示先配置
+- Agent、SubAgent、解析 Agent 可以在 GUI 中分别配置；未单独配置时会按现有回退规则复用可用配置
+- Embedding 未单独配置 API Key 时，会复用主 Agent 的 API Key 与 Base URL
+- `.env.example` 仅作为高级配置与旧部署方式参考，可选填写 `SECRET_KEY`、`FLASK_HOST`、`FLASK_PORT`、默认模型等配置
 
 ### 3. 启动开发环境
 
@@ -126,7 +105,8 @@ docker compose up -d
 
 说明：
 
-- 需要先准备好根目录 `.env`
+- 默认不需要提前准备 `.env`，API Key 可在启动后通过前端 **LLM 配置** 页面填写
+- 如需预置端口、密钥或模型配置，可参考 `.env.example` 自行创建 `.env`
 - 默认端口：前端 `3000`、后端 `5001`
 - `backend/uploads` 会被挂载到容器中，用于保存上传数据与模拟数据
 

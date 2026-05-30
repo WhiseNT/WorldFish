@@ -16,7 +16,7 @@
         </p>
         <div class="hero-actions">
           <router-link
-            v-for="item in navItems"
+            v-for="item in heroNavItems"
             :key="item.module_id + item.path"
             :to="item.path"
             class="btn hero-btn-primary"
@@ -25,9 +25,6 @@
             <span>{{ item.label }}</span>
             <SvgIcon v-if="item.module_id === 'world-builder'" name="arrow-right" :size="16" />
           </router-link>
-          <button class="btn btn-secondary hero-btn-secondary" @click="scrollToWorlds">
-            已有世界观
-          </button>
         </div>
       </div>
       <div class="hero-visual">
@@ -113,7 +110,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { worldApi } from '../api/world'
 import { useModuleRegistry } from '../modules/registry'
 import SvgIcon from '../components/ui/SvgIcon.vue'
@@ -123,6 +120,12 @@ const loading = ref(true)
 const loadError = ref('')
 const worldsSection = ref(null)
 const { navigation: navItems, refreshNavigation } = useModuleRegistry()
+
+// Hero 区域仅展示构建世界观与开始推演入口
+const HERO_NAV_MODULES = ['world-builder', 'simulation']
+const heroNavItems = computed(() =>
+  navItems.value.filter(item => HERO_NAV_MODULES.includes(item.module_id))
+)
 
 async function fetchWorlds() {
   loading.value = true
@@ -135,10 +138,6 @@ async function fetchWorlds() {
   } finally {
     loading.value = false
   }
-}
-
-function scrollToWorlds() {
-  worldsSection.value?.scrollIntoView({ behavior: 'smooth' })
 }
 
 onMounted(() => {
