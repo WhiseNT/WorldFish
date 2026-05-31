@@ -1,5 +1,8 @@
 {context}
 
+当前世界模板：{template_name}
+模板提醒：{template_chunk_hint}
+
 扫描以下文本，穷举其中所有世界观数据。
 
 分块特有注意事项：

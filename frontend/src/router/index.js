@@ -16,6 +16,13 @@ const routes = [
     meta: { moduleId: 'world-builder' },
   },
   {
+    path: '/world-builder/templates/:templateId',
+    name: 'WorldTemplateDetail',
+    component: () => import('../views/WorldTemplateDetailView.vue'),
+    props: true,
+    meta: { moduleId: 'world-builder' },
+  },
+  {
     path: '/simulation/new',
     name: 'SimulationSetup',
     component: () => import('../views/SimulationSetup.vue'),

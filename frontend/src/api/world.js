@@ -31,6 +31,16 @@ export const worldApi = {
     return service.get('/api/world/llm-config')
   },
 
+  // 获取世界模板列表
+  listWorldTemplates: () => {
+    return service.get('/api/world/templates')
+  },
+
+  // 获取世界模板详情
+  getWorldTemplate: (templateId) => {
+    return service.get(`/api/world/templates/${templateId}`)
+  },
+
   // 保存 LLM 配置
   saveLlmConfig: (data) => {
     return service.put('/api/world/llm-config', data)

@@ -1,5 +1,11 @@
 <template>
   <div class="world-builder">
+    <Teleport v-if="collabRoom" to="#wf-navbar-below-right">
+      <div class="collab-status-card active">
+        <span>协作已连接</span>
+        <button type="button" class="inline-sync-btn" @click="openCollabRoom">打开房间</button>
+      </div>
+    </Teleport>
     <!-- 顶部导航栏 -->
     <header class="world-builder-header">
       <div class="header-content">
@@ -7,54 +13,49 @@
         <p class="world-builder-subtitle">创建和管理你的世界观设定，构建完整的虚拟世界</p>
       </div>
 
-      <div class="builder-header-actions">
-        <div class="history-actions" aria-label="编辑历史操作">
+      <div class="builder-header-side">
+        <div class="builder-header-actions">
+          <div class="history-actions" aria-label="编辑历史操作">
+            <button
+              type="button"
+              class="btn btn-secondary history-btn"
+              :disabled="!canUndo"
+              :title="undoButtonTitle"
+              aria-label="撤回"
+              @click="undoWorldChange"
+            >
+              <SvgIcon name="undo" :size="17" :stroke-width="2.2" />
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary history-btn"
+              :disabled="!canRedo"
+              :title="redoButtonTitle"
+              aria-label="重做"
+              @click="redoWorldChange"
+            >
+              <SvgIcon name="redo" :size="17" :stroke-width="2.2" />
+            </button>
+          </div>
+          <span v-if="saveStatus" class="save-status">{{ saveStatus }}</span>
+          <span v-if="worldId" class="world-id-badge">{{ worldId }}</span>
+          <span v-if="linkedProjectId" class="project-id-badge">{{ linkedProjectId }}</span>
           <button
-            type="button"
-            class="btn btn-secondary history-btn"
-            :disabled="!canUndo"
-            :title="undoButtonTitle"
-            aria-label="撤回"
-            @click="undoWorldChange"
+            v-if="worldId"
+            @click="deleteWorld()"
+            :disabled="isSaving || isDeleting"
+            class="btn btn-danger"
           >
-            <SvgIcon name="undo" :size="17" :stroke-width="2.2" />
+            {{ isDeleting ? '删除中...' : '删除世界观' }}
           </button>
           <button
-            type="button"
-            class="btn btn-secondary history-btn"
-            :disabled="!canRedo"
-            :title="redoButtonTitle"
-            aria-label="重做"
-            @click="redoWorldChange"
+            @click="launchProjectFromWorld()"
+            :disabled="isSaving || isProjectLaunching"
+            class="btn btn-secondary"
           >
-            <SvgIcon name="redo" :size="17" :stroke-width="2.2" />
+            {{ projectActionLabel }}
           </button>
         </div>
-        <div class="collab-status-card" :class="{ active: collabRoom, warning: hasRemoteWorldUpdate }">
-          <span>{{ collabStatus }}</span>
-          <strong v-if="collabRoom">{{ collabRoom.name }}</strong>
-          <small v-if="collabRoom">在线 {{ collabOnlineCount }}/{{ collabMembers.length }} · seq {{ collabLatestSeq }}</small>
-          <button v-if="hasRemoteWorldUpdate" type="button" class="inline-sync-btn" @click="syncRemoteWorldUpdate">同步远端更新</button>
-          <button v-else-if="collabRoom" type="button" class="inline-sync-btn" @click="openCollabRoom">打开房间</button>
-        </div>
-        <span v-if="saveStatus" class="save-status">{{ saveStatus }}</span>
-        <span v-if="worldId" class="world-id-badge">{{ worldId }}</span>
-        <span v-if="linkedProjectId" class="project-id-badge">{{ linkedProjectId }}</span>
-        <button
-          v-if="worldId"
-          @click="deleteWorld()"
-          :disabled="isSaving || isDeleting"
-          class="btn btn-danger"
-        >
-          {{ isDeleting ? '删除中...' : '删除世界观' }}
-        </button>
-        <button
-          @click="launchProjectFromWorld()"
-          :disabled="isSaving || isProjectLaunching"
-          class="btn btn-secondary"
-        >
-          {{ projectActionLabel }}
-        </button>
       </div>
     </header>
     
@@ -199,11 +200,50 @@
             <div class="llm-status-chip" :class="{ 'is-ready': hasLlmConfig, 'is-missing': !hasLlmConfig }">
               <span class="llm-status-dot"></span>
               <span>{{ llmStatusText }}</span>
-              <span v-if="llmConfigStatus.api_key_masked" class="llm-status-meta">{{ llmConfigStatus.api_key_masked }}</span>
             </div>
             <button class="btn btn-secondary" @click="goToLlmConfig">
               配置 LLM
             </button>
+          </div>
+
+          <div class="form-section extraction-template-section">
+            <div class="section-header compact-header">
+              <h3 class="section-title small-title">世界模板</h3>
+            </div>
+            <div class="template-candidate-bar">
+              <span class="template-candidate-label">候选模板</span>
+              <div class="template-candidate-row">
+                <button
+                  v-for="template in templateCandidates"
+                  :key="template.id"
+                  type="button"
+                  class="template-candidate-btn"
+                  :class="{ active: template.id === selectedTemplateId }"
+                  @click="selectedTemplateId = template.id"
+                >
+                  <span class="template-candidate-name">{{ template.name }}</span>
+                  <span v-if="template.id === worldTemplateDefaultId" class="template-candidate-badge">默认</span>
+                </button>
+              </div>
+            </div>
+            <div class="single-template-panel card">
+              <div class="single-template-main">
+                <div class="single-template-title-row">
+                  <strong class="single-template-title">{{ selectedWorldTemplate?.name || '通用模板' }}</strong>
+                  <span class="template-badge">默认模板</span>
+                </div>
+                <p class="single-template-description">{{ templateSelectionNotice }}</p>
+                <div v-if="selectedTemplateSectionNames.length > 0" class="template-tag-row">
+                  <span v-for="section in selectedTemplateSectionNames" :key="`section-${section}`" class="template-tag">{{ section }}</span>
+                </div>
+              </div>
+              <router-link
+                class="template-detail-link"
+                :to="{ name: 'WorldTemplateDetail', params: { templateId: selectedWorldTemplate?.id || worldTemplateDefaultId } }"
+              >
+                查看详情
+              </router-link>
+            </div>
           </div>
 
           <div class="form-section extraction-source-section">
@@ -1714,8 +1754,57 @@ const WORLD_UPDATED_EVENT = 'worldfish:world-updated'
 const CLIENT_ID_KEY = 'worldfish:clientId'
 const EDIT_HISTORY_LIMIT = 80
 const EDIT_HISTORY_CAPTURE_DELAY = 350
+const DEFAULT_WORLD_TEMPLATE_ID = 'generic'
+
+const DEFAULT_TEMPLATE_DETAIL_SECTIONS = [
+  {
+    id: 'core_intro',
+    name: '核心简介',
+    target: 'entities[].attributes.简介 / settings.items[].structuredDetail.intro',
+    description: '对象的高密度概览。',
+  },
+  {
+    id: 'key_facts',
+    name: '关键事实',
+    target: 'entities[].attributes / settings.items[].structuredDetail.facts',
+    description: '可复用的稳定事实字段。',
+  },
+  {
+    id: 'relationships',
+    name: '关系网络',
+    target: 'entities[].relationships / settings.items[].structuredDetail.relationships',
+    description: '对象之间的关系、时期与来源事件。',
+  },
+  {
+    id: 'stages',
+    name: '阶段/演变',
+    target: 'entities[].stages / settings.items[].structuredDetail.stages',
+    description: '对象在不同阶段中的变化。',
+  },
+  {
+    id: 'supplement',
+    name: '设定补充说明',
+    target: 'entities[].attributes.设定补充说明 / settings.items[].detailContent',
+    description: '无法短字段化的背景、限制与补充说明。',
+  },
+]
 
 const cloneEditableState = (value) => JSON.parse(JSON.stringify(value ?? null))
+
+const buildFallbackWorldTemplates = () => ([
+  {
+    id: DEFAULT_WORLD_TEMPLATE_ID,
+    name: '通用模板',
+    description: '默认解析结构，按核心简介、关键事实、关系网络、阶段/演变和设定补充说明组织世界观内容。',
+    conflict_warning: '不同模板的结构栏目可能不一致。',
+    focus_tags: DEFAULT_TEMPLATE_DETAIL_SECTIONS.map(section => section.name),
+    focus_points: [],
+    detail_sections: DEFAULT_TEMPLATE_DETAIL_SECTIONS,
+    setting_collections: [],
+    world_info_guide: [],
+    settings_guide: [],
+  },
+])
 
 const SETTING_CATEGORY_OPTIONS = [
       { id: 'character', name: '角色', icon: 'user' },
@@ -3552,6 +3641,12 @@ export default {
         writing_style: '',
         reference_text: ''
       },
+      worldTemplates: buildFallbackWorldTemplates(),
+      worldTemplateDefaultId: DEFAULT_WORLD_TEMPLATE_ID,
+      selectedTemplateId: DEFAULT_WORLD_TEMPLATE_ID,
+      savedWorldTemplateId: DEFAULT_WORLD_TEMPLATE_ID,
+      savedWorldTemplateName: '通用模板',
+      worldTemplateLoadError: '',
       extractText: '',
       extractScanSource: 'input',
       extractionMode: 'fast',
@@ -4360,10 +4455,7 @@ export default {
       return !!this.llmConfigStatus.api_key_configured
     },
     llmStatusText() {
-      if (!this.hasLlmConfig) {
-        return 'LLM 未配置，世界观提取不可用'
-      }
-      return `LLM 已配置，当前模型：${this.llmConfigStatus.model_name || '未指定'}`
+      return this.hasLlmConfig ? 'LLM 已连接' : 'LLM 未连接'
     },
     projectActionLabel() {
       if (this.isProjectLaunching) {
@@ -4376,6 +4468,48 @@ export default {
         return '继续初始化项目'
       }
       return '创建推演项目'
+    },
+    templateCandidates() {
+      return Array.isArray(this.worldTemplates) ? this.worldTemplates : []
+    },
+    selectedWorldTemplate() {
+      return this.templateCandidates.find(template => template.id === this.selectedTemplateId) || this.templateCandidates[0] || null
+    },
+    savedWorldTemplate() {
+      return this.worldTemplates.find(template => template.id === this.savedWorldTemplateId) || this.selectedWorldTemplate || null
+    },
+    worldHasStructuredContent() {
+      if ((this.world.description || '').trim()) return true
+      if ((this.world.era || '').trim()) return true
+      if ((this.world.anchor_time || '').trim()) return true
+      if ((this.world.reference_text || '').trim()) return true
+      if (Array.isArray(this.entities) && this.entities.length > 0) return true
+      if (Array.isArray(this.events) && this.events.length > 0) return true
+      if (Array.isArray(this.settings) && this.settings.some(item => item && String(item.name || '').trim() && !item.autoGenerated)) return true
+      if (Array.isArray(this.calendars) && this.calendars.length > 0) return true
+      if ((this.mapData.regionRelations || '').trim()) return true
+      if ((this.mapData.countryRelations || '').trim()) return true
+      if ((this.mapData.importantLocations || '').trim()) return true
+      if (Array.isArray(this.mapData.structuredMaps) && this.mapData.structuredMaps.length > 0) return true
+      return false
+    },
+    templateSwitchHasConflict() {
+      return this.worldHasStructuredContent && this.selectedTemplateId !== this.savedWorldTemplateId
+    },
+    templateSelectionNotice() {
+      if (this.worldTemplateLoadError) {
+        return this.worldTemplateLoadError
+      }
+      return this.selectedWorldTemplate?.description || '默认解析结构，按核心简介、关键事实、关系网络、阶段/演变和设定补充说明组织世界观内容。'
+    },
+    selectedTemplateSectionNames() {
+      const template = this.selectedWorldTemplate
+      if (!template || !Array.isArray(template.detail_sections)) {
+        return []
+      }
+      return template.detail_sections
+        .map(section => String(section?.name || '').trim())
+        .filter(Boolean)
     },
     extractionDiagnostics() {
       return this.extractedData?.extraction_diagnostics || {}
@@ -4607,6 +4741,7 @@ export default {
     createEditSnapshot() {
       return cloneEditableState({
         world: this.world,
+        selectedTemplateId: this.selectedTemplateId,
         mapData: this.mapData,
         settings: this.settings,
         calendars: this.calendars,
@@ -4679,6 +4814,7 @@ export default {
       this.isApplyingHistory = true
       try {
         this.world = cloneEditableState(snapshot.world || {})
+        this.selectedTemplateId = this.resolveKnownTemplateId(snapshot.selectedTemplateId || this.selectedTemplateId)
         this.mapData = { ...createDefaultMapData(), ...cloneEditableState(snapshot.mapData || {}) }
         this.settings = cloneEditableState(snapshot.settings || [])
         this.calendars = cloneEditableState(snapshot.calendars || [])
@@ -5003,6 +5139,8 @@ export default {
     markWorldAsSaved(payload = this.buildWorldPayload()) {
       this.autoSaveSignature = this.getWorldPayloadSignature(payload)
       this.autoSaveLastSavedAt = Date.now()
+      this.savedWorldTemplateId = this.resolveKnownTemplateId(payload.template_id || this.selectedTemplateId)
+      this.savedWorldTemplateName = payload.template_name || this.getWorldTemplateName(this.savedWorldTemplateId)
     },
     scheduleAutoSave(delay = 5000) {
       if (this.isApplyingStoredWorld) return
@@ -5030,8 +5168,11 @@ export default {
     },
     buildWorldPayload() {
       this.syncEntitySettingLinks()
+      const templateId = this.resolveKnownTemplateId(this.selectedTemplateId)
       return {
         world_info: { ...this.world },
+        template_id: templateId,
+        template_name: this.getWorldTemplateName(templateId),
         settings: {
           items: this.settings,
           mapData: this.mapData,
@@ -5066,6 +5207,64 @@ export default {
         eraText,
         anchorText,
       ].filter(Boolean).join(' ')
+    },
+    resolveKnownTemplateId(templateId) {
+      const normalizedId = String(templateId || '').trim()
+      if (normalizedId && this.templateCandidates.some(template => template.id === normalizedId)) {
+        return normalizedId
+      }
+      const genericTemplate = this.templateCandidates.find(template => template.id === DEFAULT_WORLD_TEMPLATE_ID)
+      if (genericTemplate?.id) {
+        return genericTemplate.id
+      }
+      return this.worldTemplateDefaultId || DEFAULT_WORLD_TEMPLATE_ID
+    },
+    getWorldTemplateName(templateId) {
+      const normalizedId = this.resolveKnownTemplateId(templateId)
+      const match = this.templateCandidates.find(template => template.id === normalizedId)
+      return match?.name || (normalizedId === DEFAULT_WORLD_TEMPLATE_ID ? '通用模板' : normalizedId)
+    },
+    buildTemplateConflictMessage(targetTemplateId, actionLabel = '继续使用') {
+      const targetName = this.getWorldTemplateName(targetTemplateId)
+      const currentName = this.savedWorldTemplate?.name || this.savedWorldTemplateName || this.getWorldTemplateName(this.savedWorldTemplateId)
+      const template = this.worldTemplates.find(item => item.id === this.resolveKnownTemplateId(targetTemplateId))
+      const warning = template?.conflict_warning || '不同世界模板的实体属性和设定字段可能不一致。'
+      return `当前世界观已经有内容。\n\n从“${currentName}”切换到“${targetName}”后，继续提取或保存可能出现字段冲突。\n\n${warning}\n\n确定要${actionLabel}“${targetName}”吗？`
+    },
+    async loadWorldTemplates() {
+      try {
+        const response = await worldApi.listWorldTemplates()
+        const responseTemplates = Array.isArray(response.templates) && response.templates.length > 0
+          ? response.templates
+          : buildFallbackWorldTemplates()
+        const fallbackTemplate = buildFallbackWorldTemplates()[0]
+        this.worldTemplates = responseTemplates.map(template => ({
+          ...fallbackTemplate,
+          ...template,
+          detail_sections: Array.isArray(template.detail_sections) && template.detail_sections.length > 0
+            ? template.detail_sections
+            : (template.id === DEFAULT_WORLD_TEMPLATE_ID ? fallbackTemplate.detail_sections : []),
+          setting_collections: Array.isArray(template.setting_collections) && template.setting_collections.length > 0
+            ? template.setting_collections
+            : [],
+        }))
+        if (!this.worldTemplates.some(template => template.id === DEFAULT_WORLD_TEMPLATE_ID)) {
+          this.worldTemplates.unshift(fallbackTemplate)
+        }
+        this.worldTemplateDefaultId = DEFAULT_WORLD_TEMPLATE_ID
+        this.selectedTemplateId = this.resolveKnownTemplateId(this.selectedTemplateId || this.worldTemplateDefaultId)
+        this.savedWorldTemplateId = this.resolveKnownTemplateId(this.savedWorldTemplateId || this.worldTemplateDefaultId)
+        this.savedWorldTemplateName = this.getWorldTemplateName(this.savedWorldTemplateId)
+        this.worldTemplateLoadError = ''
+      } catch (error) {
+        console.error('加载世界模板失败:', error)
+        this.worldTemplates = buildFallbackWorldTemplates()
+        this.worldTemplateDefaultId = DEFAULT_WORLD_TEMPLATE_ID
+        this.selectedTemplateId = this.resolveKnownTemplateId(this.selectedTemplateId || DEFAULT_WORLD_TEMPLATE_ID)
+        this.savedWorldTemplateId = this.resolveKnownTemplateId(this.savedWorldTemplateId || DEFAULT_WORLD_TEMPLATE_ID)
+        this.savedWorldTemplateName = this.getWorldTemplateName(this.savedWorldTemplateId)
+        this.worldTemplateLoadError = '世界模板加载失败，已回退到通用模板显示。'
+      }
     },
     buildLlmConfigPayload() {
       const payload = {
@@ -5370,7 +5569,13 @@ export default {
       this.collabStatus = '协作已连接'
     },
     openCollabRoom() {
-      this.$router.push({ name: 'Collab', query: { roomId: this.collabRoom?.id || '' } })
+      this.$router.push({
+        name: 'Collab',
+        query: {
+          roomId: this.collabRoom?.id || '',
+          worldId: this.worldId || '',
+        },
+      })
     },
     async handleWorldUpdated(event) {
       const worldId = String(event?.detail?.worldId || '').trim()
@@ -5401,6 +5606,11 @@ export default {
       this.isApplyingStoredWorld = true
       try {
         this.worldId = world.id || ''
+        const savedTemplateId = this.resolveKnownTemplateId(world.template_id || world.templateId || DEFAULT_WORLD_TEMPLATE_ID)
+        const savedTemplateName = world.template_name || world.templateName || this.getWorldTemplateName(savedTemplateId)
+        this.selectedTemplateId = savedTemplateId
+        this.savedWorldTemplateId = savedTemplateId
+        this.savedWorldTemplateName = savedTemplateName
         this.world = {
           name: world.name || '',
           description: world.description || '',
@@ -5613,7 +5823,9 @@ export default {
         if (!this.worldId) {
           const createResponse = await worldApi.createWorld({
             ...this.world,
-            settings: payload.settings
+            settings: payload.settings,
+            template_id: payload.template_id,
+            template_name: payload.template_name,
           })
           this.worldId = createResponse.world_id
           this.syncRouteWorldId()
@@ -5785,6 +5997,9 @@ export default {
       if (progResp.extraction_mode) {
         this.extractionMode = progResp.extraction_mode
       }
+      if (progResp.template_id) {
+        this.selectedTemplateId = this.resolveKnownTemplateId(progResp.template_id)
+      }
       if (progResp.extracted_data) {
         this.extractedData = progResp.extracted_data
       }
@@ -5849,6 +6064,17 @@ export default {
       this.extractPanelDismissed = false
       this.extractProgress = { status: 'running', stage: 'starting', progress: 0, message: '正在提交提取任务...', detail: {}, ragProgress: null }
       try {
+        if (this.templateSwitchHasConflict) {
+          const confirmed = window.confirm(this.buildTemplateConflictMessage(this.selectedTemplateId, '继续使用'))
+          if (!confirmed) {
+            this.isExtracting = false
+            this.showExtractScanPanel = false
+            this.extractPanelDismissed = true
+            this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null }
+            return
+          }
+        }
+
         if (!this.extractUsesRagSource) {
           // input 模式下，如果没有 worldId，先轻量创建以便自动 RAG 索引
           const hasWorldId = await this.ensureWorldId()
@@ -5856,11 +6082,15 @@ export default {
             console.warn('世界观创建失败，提取将跳过 RAG 索引')
           }
         }
+        if (this.worldId && this.selectedTemplateId !== this.savedWorldTemplateId) {
+          await this.saveWorld({ silent: true, skipReload: true, successMessage: '世界模板已更新' })
+        }
 
         // 1. 提交提取任务（附带 worldId 用于自动 RAG 索引）
         const extractOptions = {
           scan_source: this.extractScanSource,
           extraction_mode: this.extractionMode,
+          template_id: this.selectedTemplateId,
           force_rebuild: forceRebuild
         }
         let initResponse
@@ -5891,6 +6121,9 @@ export default {
         }
         if (!taskId) {
           // 可能是直接 JSON 数据返回
+          if (initResponse.template_id) {
+            this.selectedTemplateId = this.resolveKnownTemplateId(initResponse.template_id)
+          }
           this.extractedData = initResponse.extracted_data
           this.isExtracting = false
           return
@@ -6087,6 +6320,9 @@ export default {
         }
 
         this.extractedData = data
+        if (data.template_id) {
+          this.selectedTemplateId = this.resolveKnownTemplateId(data.template_id)
+        }
         this.extractError = ''
       } catch (err) {
         console.error('JSON 导入失败:', err)
@@ -6141,6 +6377,9 @@ export default {
         }
 
         this.extractedData = data
+        if (data.template_id) {
+          this.selectedTemplateId = this.resolveKnownTemplateId(data.template_id)
+        }
         this.extractError = ''
       } catch (err) {
         console.error('JSON 导入失败:', err)
@@ -6154,6 +6393,14 @@ export default {
     },
     async applyExtractedData() {
       if (this.extractedData) {
+        const extractedTemplateId = this.resolveKnownTemplateId(this.extractedData.template_id || this.selectedTemplateId)
+        if (this.worldHasStructuredContent && extractedTemplateId !== this.savedWorldTemplateId) {
+          const confirmed = window.confirm(this.buildTemplateConflictMessage(extractedTemplateId, '应用'))
+          if (!confirmed) {
+            return
+          }
+        }
+        this.selectedTemplateId = extractedTemplateId
         // 将提取的数据应用到世界观
         const extractedWorldInfo = this.extractedData.world_info || {}
         const extractedWritingStyle = this.extractedData.writing_style || extractedWorldInfo.writing_style || ''
@@ -7290,6 +7537,7 @@ export default {
     this.syncTimelineRefs()
     this.updateTimelineZoom()
     this.loadLlmConfigStatus()
+    this.loadWorldTemplates()
 
     const worldId = this.$route?.query?.worldId
     if (worldId) {
@@ -7352,9 +7600,17 @@ export default {
   padding-bottom: var(--spacing-md);
 }
 
+.builder-header-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+}
+
 .builder-header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--spacing-sm);
   flex-wrap: wrap;
 }
@@ -7367,48 +7623,44 @@ export default {
 
 .collab-status-card {
   display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--neutral-gray-200);
-  background: var(--neutral-gray-100);
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--wf-border-light);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--wf-text-secondary);
-  font-size: 0.78rem;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .collab-status-card.active {
-  border-color: rgba(14, 165, 233, 0.25);
-  background: rgba(14, 165, 233, 0.08);
+  border-color: var(--wf-border-light);
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.collab-status-card.warning {
-  border-color: rgba(245, 158, 11, 0.4);
-  background: rgba(245, 158, 11, 0.12);
-}
-
-.collab-status-card strong {
-  color: var(--wf-text-primary);
-  font-size: 0.86rem;
-}
-
-.collab-status-card small {
-  color: var(--wf-text-muted);
+.collab-status-card span {
+  color: var(--wf-text-secondary);
+  white-space: nowrap;
 }
 
 .inline-sync-btn {
-  margin-top: 3px;
+  margin-top: 0;
   border: 0;
-  padding: 0;
+  border-left: 1px solid var(--wf-border);
+  padding: 0 0 0 10px;
   background: transparent;
-  color: var(--primary-blue);
+  color: var(--wf-accent);
   cursor: pointer;
-  font-size: 0.78rem;
+  font-size: 14px;
+  font-weight: 500;
   text-align: left;
+  line-height: 1.2;
 }
 
 .inline-sync-btn:hover {
-  text-decoration: underline;
+  color: var(--wf-accent-hover);
+  text-decoration: none;
 }
 
 .history-btn {
@@ -7626,6 +7878,165 @@ export default {
   background: var(--wf-accent-muted);
   color: var(--wf-accent);
   box-shadow: var(--shadow-glow);
+}
+
+.template-candidate-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.template-candidate-label {
+  flex-shrink: 0;
+  padding-top: 2px;
+  color: var(--wf-text-muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.template-candidate-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.template-candidate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--wf-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--wf-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.template-candidate-btn:hover {
+  border-color: var(--wf-border-light);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--wf-text-primary);
+}
+
+.template-candidate-btn.active {
+  border-color: var(--wf-accent);
+  background: var(--wf-accent-muted);
+  color: var(--wf-accent);
+  box-shadow: var(--shadow-glow);
+}
+
+.template-candidate-name {
+  white-space: nowrap;
+}
+
+.template-candidate-badge {
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--wf-text-muted);
+  font-size: 11px;
+}
+
+.single-template-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  border: 1px solid var(--wf-border);
+}
+
+.single-template-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.single-template-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.single-template-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--wf-text-primary);
+}
+
+.template-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--wf-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--wf-text-muted);
+  font-size: 12px;
+}
+
+.single-template-description {
+  margin: var(--spacing-sm) 0 0;
+  color: var(--wf-text-secondary);
+  line-height: 1.7;
+}
+
+.template-detail-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 7px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--wf-border-light);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--wf-accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+
+.template-detail-link:hover {
+  background: var(--wf-accent-muted);
+  border-color: var(--wf-accent);
+  color: var(--wf-accent-hover);
+}
+
+.template-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+}
+
+.template-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--wf-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--wf-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.type-btn.active .template-tag {
+  border-color: rgba(14, 165, 233, 0.22);
+  background: rgba(14, 165, 233, 0.12);
+  color: var(--wf-accent);
 }
 
 .extract-action-row {
@@ -11466,9 +11877,14 @@ export default {
 }
 
 @media (max-width: 980px) {
-  .setting-detail-editor {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
+  .template-candidate-bar,
+  .single-template-panel {
+    flex-direction: column;
+  }
+
+  .template-detail-link {
+    align-self: flex-start;
+    margin-top: 0;
   }
 
   .setting-detail-profile,

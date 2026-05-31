@@ -19,6 +19,9 @@
         <slot name="nav-right"></slot>
       </div>
     </nav>
+    <div class="wf-navbar-below">
+      <div id="wf-navbar-below-right" class="wf-navbar-below-right"></div>
+    </div>
     <main class="wf-content">
       <slot></slot>
     </main>
@@ -101,6 +104,21 @@
   background: var(--wf-accent-muted);
   border-color: var(--wf-accent);
   color: var(--wf-accent-hover);
+}
+
+.wf-navbar-below {
+  min-height: 0;
+  padding: 0 var(--spacing-lg);
+}
+
+.wf-navbar-below-right {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--spacing-sm);
+}
+
+.wf-navbar-below-right:empty {
+  display: none;
 }
 
 .wf-content {

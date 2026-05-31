@@ -29,6 +29,13 @@ from app.models.map import (
     summarize_map,
 )
 from app.services.enhanced_world_extractor import EnhancedWorldExtractor
+from app.services.world_templates import (
+    DEFAULT_WORLD_TEMPLATE_ID,
+    get_world_template_detail,
+    get_world_template_summary,
+    list_world_templates,
+    resolve_world_template_id,
+)
 from app.utils.file_parser import FileParser
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
@@ -45,6 +52,16 @@ _VALID_SCAN_SOURCES = {'input', 'rag', 'input_and_rag'}
 def _normalize_scan_source(value):
     scan_source = str(value or 'input').strip().lower()
     return scan_source if scan_source in _VALID_SCAN_SOURCES else 'input'
+
+
+def _resolve_template_payload(template_id, template_name=''):
+    resolved_id = resolve_world_template_id(template_id)
+    summary = get_world_template_summary(resolved_id)
+    return {
+        'template_id': resolved_id,
+        'template_name': str(summary.get('name') or template_name or '通用模板').strip() or '通用模板',
+        'template_summary': summary,
+    }
 
 
 def _now_iso():
@@ -224,6 +241,7 @@ def create_world():
     """创建新的世界观"""
     try:
         data = request.json or {}
+        template_payload = _resolve_template_payload(data.get('template_id'), data.get('template_name', ''))
         world = WorldManager.create_world(
             name=data.get('name'),
             description=data.get('description', ''),
@@ -231,7 +249,9 @@ def create_world():
             anchor_time=data.get('anchor_time', ''),
             settings=data.get('settings', {}),
             writing_style=data.get('writing_style', ''),
-            reference_text=data.get('reference_text', '')
+            reference_text=data.get('reference_text', ''),
+            template_id=template_payload['template_id'],
+            template_name=template_payload['template_name'],
         )
         return jsonify({
             'success': True,
@@ -348,6 +368,15 @@ def extract_world():
 
         scan_source = _normalize_scan_source(request_data.get('scan_source'))
         world_id = str(request_data.get('world_id') or '').strip()
+        world = WorldManager.get_world(world_id) if world_id else None
+        template_payload = _resolve_template_payload(
+            request_data.get('template_id')
+            or (direct_json_data or {}).get('template_id')
+            or getattr(world, 'template_id', DEFAULT_WORLD_TEMPLATE_ID),
+            request_data.get('template_name')
+            or (direct_json_data or {}).get('template_name')
+            or getattr(world, 'template_name', ''),
+        )
         uses_rag_source = scan_source in {'rag', 'input_and_rag'}
         requires_input_source = scan_source in {'input', 'input_and_rag'}
 
@@ -365,7 +394,6 @@ def extract_world():
             }), 400
 
         if uses_rag_source:
-            world = WorldManager.get_world(world_id) if world_id else None
             if not world:
                 return jsonify({
                     'success': False,
@@ -400,9 +428,14 @@ def extract_world():
 
         # 如果只有 JSON 数据没有文本，直接返回，无需 LLM
         if direct_json_data is not None and not scan_text and scan_source == 'input':
+            direct_json_data = dict(direct_json_data)
+            direct_json_data.setdefault('template_id', template_payload['template_id'])
+            direct_json_data.setdefault('template_name', template_payload['template_name'])
             resp = {
                 'success': True,
-                'extracted_data': direct_json_data
+                'extracted_data': direct_json_data,
+                'template_id': template_payload['template_id'],
+                'template_name': template_payload['template_name'],
             }
             if uploaded_filenames:
                 resp['source_files'] = uploaded_filenames
@@ -436,6 +469,8 @@ def extract_world():
                 'result': None,
                 'error': None,
                 'extraction_mode': extraction_mode,
+                'template_id': template_payload['template_id'],
+                'template_name': template_payload['template_name'],
                 'force_rebuild': force_rebuild,
                 'cancel_requested': False,
                 'pause_requested': False,
@@ -499,7 +534,7 @@ def extract_world():
 
                 progress_cb('preparing', 5, '正在初始化...')
 
-                extractor = EnhancedWorldExtractor()
+                extractor = EnhancedWorldExtractor(template_id=template_payload['template_id'])
                 text_len = len(scan_text) if scan_text else 0
                 volume_profile = extractor.get_text_volume_profile(text_len)
                 cache_key = extractor.build_cache_key(scan_text or '', extraction_mode, volume_profile)
@@ -515,6 +550,8 @@ def extract_world():
                         'context_window': volume_profile.get('context_window'),
                         'target_chunk_chars': volume_profile.get('target_chunk_chars'),
                         'scan_source': scan_source,
+                        'template_id': template_payload['template_id'],
+                        'template_name': template_payload['template_name'],
                         'rag_scan_document_count': int((rag_scan_payload or {}).get('document_count') or 0),
                     },
                 )
@@ -597,6 +634,8 @@ def extract_world():
                 result.setdefault('extraction_diagnostics', {})['volume_profile'] = volume_profile
                 result['extraction_mode'] = extraction_mode
                 result['scan_source'] = scan_source
+                result['template_id'] = template_payload['template_id']
+                result['template_name'] = template_payload['template_name']
                 if rag_scan_payload:
                     result['rag_scan_document_count'] = int(rag_scan_payload.get('document_count') or 0)
                     result['rag_scan_text_length'] = int(rag_scan_payload.get('text_length') or 0)
@@ -677,8 +716,11 @@ def extract_world():
         resp = {
             'success': True,
             'task_id': task_id,
+            'world_id': world_id,
             'message': '提取任务已启动',
             'extraction_mode': extraction_mode,
+            'template_id': template_payload['template_id'],
+            'template_name': template_payload['template_name'],
             'force_rebuild': force_rebuild,
         }
         if uploaded_filenames:
@@ -790,7 +832,10 @@ def pause_extract(task_id):
 
 def _run_resume_task(task_id):
     try:
-        extractor = EnhancedWorldExtractor()
+        with _tasks_lock:
+            task_ref = _extraction_tasks.get(task_id, {})
+            template_id = task_ref.get('template_id') or DEFAULT_WORLD_TEMPLATE_ID
+        extractor = EnhancedWorldExtractor(template_id=template_id)
 
         def progress_cb(stage, progress, message, detail=None):
             detail = detail or {}
@@ -871,7 +916,13 @@ def resume_extract(task_id):
         if not task:
             return jsonify({'success': False, 'message': '任务不存在或已过期'}), 404
         if task_id in _running_threads or task.get('status') in {'running', 'pause_requested', 'cancel_requested'}:
-            return jsonify({'success': True, 'message': '任务已在运行', 'task_id': task_id})
+            return jsonify({
+                'success': True,
+                'message': '任务已在运行',
+                'task_id': task_id,
+                'template_id': task.get('template_id') or DEFAULT_WORLD_TEMPLATE_ID,
+                'template_name': task.get('template_name') or get_world_template_summary(task.get('template_id')).get('name'),
+            })
         if not task.get('cache_key'):
             return jsonify({'success': False, 'message': '任务缺少缓存信息，无法继续'}), 400
         task.update({
@@ -888,7 +939,13 @@ def resume_extract(task_id):
         _persist_task(task_id)
         _running_threads.add(task_id)
     threading.Thread(target=_run_resume_task, args=(task_id,), daemon=True).start()
-    return jsonify({'success': True, 'task_id': task_id, 'message': '已继续解析任务'})
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': '已继续解析任务',
+        'template_id': task.get('template_id') or DEFAULT_WORLD_TEMPLATE_ID,
+        'template_name': task.get('template_name') or get_world_template_summary(task.get('template_id')).get('name'),
+    })
 
 
 @world_build_bp.route('/extract/<task_id>/progress', methods=['GET'])
@@ -914,6 +971,8 @@ def extract_progress(task_id):
         'rag_progress': task.get('rag_progress'),
         'done': task['done'],
         'extraction_mode': task.get('extraction_mode'),
+        'template_id': task.get('template_id') or DEFAULT_WORLD_TEMPLATE_ID,
+        'template_name': task.get('template_name') or get_world_template_summary(task.get('template_id')).get('name'),
         'force_rebuild': task.get('force_rebuild'),
     }
     detail = task.get('detail') or {}
@@ -1052,6 +1111,28 @@ def test_llm_config():
             'success': False,
             'message': f'测试失败: {str(e)}'
         }), 400
+
+
+@world_build_bp.route('/templates', methods=['GET'])
+def get_world_templates():
+    """列出可用世界模板。"""
+    templates = list_world_templates()
+    return jsonify({
+        'success': True,
+        'default_template_id': DEFAULT_WORLD_TEMPLATE_ID,
+        'templates': templates,
+    })
+
+
+@world_build_bp.route('/templates/<template_id>', methods=['GET'])
+def get_world_template(template_id):
+    """获取单个世界模板完整定义与默认数据。"""
+    template = get_world_template_detail(template_id)
+    return jsonify({
+        'success': True,
+        'default_template_id': DEFAULT_WORLD_TEMPLATE_ID,
+        'template': template,
+    })
 
 
 def _get_world_or_404(world_id):
@@ -1397,6 +1478,13 @@ def update_world(world_id):
     """更新世界观详情。"""
     try:
         data = request.json or {}
+        if isinstance(data, dict) and any(key in data for key in ('template_id', 'template_name')):
+            template_payload = _resolve_template_payload(data.get('template_id'), data.get('template_name', ''))
+            data = {
+                **data,
+                'template_id': template_payload['template_id'],
+                'template_name': template_payload['template_name'],
+            }
         world = WorldManager.update_world(world_id, data)
         if not world:
             return jsonify({
@@ -1431,6 +1519,8 @@ def list_worlds():
                     'description': w.description,
                     'era': w.era,
                     'anchor_time': w.anchor_time,
+                    'template_id': getattr(w, 'template_id', DEFAULT_WORLD_TEMPLATE_ID),
+                    'template_name': getattr(w, 'template_name', get_world_template_summary(getattr(w, 'template_id', DEFAULT_WORLD_TEMPLATE_ID)).get('name')),
                     'entities_count': len(w.entities),
                     'events_count': len(w.events),
                     'created_at': w.created_at,

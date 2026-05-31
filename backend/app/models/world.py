@@ -300,6 +300,7 @@ class WorldSetting:
         settings: Optional[Dict[str, Any]] = None,
         writing_style: str = "",
         reference_text: str = "",
+        **extra_fields: Any,
     ) -> "WorldSetting":
         return cls(
             id=f"world_{uuid.uuid4().hex[:12]}",
@@ -310,6 +311,7 @@ class WorldSetting:
             settings=settings,
             writing_style=writing_style,
             reference_text=reference_text,
+            **extra_fields,
         )
 
     @classmethod
@@ -576,6 +578,7 @@ class WorldManager:
         settings: Optional[Dict[str, Any]] = None,
         writing_style: str = "",
         reference_text: str = "",
+        **extra_fields: Any,
     ) -> WorldSetting:
         with cls._lock:
             world = WorldSetting.create(
@@ -586,6 +589,7 @@ class WorldManager:
                 settings=settings,
                 writing_style=writing_style,
                 reference_text=reference_text,
+                **extra_fields,
             )
             cls.save_world(world)
             return world

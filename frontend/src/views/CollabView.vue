@@ -2,6 +2,10 @@
   <div class="collab-page">
     <header class="collab-hero">
       <div>
+        <button class="back-link" type="button" @click="goBackToWorldBuilder">
+          <SvgIcon name="chevron-left" :size="16" :stroke-width="2.2" />
+          <span>返回世界观构建</span>
+        </button>
         <h1>联机房间</h1>
         <p>单人使用会进入默认本地房间；多人联机、跑团和协作编辑都会基于这里的房间、成员与事件日志扩展。</p>
       </div>
@@ -83,7 +87,12 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { collabApi } from '../api/collab'
+import SvgIcon from '../components/ui/SvgIcon.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
 const error = ref('')
@@ -110,6 +119,15 @@ function eventText(event) {
   if (event.type === 'member.left') return '离开了房间'
   if (event.type === 'room.created') return '创建了房间'
   return JSON.stringify(event.payload || {})
+}
+
+function goBackToWorldBuilder() {
+  const worldId = String(route.query.worldId || '').trim()
+  if (worldId) {
+    router.push({ name: 'WorldBuilder', query: { worldId } })
+    return
+  }
+  router.push({ name: 'WorldBuilder' })
 }
 
 async function bootstrap() {
@@ -211,6 +229,25 @@ onBeforeUnmount(() => {
   gap: var(--spacing-xl);
   align-items: flex-start;
   margin-bottom: var(--spacing-xl);
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--wf-text-muted);
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: var(--spacing-sm);
+  font-size: 14px;
+  font-weight: 500;
+  transition: color var(--transition-fast);
+}
+
+.back-link:hover {
+  color: var(--wf-accent-hover);
 }
 
 .collab-hero h1 {
