@@ -10,6 +10,127 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
+from ..utils.logger import get_logger
+
+logger = get_logger("worldfish.model.world")
+
+ENTITY_TYPE_TO_SETTING_CATEGORY = {
+    "人物": "character",
+    "角色": "character",
+    "种族": "character",
+    "生物": "character",
+    "person": "character",
+    "character": "character",
+    "国家": "organization",
+    "政权": "organization",
+    "组织": "organization",
+    "势力": "organization",
+    "团体": "organization",
+    "教会": "organization",
+    "公司": "organization",
+    "公会": "organization",
+    "organization": "organization",
+    "nation": "organization",
+    "faction": "organization",
+    "地点": "geography",
+    "位置": "geography",
+    "城市": "geography",
+    "区域": "geography",
+    "location": "geography",
+    "geography": "geography",
+    "place": "geography",
+    "物品": "item",
+    "道具": "item",
+    "装备": "item",
+    "武器": "item",
+    "item": "item",
+    "能力": "ability",
+    "魔法": "ability",
+    "技能": "ability",
+    "体系": "ability",
+    "ability": "ability",
+}
+SETTING_CATEGORY_TO_ENTITY_TYPE = {
+    "character": "人物",
+    "organization": "组织",
+    "geography": "地点",
+    "item": "物品",
+    "ability": "能力",
+    "other": "其他",
+}
+ENTITY_BACKED_SETTING_CATEGORIES = {"character", "organization", "geography", "item", "ability"}
+
+
+def _normalize_identity_key(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        for sep in (",", "，", "、", "/", "|"):
+            if sep in value:
+                return [part.strip() for part in value.split(sep) if part.strip()]
+        return [value.strip()] if value.strip() else []
+    return []
+
+
+def _dedupe_strings(values: List[Any], exclude: Optional[List[Any]] = None) -> List[str]:
+    excluded = {_normalize_identity_key(item) for item in (exclude or []) if str(item or "").strip()}
+    seen = set()
+    result: List[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        key = _normalize_identity_key(text)
+        if not text or not key or key in seen or key in excluded:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _merge_text(*values: Any) -> str:
+    parts: List[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        if any(text == existing or text in existing for existing in parts):
+            continue
+        parts = [existing for existing in parts if existing not in text]
+        parts.append(text)
+    return "\n".join(parts)
+
+
+def _normalize_setting_category(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return "other"
+    if normalized in SETTING_CATEGORY_TO_ENTITY_TYPE:
+        return normalized
+    keyword_map = {
+        "character": ("人物", "角色", "种族", "生物", "身份", "character", "person"),
+        "organization": ("组织", "势力", "国家", "政权", "团体", "organization", "faction", "nation"),
+        "geography": ("地理", "地点", "区域", "城市", "位置", "geography", "location", "place"),
+        "item": ("物品", "道具", "装备", "武器", "资源", "科技", "item"),
+        "ability": ("能力", "魔法", "技能", "体系", "规则", "ability"),
+    }
+    for category, keywords in keyword_map.items():
+        if any(keyword.lower() in normalized for keyword in keywords):
+            return category
+    return "other"
+
+
+def _setting_category_to_entity_type(category: Any) -> str:
+    return SETTING_CATEGORY_TO_ENTITY_TYPE.get(_normalize_setting_category(category), "其他")
+
+
+def _entity_type_to_setting_category(entity_type: Any) -> str:
+    text = str(entity_type or "").strip()
+    if not text:
+        return "other"
+    return ENTITY_TYPE_TO_SETTING_CATEGORY.get(text, ENTITY_TYPE_TO_SETTING_CATEGORY.get(text.lower(), _normalize_setting_category(text)))
 
 
 def _normalize_stage(stage: Dict[str, Any], entity_name: str = "", index: int = 0) -> Dict[str, Any]:
@@ -239,6 +360,295 @@ class Event:
         }
 
 
+def _entity_identity_keys(entity: Entity) -> List[str]:
+    keys = [_normalize_identity_key(entity.name)]
+    keys.extend(_normalize_identity_key(alias) for alias in entity.aliases or [])
+    return [key for key in dict.fromkeys(keys) if key]
+
+
+def _setting_identity_keys(setting: Dict[str, Any]) -> List[str]:
+    values = [setting.get("name")]
+    values.extend(_normalize_string_list(setting.get("aliases") or setting.get("alias")))
+    return [key for key in dict.fromkeys(_normalize_identity_key(value) for value in values) if key]
+
+
+def _normalize_setting_item(item: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    setting_type = "collection" if item.get("settingType") == "collection" else "setting"
+    name = str(item.get("name") or item.get("title") or item.get("label") or "").strip()
+    if not name:
+        return {}
+    category = _normalize_setting_category(item.get("category") or item.get("type"))
+    normalized = dict(item)
+    normalized["id"] = str(item.get("id") or f"setting_{uuid.uuid4().hex[:12]}").strip()
+    normalized["name"] = name
+    normalized["settingType"] = setting_type
+    normalized["category"] = category
+    normalized["aliases"] = _dedupe_strings(_normalize_string_list(item.get("aliases") or item.get("alias")), exclude=[name])
+    normalized["description"] = str(item.get("description") or item.get("summary") or item.get("content") or "").strip()
+    normalized["detailContent"] = str(item.get("detailContent") or item.get("detail") or normalized["description"] or "").strip()
+    normalized["linkedEntityId"] = str(item.get("linkedEntityId") or item.get("entityId") or "").strip()
+    if setting_type == "setting":
+        normalized["collectionId"] = str(item.get("collectionId") or item.get("collection_id") or item.get("parentCollection") or f"collection_{category}").strip()
+    if not isinstance(normalized.get("structuredDetail"), dict):
+        normalized["structuredDetail"] = {}
+    return normalized
+
+
+def _structured_detail_from_entity(entity: Entity, fallback_intro: str = "") -> Dict[str, Any]:
+    detail = {
+        "intro": _merge_text(fallback_intro, entity.attributes.get("简介") if isinstance(entity.attributes, dict) else ""),
+        "facts": [],
+        "relationships": [],
+        "stages": [],
+    }
+    if isinstance(entity.attributes, dict):
+        for key, value in entity.attributes.items():
+            if key in {"简介", "关系网络概述"} or value in (None, ""):
+                continue
+            detail["facts"].append({"label": str(key), "value": value})
+    for relationship in entity.relationships or []:
+        if not isinstance(relationship, dict):
+            continue
+        detail["relationships"].append({
+            "target": relationship.get("target") or "",
+            "type": relationship.get("type") or relationship.get("relation") or "关联",
+            "description": relationship.get("description") or "",
+            "time_period": relationship.get("time_period") or "",
+            "source_event": relationship.get("source_event") or "",
+        })
+    for stage in entity.stages or []:
+        if not isinstance(stage, dict):
+            continue
+        attrs = stage.get("attributes") if isinstance(stage.get("attributes"), dict) else {}
+        detail["stages"].append({
+            "id": stage.get("id") or f"stage_{uuid.uuid4().hex[:12]}",
+            "name": stage.get("name") or "未命名阶段",
+            "era": stage.get("era") or "",
+            "description": stage.get("description") or "",
+            "fields": [{"label": str(key), "value": value} for key, value in attrs.items() if value not in (None, "")],
+        })
+    return detail
+
+
+def _entity_to_setting_item(entity: Entity, existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    existing = _normalize_setting_item(existing or {}) if existing else {}
+    category = _normalize_setting_category(existing.get("category") or _entity_type_to_setting_category(entity.type))
+    setting_id = str(existing.get("id") or entity.setting_item_id or f"setting_{entity.id}").strip()
+    intro = ""
+    if isinstance(entity.attributes, dict):
+        intro = str(entity.attributes.get("简介") or "").strip()
+    description = _merge_text(existing.get("description"), intro, entity.type)
+    detail_content = _merge_text(existing.get("detailContent"), intro)
+    setting = {
+        **existing,
+        "id": setting_id,
+        "name": str(existing.get("name") or entity.name or "未命名实体").strip(),
+        "settingType": "setting",
+        "category": category,
+        "collectionId": str(existing.get("collectionId") or f"collection_{category}").strip(),
+        "description": description,
+        "aliases": _dedupe_strings(list(existing.get("aliases") or []) + list(entity.aliases or []), exclude=[entity.name]),
+        "detailContent": detail_content or description,
+        "structuredDetail": _structured_detail_from_entity(entity, existing.get("detailContent") or existing.get("description") or intro),
+        "linkedEntityId": entity.id,
+        "sourceType": existing.get("sourceType") or "entity",
+        "autoGenerated": True if existing.get("autoGenerated") is None else bool(existing.get("autoGenerated")),
+    }
+    return setting
+
+
+def _setting_to_entity(setting: Dict[str, Any], world_id: str, existing: Optional[Entity] = None) -> Optional[Entity]:
+    setting = _normalize_setting_item(setting)
+    if not setting or setting.get("settingType") != "setting":
+        return existing
+    category = _normalize_setting_category(setting.get("category"))
+    if category not in ENTITY_BACKED_SETTING_CATEGORIES:
+        return existing
+    entity_id = str((existing.id if existing else "") or setting.get("linkedEntityId") or f"ent_{uuid.uuid4().hex[:12]}").strip()
+    name = str(setting.get("name") or (existing.name if existing else "") or "").strip()
+    if not name:
+        return existing
+
+    detail = setting.get("structuredDetail") if isinstance(setting.get("structuredDetail"), dict) else {}
+
+    attributes: Dict[str, Any] = {}
+    intro = _merge_text(setting.get("description"), detail.get("intro"), setting.get("detailContent"))
+    if intro:
+        attributes["简介"] = intro
+    for fact in detail.get("facts") or []:
+        if isinstance(fact, dict) and str(fact.get("label") or "").strip():
+            attributes[str(fact.get("label")).strip()] = fact.get("value") or ""
+
+    stages: List[Dict[str, Any]] = []
+    for index, stage in enumerate(detail.get("stages") or []):
+        if not isinstance(stage, dict):
+            continue
+        fields = stage.get("fields") if isinstance(stage.get("fields"), list) else []
+        stage_attrs = {
+            str(field.get("label") or "").strip(): field.get("value")
+            for field in fields
+            if isinstance(field, dict) and str(field.get("label") or "").strip()
+        }
+        normalized_stage = _normalize_stage({
+            "id": stage.get("id"),
+            "name": stage.get("name") or f"{name}阶段{index + 1}",
+            "era": stage.get("era") or "",
+            "description": stage.get("description") or "",
+            "attributes": stage_attrs,
+            "setting_item_id": setting.get("id") or "",
+        }, entity_name=name, index=index)
+        if normalized_stage:
+            stages.append(normalized_stage)
+
+    relationships: List[Dict[str, Any]] = []
+    for relation in detail.get("relationships") or []:
+        if isinstance(relation, dict) and str(relation.get("target") or "").strip():
+            relationships.append({
+                "target": str(relation.get("target") or "").strip(),
+                "type": str(relation.get("type") or "关联").strip() or "关联",
+                "description": str(relation.get("description") or "").strip(),
+                "time_period": str(relation.get("time_period") or "").strip(),
+                "source_event": str(relation.get("source_event") or "").strip(),
+            })
+
+    return Entity(
+        id=entity_id,
+        world_id=world_id,
+        name=name,
+        type=_setting_category_to_entity_type(category),
+        aliases=_dedupe_strings(list(existing.aliases if existing else []) + list(setting.get("aliases") or []), exclude=[name]),
+        attributes=attributes,
+        stages=stages,
+        relationships=relationships,
+        setting_item_id=str(setting.get("id") or "").strip(),
+        evolution_refs=existing.evolution_refs if existing else [],
+        created_at=existing.created_at if existing else None,
+    )
+
+
+def _normalize_world_entity_setting_links(world: "WorldSetting") -> None:
+    if not world:
+        return
+    settings = world.settings if isinstance(world.settings, dict) else {}
+    raw_items = settings.get("items") if isinstance(settings.get("items"), list) else []
+    normalized_items = [item for item in (_normalize_setting_item(item, index) for index, item in enumerate(raw_items)) if item]
+
+    collections = [item for item in normalized_items if item.get("settingType") == "collection"]
+    setting_items = [item for item in normalized_items if item.get("settingType") == "setting"]
+    collection_keys = {str(item.get("id") or "").strip() for item in collections}
+    for category in sorted({item.get("category") for item in setting_items if item.get("category")}):
+        collection_id = f"collection_{category}"
+        if collection_id not in collection_keys:
+            collections.append({
+                "id": collection_id,
+                "name": _setting_category_to_entity_type(category) + "设定",
+                "settingType": "collection",
+                "category": category,
+                "description": "自动归一化生成的设定集",
+                "detailContent": "自动归一化生成的设定集",
+                "aliases": [],
+                "structuredDetail": {},
+                "linkedEntityId": "",
+                "sourceType": "normalized",
+                "autoGenerated": True,
+            })
+            collection_keys.add(collection_id)
+
+    entities = [entity if isinstance(entity, Entity) else Entity.from_dict(entity, world.id) for entity in (world.entities or [])]
+    entity_by_id = {str(entity.id or "").strip(): entity for entity in entities if str(entity.id or "").strip()}
+    entity_by_key: Dict[str, Entity] = {}
+    for entity in entities:
+        for key in _entity_identity_keys(entity):
+            entity_by_key.setdefault(key, entity)
+
+    setting_by_id = {str(item.get("id") or "").strip(): item for item in setting_items if str(item.get("id") or "").strip()}
+    setting_by_entity_id = {str(item.get("linkedEntityId") or "").strip(): item for item in setting_items if str(item.get("linkedEntityId") or "").strip()}
+    setting_by_key: Dict[str, Dict[str, Any]] = {}
+    for item in setting_items:
+        for key in _setting_identity_keys(item):
+            setting_by_key.setdefault(key, item)
+
+    for entity in entities:
+        setting = None
+        if entity.setting_item_id:
+            setting = setting_by_id.get(entity.setting_item_id)
+        if not setting:
+            setting = setting_by_entity_id.get(entity.id)
+        if not setting:
+            for key in _entity_identity_keys(entity):
+                setting = setting_by_key.get(key)
+                if setting:
+                    break
+        if setting:
+            setting = _normalize_setting_item(setting)
+        else:
+            setting = _entity_to_setting_item(entity)
+        entity.setting_item_id = str(setting.get("id") or "").strip()
+        setting["linkedEntityId"] = entity.id
+        setting_by_id[setting["id"]] = setting
+        setting_by_entity_id[entity.id] = setting
+        for key in _setting_identity_keys(setting):
+            setting_by_key[key] = setting
+
+    for setting in list(setting_by_id.values()):
+        if setting.get("settingType") != "setting":
+            continue
+        category = _normalize_setting_category(setting.get("category"))
+        if category not in ENTITY_BACKED_SETTING_CATEGORIES:
+            continue
+        entity = entity_by_id.get(str(setting.get("linkedEntityId") or "").strip())
+        if not entity:
+            for key in _setting_identity_keys(setting):
+                entity = entity_by_key.get(key)
+                if entity:
+                    break
+        entity = _setting_to_entity(setting, world.id, entity)
+        if not entity:
+            continue
+        entity.setting_item_id = str(setting.get("id") or "").strip()
+        setting["linkedEntityId"] = entity.id
+
+        existing_index = next(
+            (index for index, item in enumerate(entities) if str(item.id or "").strip() == entity.id),
+            -1,
+        )
+        if existing_index >= 0:
+            entities[existing_index] = entity
+        else:
+            entities.append(entity)
+        entity_by_id[entity.id] = entity
+        for key in _entity_identity_keys(entity):
+            entity_by_key[key] = entity
+
+    seen_setting_ids = set()
+    final_items = []
+    for item in collections + list(setting_by_id.values()):
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or item_id in seen_setting_ids:
+            continue
+        seen_setting_ids.add(item_id)
+        final_items.append(item)
+
+    seen_entity_ids = set()
+    final_entities = []
+    for entity in entities:
+        entity_id = str(entity.id or entity.name or "").strip()
+        if not entity_id or entity_id in seen_entity_ids:
+            continue
+        seen_entity_ids.add(entity_id)
+        final_entities.append(entity)
+
+    world.entities = final_entities
+    world.settings = {
+        **settings,
+        "items": final_items,
+        "mapData": settings.get("mapData") if isinstance(settings.get("mapData"), dict) else {},
+        "calendars": settings.get("calendars") if isinstance(settings.get("calendars"), list) else [],
+    }
+
+
 class WorldSetting:
     """世界观设置。"""
 
@@ -322,7 +732,7 @@ class WorldSetting:
             for key, value in payload.items()
             if key not in cls._KNOWN_FIELDS
         }
-        return cls(
+        world = cls(
             id=payload.get("id") or f"world_{uuid.uuid4().hex[:12]}",
             name=payload.get("name", ""),
             description=payload.get("description", ""),
@@ -337,6 +747,8 @@ class WorldSetting:
             updated_at=payload.get("updated_at"),
             **extra_fields,
         )
+        _normalize_world_entity_setting_links(world)
+        return world
 
     @classmethod
     def get_by_id(cls, world_id: str) -> Optional["WorldSetting"]:
@@ -364,9 +776,11 @@ class WorldSetting:
                 continue
             setattr(self, key, value)
 
+        _normalize_world_entity_setting_links(self)
         self.updated_at = datetime.now().isoformat()
 
     def to_dict(self) -> Dict[str, Any]:
+        _normalize_world_entity_setting_links(self)
         data = {
             "id": self.id,
             "name": self.name,
@@ -569,6 +983,21 @@ class WorldManager:
         return cls._safe_join_world_path(world_id, "world.json")
 
     @classmethod
+    def _write_json_atomic(cls, path: str, payload: Dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    @classmethod
     def create_world(
         cls,
         name: str,
@@ -598,9 +1027,9 @@ class WorldManager:
     def save_world(cls, world: WorldSetting) -> WorldSetting:
         with cls._lock:
             os.makedirs(cls._world_dir(world.id), exist_ok=True)
+            _normalize_world_entity_setting_links(world)
             world.updated_at = datetime.now().isoformat()
-            with open(cls._world_file(world.id), "w", encoding="utf-8") as handle:
-                json.dump(world.to_dict(), handle, ensure_ascii=False, indent=2)
+            cls._write_json_atomic(cls._world_file(world.id), world.to_dict())
             return world
 
     @classmethod
@@ -676,14 +1105,18 @@ class WorldManager:
 
     @classmethod
     def list_worlds(cls) -> List[WorldSetting]:
-        """列出所有世界观"""
+        """列出所有世界观。单个坏文件不影响整个列表。"""
         cls._ensure_base_dir()
         worlds = []
         if os.path.isdir(cls.WORLDS_DIR):
             for dirname in os.listdir(cls.WORLDS_DIR):
                 if not cls.is_valid_world_id(dirname):
                     continue
-                world = cls.get_world(dirname)
+                try:
+                    world = cls.get_world(dirname)
+                except (OSError, json.JSONDecodeError, ValueError) as exc:
+                    logger.warning(f"读取世界观失败，已跳过 [{dirname}]: {exc}")
+                    continue
                 if world:
                     worlds.append(world)
         worlds.sort(key=lambda w: w.updated_at, reverse=True)

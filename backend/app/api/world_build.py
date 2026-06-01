@@ -944,9 +944,9 @@ def pause_extract(task_id):
         task['pause_requested'] = True
         task['status'] = 'pause_requested'
         task['stage'] = 'pause_requested'
-        task['message'] = '正在暂停解析，当前块完成后保存 checkpoint...'
+        task['message'] = '正在立即暂停当前扫描，并会从当前章节继续...'
         _persist_task(task_id)
-    return jsonify({'success': True, 'message': '已请求暂停，当前块完成后将保存进度'})
+    return jsonify({'success': True, 'message': '已请求立即暂停，将从当前章节继续'})
 
 
 def _run_resume_task(task_id):

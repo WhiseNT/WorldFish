@@ -81,6 +81,7 @@ class EnhancedWorldExtractor:
         "ability": "能力",
         "other": "其他",
     }
+    SETTING_CATEGORIES_WITH_ENTITY_STUBS = {"character", "item", "organization", "geography", "ability"}
 
     # 分段阈值
     LONG_TEXT_THRESHOLD = 15000
@@ -797,6 +798,49 @@ class EnhancedWorldExtractor:
             "其他",
         )
 
+    def _merge_setting_into_entity(self, entity: Dict[str, Any], setting_item: Dict[str, Any]) -> None:
+        if not entity or not setting_item:
+            return
+        if entity.get("type") in {"", "其他"}:
+            entity["type"] = self._setting_category_to_entity_type(setting_item.get("category"))
+        if setting_item.get("id") and not entity.get("setting_item_id"):
+            entity["setting_item_id"] = str(setting_item.get("id") or "").strip()
+        aliases = self._dedupe_strings(
+            list(entity.get("aliases") or []) + list(setting_item.get("aliases") or []),
+            exclude=[str(entity.get("name") or "").strip()],
+        )
+        if aliases:
+            entity["aliases"] = aliases
+        entity.setdefault("attributes", {})
+        entity["attributes"]["简介"] = self._merge_text(
+            entity["attributes"].get("简介"),
+            setting_item.get("description"),
+            setting_item.get("detailContent"),
+        )
+
+    def _setting_item_to_entity_stub(self, setting_item: Dict[str, Any], intro: str = "") -> Dict[str, Any]:
+        if not isinstance(setting_item, dict):
+            return {}
+        category = self._normalize_setting_category(setting_item.get("category"))
+        if category not in self.SETTING_CATEGORIES_WITH_ENTITY_STUBS:
+            return {}
+        display_name = str(setting_item.get("name") or "").strip()
+        if not display_name:
+            return {}
+        description = self._merge_text(
+            setting_item.get("description"),
+            setting_item.get("detailContent"),
+            intro,
+        )
+        stub = self._normalize_entity({
+            "name": display_name,
+            "type": self._setting_category_to_entity_type(category),
+            "aliases": self._dedupe_strings(setting_item.get("aliases") or [], exclude=[display_name]),
+            "setting_item_id": str(setting_item.get("id") or "").strip(),
+            "attributes": {"简介": description},
+        })
+        return stub if stub else {}
+
     def _ensure_referenced_entities_exist(
         self,
         entities: List[Dict[str, Any]],
@@ -860,14 +904,7 @@ class EnhancedWorldExtractor:
 
             if existing:
                 if setting_item:
-                    if existing.get("type") in {"", "其他"}:
-                        existing["type"] = self._setting_category_to_entity_type(setting_item.get("category"))
-                    existing.setdefault("attributes", {})
-                    existing["attributes"]["简介"] = self._merge_text(
-                        existing["attributes"].get("简介"),
-                        setting_item.get("description"),
-                        setting_item.get("detailContent"),
-                    )
+                    self._merge_setting_into_entity(existing, setting_item)
                 continue
 
             display_name = str(setting_item.get("name") if setting_item else reference_name).strip() or reference_name
@@ -887,11 +924,32 @@ class EnhancedWorldExtractor:
                     self._setting_category_to_entity_type(setting_item.get("category")) if setting_item else "其他"
                 ),
                 "aliases": self._dedupe_strings(aliases, exclude=[display_name]),
+                "setting_item_id": str(setting_item.get("id") or "").strip() if setting_item else "",
                 "attributes": {"简介": intro},
             })
             if not stub:
                 continue
 
+            normalized_entities.append(stub)
+            for identity_key in self._entity_identity_keys(stub):
+                entity_index.setdefault(identity_key, stub)
+
+        for setting_item in setting_index.values():
+            category = self._normalize_setting_category(setting_item.get("category"))
+            if category not in self.SETTING_CATEGORIES_WITH_ENTITY_STUBS:
+                continue
+            setting_keys = self._setting_identity_keys(setting_item)
+            existing = None
+            for key in setting_keys:
+                existing = entity_index.get(key)
+                if existing:
+                    break
+            if existing:
+                self._merge_setting_into_entity(existing, setting_item)
+                continue
+            stub = self._setting_item_to_entity_stub(setting_item)
+            if not stub:
+                continue
             normalized_entities.append(stub)
             for identity_key in self._entity_identity_keys(stub):
                 entity_index.setdefault(identity_key, stub)
@@ -1277,7 +1335,38 @@ class EnhancedWorldExtractor:
             "confirmed_entities": [],
             "last_completed_chunk": -1,
             "snapshot_stats": {},
+            "active_run_token": "",
         }
+
+    def _new_run_token(self) -> str:
+        return f"run_{uuid.uuid4().hex[:12]}"
+
+    def _activate_cache_run(self, cache: Dict[str, Any]) -> str:
+        run_token = self._new_run_token()
+        cache["active_run_token"] = run_token
+        return run_token
+
+    def _is_active_run_token(self, cache: Dict[str, Any], run_token: str) -> bool:
+        return bool(run_token) and str(cache.get("active_run_token") or "") == str(run_token)
+
+    def _interrupt_active_run(self, cache: Dict[str, Any], status: str) -> None:
+        now = datetime.now().isoformat()
+        cache["active_run_token"] = ""
+        cache["status"] = status
+        chunks = cache.get("chunks") or []
+        current_idx = cache.get("current_chunk_index")
+        for idx, record in enumerate(chunks):
+            if record.get("status") == "running":
+                record["status"] = "pending"
+                if idx == current_idx:
+                    record["error"] = ""
+        cache["current_chunk_status"] = status
+        cache["current_chunk_finished_at"] = now
+        cache["current_chunk_heartbeat_at"] = now
+
+    def _finalize_active_run(self, cache: Dict[str, Any], run_token: str) -> None:
+        if self._is_active_run_token(cache, run_token):
+            cache["active_run_token"] = ""
 
     def extract_from_text(self, text: str, progress_callback=None, extraction_mode: str = None, force_rebuild: bool = False, should_cancel=None, should_pause=None) -> Dict[str, Any]:
         """从文本提取世界观信息（统一大块切分 + Fast/Deep 缓存续传）。"""
@@ -1377,6 +1466,7 @@ class EnhancedWorldExtractor:
         for record in chunk_records:
             if record.get("status") in {"running", "failed"}:
                 record["status"] = "pending"
+        run_token = self._activate_cache_run(cache)
         all_results = [record.get("result") if record.get("status") == "completed" else None for record in chunk_records]
         completed_initial = sum(1 for item in all_results if item)
         logger.info(f"提取切分: {len(text)} 字符 -> {len(chunk_records)} 个大块，mode={mode}, cache={cache_key[:12]}, resumed={resumed_from_cache}")
@@ -1389,6 +1479,7 @@ class EnhancedWorldExtractor:
         if cache.get("status") == "completed" and cache.get("final_result") and not force_rebuild:
             final = cache["final_result"]
             final.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
+            self._finalize_active_run(cache, run_token)
             return final
 
         def process_record(record: Dict[str, Any], context_prefix: str = "") -> Tuple[int, Optional[Dict[str, Any]], str]:
@@ -1422,6 +1513,10 @@ class EnhancedWorldExtractor:
         completed_count = completed_initial
         processed_count = sum(1 for record in chunk_records if record.get("status") in {"completed", "failed"})
         heartbeat_interval = max(2, int(getattr(Config, "DEEP_EXTRACTION_HEARTBEAT_SECONDS", 5) or 5))
+        poll_interval = 0.25
+        stop_reason = ""
+        stop_requested = False
+        executor = None
 
         def format_elapsed(seconds: int) -> str:
             seconds = max(0, int(seconds or 0))
@@ -1431,17 +1526,26 @@ class EnhancedWorldExtractor:
                 return f"{seconds // 60}分{seconds % 60}秒"
             return f"{seconds}秒"
 
-        with ThreadPoolExecutor(max_workers=(1 if mode == "deep" else min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records))))) as executor:
+        def request_stop(reason: str) -> None:
+            nonlocal stop_reason, stop_requested
+            if stop_requested:
+                return
+            stop_requested = True
+            stop_reason = reason
+            self._interrupt_active_run(cache, reason)
+            self._save_cache(cache)
+
+        try:
+            executor = ThreadPoolExecutor(max_workers=(1 if mode == "deep" else min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records)))))
             if mode == "deep":
                 for record in pending_records:
                     if should_cancel and should_cancel():
-                        cache["status"] = "cancelled"
-                        self._save_cache(cache)
+                        request_stop("cancelled")
                         break
                     if should_pause and should_pause():
-                        cache["status"] = "paused"
-                        self._save_cache(cache)
+                        request_stop("paused")
                         break
+
                     snapshot, snapshot_stats = self._build_entity_snapshot(cache)
                     context_prefix = self._build_deep_context(cache.get("rolling_summary") or "", snapshot)
                     cache["current_chunk_index"] = int(record.get("index") or 0)
@@ -1459,88 +1563,102 @@ class EnhancedWorldExtractor:
                             f'DEEP 正在阅读 {cache["current_chunk_title"]}...',
                             self._progress_detail(cache, volume_profile, resumed_from_cache))
 
-                    heartbeat_stop = threading.Event()
                     chunk_started_monotonic = time.monotonic()
-                    chunk_title = cache["current_chunk_title"]
+                    last_heartbeat_monotonic = chunk_started_monotonic
+                    future = executor.submit(process_record, record, context_prefix)
+                    while True:
+                        if future.done():
+                            idx, result, error = future.result()
+                            if self._is_active_run_token(cache, run_token):
+                                self._checkpoint_chunk(cache, idx, result, error, deep_mode=True, snapshot_stats=snapshot_stats)
+                                all_results[idx] = result if result else None
+                                completed_count = sum(1 for item in all_results if item)
+                                processed_count = sum(1 for item in chunk_records if item.get("status") in {"completed", "failed"})
+                                if progress_callback:
+                                    progress_callback('extracting', 3 + int(processed_count / max(len(chunk_records), 1) * 85),
+                                        f'DEEP 大块 {processed_count}/{len(chunk_records)} 已处理（成功 {completed_count}）...',
+                                        self._progress_detail(cache, volume_profile, resumed_from_cache))
+                            break
 
-                    def emit_deep_heartbeat() -> None:
-                        while not heartbeat_stop.wait(heartbeat_interval):
-                            elapsed = int(time.monotonic() - chunk_started_monotonic)
+                        if should_cancel and should_cancel():
+                            request_stop("cancelled")
+                            break
+                        if should_pause and should_pause():
+                            request_stop("paused")
+                            break
+
+                        now_monotonic = time.monotonic()
+                        elapsed = int(now_monotonic - chunk_started_monotonic)
+                        if now_monotonic - last_heartbeat_monotonic >= heartbeat_interval and self._is_active_run_token(cache, run_token):
+                            last_heartbeat_monotonic = now_monotonic
                             cache["current_chunk_heartbeat_at"] = datetime.now().isoformat()
                             cache["current_chunk_heartbeat_count"] = int(cache.get("current_chunk_heartbeat_count") or 0) + 1
                             cache["current_chunk_elapsed_seconds"] = elapsed
                             cache["current_chunk_status"] = "running"
+                            self._save_cache(cache)
                             if progress_callback:
                                 progress_callback(
                                     'extracting',
                                     3 + int(processed_count / max(len(chunk_records), 1) * 85),
-                                    f'DEEP 正在阅读 {chunk_title}，当前块已运行 {format_elapsed(elapsed)}，等待模型返回...',
+                                    f'DEEP 正在阅读 {cache["current_chunk_title"]}，当前块已运行 {format_elapsed(elapsed)}，等待模型返回...',
                                     self._progress_detail(cache, volume_profile, resumed_from_cache),
                                 )
+                        time.sleep(poll_interval)
 
-                    heartbeat_thread = threading.Thread(target=emit_deep_heartbeat, daemon=True)
-                    heartbeat_thread.start()
-                    try:
-                        idx, result, error = process_record(record, context_prefix=context_prefix)
-                    finally:
-                        heartbeat_stop.set()
-                        heartbeat_thread.join(timeout=0.2)
-                    self._checkpoint_chunk(cache, idx, result, error, deep_mode=True, snapshot_stats=snapshot_stats)
-                    all_results[idx] = result if result else None
-                    completed_count = sum(1 for item in all_results if item)
-                    processed_count = sum(1 for item in chunk_records if item.get("status") in {"completed", "failed"})
-                    if progress_callback:
-                        progress_callback('extracting', 3 + int(processed_count / max(len(chunk_records), 1) * 85),
-                            f'DEEP 大块 {processed_count}/{len(chunk_records)} 已处理（成功 {completed_count}）...',
-                            self._progress_detail(cache, volume_profile, resumed_from_cache))
+                    if stop_requested:
+                        break
             else:
                 max_fast_workers = min(int(volume_profile.get("outer_workers") or self.OUTER_WORKERS), max(1, len(pending_records)))
                 record_iter = iter(pending_records)
                 futures = {}
-                stop_requested = False
 
                 def submit_next_records():
                     while not stop_requested and len(futures) < max_fast_workers:
                         if should_cancel and should_cancel():
-                            cache["status"] = "cancelled"
-                            self._save_cache(cache)
+                            request_stop("cancelled")
                             return
                         if should_pause and should_pause():
-                            cache["status"] = "paused"
-                            self._save_cache(cache)
+                            request_stop("paused")
                             return
                         try:
                             next_record = next(record_iter)
                         except StopIteration:
                             return
-                        futures[executor.submit(process_record, next_record)] = int(next_record.get("index") or 0)
+                        future = executor.submit(process_record, next_record)
+                        futures[future] = int(next_record.get("index") or 0)
 
                 submit_next_records()
                 while futures:
-                    done_futures, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
+                    done_futures, _ = wait(futures.keys(), timeout=poll_interval, return_when=FIRST_COMPLETED)
                     for future in done_futures:
                         futures.pop(future, None)
                         idx, result, error = future.result()
-                        self._checkpoint_chunk(cache, idx, result, error)
-                        all_results[idx] = result if result else None
-                        completed_count = sum(1 for item in all_results if item)
-                        processed_count = sum(1 for item in chunk_records if item.get("status") in {"completed", "failed"})
-                        if progress_callback:
-                            progress_callback('extracting', 3 + int(processed_count / max(len(chunk_records), 1) * 85),
-                                f'FAST 大块 {processed_count}/{len(chunk_records)} 已处理（成功 {completed_count}）...',
-                                self._progress_detail(cache, volume_profile, resumed_from_cache))
+                        if self._is_active_run_token(cache, run_token):
+                            self._checkpoint_chunk(cache, idx, result, error)
+                            all_results[idx] = result if result else None
+                            completed_count = sum(1 for item in all_results if item)
+                            processed_count = sum(1 for item in chunk_records if item.get("status") in {"completed", "failed"})
+                            if progress_callback:
+                                progress_callback('extracting', 3 + int(processed_count / max(len(chunk_records), 1) * 85),
+                                    f'FAST 大块 {processed_count}/{len(chunk_records)} 已处理（成功 {completed_count}）...',
+                                    self._progress_detail(cache, volume_profile, resumed_from_cache))
 
                     if should_cancel and should_cancel():
-                        cache["status"] = "cancelled"
-                        self._save_cache(cache)
-                        stop_requested = True
+                        request_stop("cancelled")
                     elif should_pause and should_pause():
-                        cache["status"] = "paused"
-                        self._save_cache(cache)
-                        stop_requested = True
+                        request_stop("paused")
 
-                    if not stop_requested:
-                        submit_next_records()
+                    if stop_requested:
+                        break
+                    submit_next_records()
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+            if stop_requested:
+                self._finalize_active_run(cache, run_token)
+            elif self._is_active_run_token(cache, run_token):
+                self._finalize_active_run(cache, run_token)
+                self._save_cache(cache)
 
         successful = [r for r in all_results if r is not None]
         failed_chunks = [
@@ -1555,8 +1673,8 @@ class EnhancedWorldExtractor:
         ]
         cache.setdefault("diagnostics", {})["failed_chunks"] = failed_chunks
         cache.setdefault("diagnostics", {})["pending_chunks"] = pending_chunks
-        cancelled = bool(cache.get("status") == "cancelled" or (should_cancel and should_cancel()))
-        paused = bool(cache.get("status") == "paused" or (should_pause and should_pause()))
+        cancelled = bool(stop_reason == "cancelled" or cache.get("status") == "cancelled" or (should_cancel and should_cancel()))
+        paused = bool(stop_reason == "paused" or cache.get("status") == "paused" or (should_pause and should_pause()))
         if cancelled:
             cache["status"] = "cancelled"
             self._save_cache(cache)
@@ -1594,7 +1712,7 @@ class EnhancedWorldExtractor:
             raise ValueError("所有大块提取均失败: " + " | ".join(self.errors))
 
         if progress_callback:
-            progress_callback('merging', 88, f'正在保存已提取的 {len(successful)}/{len(chunk_records)} 个大块结果...' if (cancelled or paused) else f'正在合并 {len(successful)}/{len(chunk_records)} 个大块结果...', self._progress_detail(cache, volume_profile, resumed_from_cache))
+            progress_callback('merging', 88, f'正在保存已提取的 {len(successful)}/{len(chunk_records)} 个大块结果...' if paused else f'正在合并 {len(successful)}/{len(chunk_records)} 个大块结果...', self._progress_detail(cache, volume_profile, resumed_from_cache))
         style_data = self._empty_style_payload()
         merged = self._merge_extractions(successful)
         merged["settings"] = self._normalize_settings(merged.get("settings") or {})
@@ -1615,25 +1733,21 @@ class EnhancedWorldExtractor:
         merged = self._finalize_extraction(merged)
         merged["extraction_diagnostics"] = {**merged.get("extraction_diagnostics", {}), **cache.get("diagnostics", {})}
         merged.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
-        if not (cancelled or paused):
+        if not paused:
             if progress_callback:
                 progress_callback('validating', 94, '正在质量验证并补充明显遗漏...', self._progress_detail(cache, volume_profile, resumed_from_cache))
             merged = self.validate_extraction(merged)
             merged = self._finalize_extraction(merged)
             merged["extraction_diagnostics"] = {**merged.get("extraction_diagnostics", {}), **cache.get("diagnostics", {})}
             merged.update(self._cache_result_fields(cache, volume_profile, resumed_from_cache))
-        if cancelled:
-            merged.setdefault("extraction_diagnostics", {})["cancelled"] = True
-            merged["cancelled"] = True
-            merged["cache_status"] = "cancelled"
         if paused:
             merged.setdefault("extraction_diagnostics", {})["paused"] = True
             merged["paused"] = True
             merged["cache_status"] = "paused"
         cache["final_result"] = merged
-        cache["status"] = "cancelled" if cancelled else ("paused" if paused else ("completed" if not failed_chunks else "partial"))
+        cache["status"] = "paused" if paused else ("completed" if not failed_chunks else "partial")
         self._save_cache(cache)
-        logger.info(f"提取{'中断保存' if cancelled else ('暂停保存' if paused else '完成')}: {len(merged.get('entities', []))} 实体, {len(merged.get('events', []))} 事件 ({len(successful)}/{len(chunk_records)})")
+        logger.info(f"提取{'暂停保存' if paused else '完成'}: {len(merged.get('entities', []))} 实体, {len(merged.get('events', []))} 事件 ({len(successful)}/{len(chunk_records)})")
         return merged
 
     def resume_from_cache(self, cache_key: str, progress_callback=None, should_cancel=None, should_pause=None) -> Dict[str, Any]:
