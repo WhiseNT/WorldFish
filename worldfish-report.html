@@ -1,0 +1,2284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>/* ========================================================================
+   nt-md2html - Default Theme (Claude Light)
+   Based on CLAUDE-DESIGN.md - Warm-canvas editorial interface
+   ======================================================================== */
+
+:root {
+  /* Typography */
+  --mhs-font-sans: "StyreneB", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", Helvetica, Arial, sans-serif;
+  --mhs-font-serif: "Copernicus", "Tiempos Headline", "Cormorant Garamond", "EB Garamond", "Times New Roman", Georgia, serif;
+  --mhs-font-mono: "JetBrains Mono", Consolas, "Fira Code", "Cascadia Code", Monaco, "Courier New", monospace;
+
+  /* Border Radius */
+  --mhs-radius-xs: 4px;
+  --mhs-radius-sm: 6px;
+  --mhs-radius-md: 8px;
+  --mhs-radius-lg: 12px;
+  --mhs-radius-xl: 16px;
+  --mhs-radius-pill: 9999px;
+  --mhs-radius-full: 50%;
+
+  /* Spacing */
+  --mhs-spacing-xxs: 4px;
+  --mhs-spacing-xs: 8px;
+  --mhs-spacing-sm: 12px;
+  --mhs-spacing-md: 16px;
+  --mhs-spacing-lg: 24px;
+  --mhs-spacing-xl: 32px;
+  --mhs-spacing-xxl: 48px;
+  --mhs-spacing-section: 96px;
+
+  /* Shadows - Minimal per Claude Design */
+  --mhs-shadow-subtle: 0 1px 3px rgba(20, 20, 19, 0.08);
+
+  /* Colors - Brand & Accent */
+  --mhs-primary: #cc785c;
+  --mhs-primary-active: #a9583e;
+  --mhs-primary-disabled: #e6dfd8;
+  --mhs-accent-teal: #5db8a6;
+  --mhs-accent-amber: #e8a55a;
+  
+  /* Colors - Semantic */
+  --mhs-success: #5db872;
+  --mhs-warning: #d4a017;
+  --mhs-error: #c64545;
+
+  /* Colors - Surface (Light) */
+  --mhs-bg-canvas: #faf9f5;
+  --mhs-bg-surface-soft: #f5f0e8;
+  --mhs-bg-surface-card: #efe9de;
+  --mhs-bg-surface-cream-strong: #e8e0d2;
+  --mhs-bg-surface-dark: #181715;
+  --mhs-bg-surface-dark-elevated: #252320;
+  --mhs-bg-surface-dark-soft: #1f1e1b;
+  
+  --mhs-border-hairline: #e6dfd8;
+  --mhs-border-hairline-soft: #ebe6df;
+
+  /* Colors - Text */
+  --mhs-fg-ink: #141413;
+  --mhs-fg-body-strong: #252523;
+  --mhs-fg-body: #3d3d3a;
+  --mhs-fg-muted: #6c6a64;
+  --mhs-fg-muted-soft: #8e8b82;
+  --mhs-fg-on-primary: #ffffff;
+  --mhs-fg-on-dark: #faf9f5;
+  --mhs-fg-on-dark-soft: #a09d96;
+
+  /* Typography Scales */
+  --mhs-font-display-xl: 64px;
+  --mhs-font-display-lg: 48px;
+  --mhs-font-display-md: 36px;
+  --mhs-font-display-sm: 28px;
+  --mhs-font-title-lg: 24px;
+  --mhs-font-title-md: 20px;
+  --mhs-font-title-sm: 18px;
+  --mhs-font-body-md: 17px;
+  --mhs-font-body-sm: 15px;
+  --mhs-font-caption: 13px;
+  --mhs-font-code: 14px;
+  --mhs-font-button: 16px;
+}
+
+html { background: var(--mhs-bg-canvas); }
+body { margin: 0; padding: 0; min-height: 100vh; }
+
+.nt-md2html-content {
+  max-width: 1200px; /* Claude centers up to ~1200px */
+  margin: 0 auto;
+  padding: var(--mhs-spacing-xxl) var(--mhs-spacing-lg);
+  font-family: var(--mhs-font-sans);
+  font-size: var(--mhs-font-body-md);
+  line-height: 1.55;
+  color: var(--mhs-fg-body);
+  background: var(--mhs-bg-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Typography */
+.nt-md2html-content h1, 
+.nt-md2html-content h2, 
+.nt-md2html-content h3 {
+  font-family: var(--mhs-font-serif);
+  font-weight: 400;
+  color: var(--mhs-fg-ink);
+}
+
+.nt-md2html-content h1 {
+  font-size: var(--mhs-font-display-xl);
+  letter-spacing: -1.5px;
+  line-height: 1.05;
+  margin: var(--mhs-spacing-section) 0 var(--mhs-spacing-xl);
+}
+
+.nt-md2html-content h2 {
+  font-size: var(--mhs-font-display-lg);
+  letter-spacing: -1.0px;
+  line-height: 1.1;
+  margin: var(--mhs-spacing-section) 0 var(--mhs-spacing-lg);
+  border-bottom: none; /* Claude Design relies on whitespace, not lines, for basic H2. But if needed, use hairline */
+}
+
+.nt-md2html-content h3 {
+  font-size: var(--mhs-font-display-md);
+  letter-spacing: -0.5px;
+  line-height: 1.15;
+  margin: var(--mhs-spacing-xxl) 0 var(--mhs-spacing-md);
+}
+
+.nt-md2html-content h4 {
+  font-family: var(--mhs-font-sans);
+  font-size: var(--mhs-font-title-lg);
+  font-weight: 500;
+  line-height: 1.3;
+  margin: var(--mhs-spacing-xl) 0 var(--mhs-spacing-md);
+  color: var(--mhs-fg-body-strong);
+}
+
+.nt-md2html-content p { margin: 0 0 var(--mhs-spacing-md); }
+
+/* Links */
+.nt-md2html-content a { 
+  color: var(--mhs-primary); 
+  text-decoration: none; 
+  border-bottom: 1px solid transparent; 
+  transition: border-color 0.2s; 
+}
+.nt-md2html-content a:hover { border-bottom: 1px solid var(--mhs-primary); }
+
+/* Code */
+.nt-md2html-content code {
+  font-family: var(--mhs-font-mono);
+  font-size: 0.875em;
+  background: var(--mhs-bg-surface-cream-strong);
+  color: var(--mhs-fg-ink);
+  padding: 0.2em 0.4em;
+  border-radius: var(--mhs-radius-xs);
+}
+.nt-md2html-content pre {
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-code);
+  background: var(--mhs-bg-surface-dark);
+  color: var(--mhs-fg-on-dark);
+  padding: var(--mhs-spacing-lg);
+  border-radius: var(--mhs-radius-lg);
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.6;
+  margin: var(--mhs-spacing-md) 0 var(--mhs-spacing-xl);
+}
+.nt-md2html-content pre code { background: none; color: inherit; padding: 0; }
+
+/* ========================================================================
+   SYNTAX HIGHLIGHTING (Pygments - VS Code Light+ theme)
+   Token classes use prefix: mhs-hl-
+   ======================================================================== */
+
+.mhs-highlight {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: var(--mhs-spacing-lg);
+  border-radius: var(--mhs-radius-lg);
+  overflow-x: auto;
+  font-size: var(--mhs-font-code);
+  font-family: var(--mhs-font-mono);
+  margin: var(--mhs-spacing-md) 0 var(--mhs-spacing-xl);
+  position: relative;
+}
+.mhs-highlight > pre {
+  white-space: pre;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Comments & Docstrings */
+.mhs-highlight .mhs-hl-c,
+.mhs-highlight .mhs-hl-c1,
+.mhs-highlight .mhs-hl-ch,
+.mhs-highlight .mhs-hl-cm,
+.mhs-highlight .mhs-hl-cp,
+.mhs-highlight .mhs-hl-cs,
+.mhs-highlight .mhs-hl-s,
+.mhs-highlight .mhs-hl-sa,
+.mhs-highlight .mhs-hl-sb,
+.mhs-highlight .mhs-hl-sc,
+.mhs-highlight .mhs-hl-sd,
+.mhs-highlight .mhs-hl-se,
+.mhs-highlight .mhs-hl-sh,
+.mhs-highlight .mhs-hl-si,
+.mhs-highlight .mhs-hl-sr,
+.mhs-highlight .mhs-hl-ss,
+.mhs-highlight .mhs-hl-ss2,
+.mhs-highlight .mhs-hl-sv,
+.mhs-highlight .mhs-hl-sx {
+  color: #6a9955;
+  font-style: italic;
+}
+
+/* Keywords (def, class, import, return, if, else, etc.) */
+.mhs-highlight .mhs-hl-k,
+.mhs-highlight .mhs-hl-kc {
+  color: #569cd6;
+}
+.mhs-highlight .mhs-hl-kd,
+.mhs-highlight .mhs-hl-kn,
+.mhs-highlight .mhs-hl-kp,
+.mhs-highlight .mhs-hl-kr,
+.mhs-highlight .mhs-hl-kt {
+  color: #569cd6;
+}
+.mhs-highlight .mhs-hl-o,
+.mhs-highlight .mhs-hl-ow {
+  color: #c586c0;
+}
+
+/* Strings */
+.mhs-highlight .mhs-hl-s1,
+.mhs-highlight .mhs-hl-s2,
+.mhs-highlight .mhs-hl-sb,
+.mhs-highlight .mhs-hl-sc,
+.mhs-highlight .mhs-hl-sd,
+.mhs-highlight .mhs-hl-se,
+.mhs-highlight .mhs-hl-sh,
+.mhs-highlight .mhs-hl-si,
+.mhs-highlight .mhs-hl-sr,
+.mhs-highlight .mhs-hl-ss,
+.mhs-highlight .mhs-hl-ss2,
+.mhs-highlight .mhs-hl-sv,
+.mhs-highlight .mhs-hl-sx {
+  color: #ce9178;
+}
+
+/* Numbers, Constants, Booleans */
+.mhs-highlight .mhs-hl-mb,
+.mhs-highlight .mhs-hl-mf,
+.mhs-highlight .mhs-hl-mh,
+.mhs-highlight .mhs-hl-mi,
+.mhs-highlight .mhs-hl-mo,
+.mhs-highlight .mhs-hl-il,
+.mhs-highlight .mhs-hl-no {
+  color: #b5cea8;
+}
+
+/* Variables & Properties */
+.mhs-highlight .mhs-hl-nx { color: #9cdcfe; }
+.mhs-highlight .mhs-hl-nv { color: #9cdcfe; }
+.mhs-highlight .mhs-hl-na { color: #dcdcaa; }
+
+/* Functions & Methods */
+.mhs-highlight .mhs-hl-nf { color: #dcdcaa; }
+.mhs-highlight .mhs-hl-nfm { color: #dcdcaa; }
+.mhs-highlight .mhs-hl-fm { color: #dcdcaa; }
+.mhs-highlight .mhs-hl-func { color: #dcdcaa; }
+
+/* Built-in / Special Names */
+.mhs-highlight .mhs-hl-nb { color: #4fc1ff; }
+.mhs-highlight .mhs-hl-bp { color: #4fc1ff; }
+.mhs-highlight .mhs-hl-nc { color: #4ec9b0; }
+.mhs-highlight .mhs-hl-ne { color: #ce9178; }
+.mhs-highlight .mhs-hl-vc { color: #4fc1ff; }
+.mhs-highlight .mhs-hl-vg { color: #569cd6; }
+.mhs-highlight .mhs-hl-vi { color: #4ec9b0; }
+.mhs-highlight .mhs-hl-vm { color: #569cd6; }
+.mhs-highlight .mhs-hl-w { color: #d4d4d4; }
+
+/* Decorators, Attributes, Annotations */
+.mhs-highlight .mhs-hl-decorator,
+.mhs-highlight .mhs-hl-at,
+.mhs-highlight .mhs-hl-ad,
+.mhs-highlight .mhs-hl-nd { color: #dcdcaa; }
+
+/* Operators & Punctuation */
+.mhs-highlight .mhs-hl-p,
+.mhs-highlight .mhs-hl-py { color: inherit; }
+
+/* Types & Classes */
+.mhs-highlight .mhs-hl-gp { color: #569cd6; font-weight: bold; }
+.mhs-highlight .mhs-hl-go { color: #6a9955; font-style: italic; }
+.mhs-highlight .mhs-hl-gt { color: #4ec9b0; }
+.mhs-highlight .mhs-hl-gu { color: #c586c0; font-weight: bold; }
+.mhs-highlight .mhs-hl-gd { color: #ce9178; }
+.mhs-highlight .mhs-hl-gi { color: #6a9955; }
+.mhs-highlight .mhs-hl-gs { color: #dcdcaa; font-weight: bold; }
+.mhs-highlight .mhs-hl-gr { color: #808080; }
+.mhs-highlight .mhs-hl-gh { color: #569cd6; }
+
+/* Error / Exception */
+.mhs-highlight .mhs-hl-err { color: #f44747; background: rgba(244, 71, 71, 0.15); }
+
+/* Generic fallback */
+.mhs-highlight .mhs-hl-g { color: inherit; }
+
+/* Tables */
+.nt-md2html-content table {
+  width: 100%; border-collapse: separate; border-spacing: 0; margin: var(--mhs-spacing-xl) 0;
+  border: 1px solid var(--mhs-border-default); border-radius: var(--mhs-radius-md);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.nt-md2html-content th, .nt-md2html-content td {
+  padding: var(--mhs-spacing-md) var(--mhs-spacing-lg);
+  border-bottom: 1px solid var(--mhs-border-hairline);
+  border-right: 1px solid var(--mhs-border-hairline);
+  text-align: left;
+}
+.nt-md2html-content th { 
+  background: var(--mhs-bg-surface-soft); 
+  color: var(--mhs-fg-ink); 
+  font-weight: 600; 
+  border-bottom: 2px solid var(--mhs-border-default);
+}
+.nt-md2html-content th:last-child, .nt-md2html-content td:last-child {
+  border-right: none;
+}
+.nt-md2html-content tr:last-child td { border-bottom: none; }
+.nt-md2html-content tr:hover td {
+  background: var(--mhs-bg-surface-hover);
+}
+.nt-md2html-content .mhs-card table {
+  margin: var(--mhs-spacing-md) 0;
+  border-color: var(--mhs-border-hairline);
+}
+.nt-md2html-content .mhs-card th {
+  background: rgba(204, 120, 92, 0.08);
+  border-bottom-color: var(--mhs-border-hairline);
+}
+
+/* Lists & HR */
+.nt-md2html-content ul, .nt-md2html-content ol { margin: 0 0 var(--mhs-spacing-md); padding-left: 2em; }
+.nt-md2html-content hr { border: 0; height: 1px; background: var(--mhs-border-hairline); margin: var(--mhs-spacing-section) 0; }
+
+/* ========================================================================
+   WIDGETS
+   ======================================================================== */
+
+/* Cards (Feature Card) */
+.mhs-card {
+  background: var(--mhs-bg-surface-card);
+  border: none;
+  border-radius: var(--mhs-radius-lg);
+  padding: var(--mhs-spacing-xl);
+  margin: var(--mhs-spacing-xl) 0;
+}
+.mhs-card-title { font-size: var(--mhs-font-title-md); font-weight: 500; color: var(--mhs-fg-ink); margin-bottom: var(--mhs-spacing-sm); }
+.mhs-card-body { color: var(--mhs-fg-body); }
+
+/* Alerts */
+.mhs-alert {
+  display: flex; align-items: flex-start;
+  border-radius: var(--mhs-radius-md);
+  padding: var(--mhs-spacing-lg);
+  margin: var(--mhs-spacing-lg) 0;
+  gap: var(--mhs-spacing-md);
+  border: 1px solid var(--mhs-border-hairline);
+  background: var(--mhs-bg-surface-soft);
+}
+.mhs-alert-info { border-left: 4px solid var(--mhs-accent-teal); }
+.mhs-alert-warning { border-left: 4px solid var(--mhs-warning); }
+.mhs-alert-danger { border-left: 4px solid var(--mhs-error); }
+.mhs-alert-success { border-left: 4px solid var(--mhs-success); }
+
+.mhs-alert-icon { font-size: 1.4em; line-height: 1.2; }
+.mhs-alert-body { flex: 1; }
+.mhs-alert-body strong { display: block; font-weight: 500; color: var(--mhs-fg-ink); margin-bottom: 4px; font-size: 1.05em; }
+
+/* Callout (Coral / Muted) */
+.mhs-callout {
+    display: flex; gap: var(--mhs-spacing-sm);
+    background: var(--mhs-primary-disabled);
+    border-radius: var(--mhs-radius-md);
+    padding: var(--mhs-spacing-md) var(--mhs-spacing-lg);
+    margin: var(--mhs-spacing-md) 0;
+    border-left: 4px solid var(--mhs-primary);
+  }
+.mhs-callout-icon { font-size: 1.4em; margin-top: -2px;}
+.mhs-callout-title { font-size: var(--mhs-font-title-sm); font-weight: 600; color: var(--mhs-fg-ink); margin-bottom: 2px; }
+.mhs-callout-body { color: var(--mhs-fg-body); font-size: var(--mhs-font-body-sm); line-height: 1.5; }
+/* Badge */
+.mhs-badge {
+  display: inline-block; padding: 4px 12px; font-size: var(--mhs-font-caption);
+  font-weight: 500; border-radius: var(--mhs-radius-pill); vertical-align: middle;
+}
+.mhs-badge-default { background: var(--mhs-bg-surface-card); color: var(--mhs-fg-ink); }
+.mhs-badge-primary { background: var(--mhs-primary); color: var(--mhs-fg-on-primary); text-transform: uppercase; letter-spacing: 1.5px; font-size: 12px;}
+.mhs-badge-success { background: var(--mhs-success); color: #fff; }
+.mhs-badge-warning { background: var(--mhs-warning); color: #fff; }
+.mhs-badge-danger { background: var(--mhs-error); color: #fff; }
+.mhs-badge-info { background: var(--mhs-accent-teal); color: #fff; }
+
+/* ========================================================================
+   WIDGETS (EXTENDED FROM HTML-GEN)
+   ======================================================================== */
+
+/* Drag Card */
+.mhs-drag-card {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  padding: var(--mhs-spacing-lg);
+  margin: var(--mhs-spacing-md) 0;
+  position: relative;
+  transition: box-shadow 0.2s;
+}
+.mhs-drag-card:hover { box-shadow: var(--mhs-shadow-subtle); }
+.mhs-drag-handle {
+  position: absolute; top: var(--mhs-spacing-sm); right: var(--mhs-spacing-sm);
+  cursor: grab; color: var(--mhs-fg-muted-soft); font-size: 18px;
+}
+
+/* Grid Layout */
+.mhs-grid { display: grid; margin: var(--mhs-spacing-xl) 0; }
+
+/* Hero Section */
+.mhs-hero {
+  display: flex; gap: var(--mhs-spacing-xxl); align-items: center;
+  padding: var(--mhs-spacing-section) 0; margin-bottom: var(--mhs-spacing-section);
+}
+.mhs-hero-content { flex: 1; }
+.mhs-hero-content h1 { font-size: var(--mhs-font-display-xl); margin: 0 0 var(--mhs-spacing-md); }
+.mhs-hero-subtitle { font-size: var(--mhs-font-title-md); color: var(--mhs-fg-muted); margin-bottom: var(--mhs-spacing-xl); }
+.mhs-hero-visual { flex: 1; display: flex; justify-content: center; }
+
+/* Chart Bits */
+.mhs-chart-container { background: var(--mhs-bg-surface-soft); padding: var(--mhs-spacing-lg); border-radius: var(--mhs-radius-lg); margin: var(--mhs-spacing-lg) 0; }
+.mhs-chart-title { font-weight: 500; margin-bottom: var(--mhs-spacing-md); text-align: center; }
+.mhs-chart-bars { display: flex; flex-direction: column; gap: 8px; }
+
+/* Inputs */
+.mhs-input-group { margin-bottom: var(--mhs-spacing-md); }
+.mhs-input-group label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; color: var(--mhs-fg-ink); }
+.mhs-input {
+  width: 100%; padding: 10px 14px; border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-md); background: var(--mhs-bg-canvas);
+  color: var(--mhs-fg-ink); font-family: var(--mhs-font-sans); transition: border-color 0.2s;
+}
+.mhs-input:focus { outline: none; border-color: var(--mhs-primary); ring: 2px solid var(--mhs-primary-disabled); }
+
+/* Exploration Patterns (HTML Effectiveness Inspired) */
+.mhs-exploration {
+    margin: var(--mhs-spacing-lg) 0;
+    padding-bottom: var(--mhs-spacing-lg);
+    border-bottom: 1px solid var(--mhs-border-hairline-soft);
+  }
+  .mhs-exploration-header { display: flex; align-items: baseline; gap: var(--mhs-spacing-md); margin-bottom: var(--mhs-spacing-md); }
+  .mhs-num { font-family: var(--mhs-font-serif); font-size: var(--mhs-font-title-lg); color: var(--mhs-primary); opacity: 0.8; }
+  .mhs-exploration-title { margin: 0; font-size: var(--mhs-font-title-md) !important; letter-spacing: -0.2px; font-weight: 500; }  
+  /* Steps Pattern */
+.mhs-steps {
+  display: grid;
+  gap: var(--mhs-spacing-lg);
+  margin: var(--mhs-spacing-xxl) 0;
+  padding: var(--mhs-spacing-xl);
+  background: var(--mhs-bg-surface-soft);
+  border-radius: var(--mhs-radius-lg);
+}
+.mhs-step {
+  display: flex;
+  gap: var(--mhs-spacing-md);
+  padding: var(--mhs-spacing-md);
+  background: var(--mhs-bg-canvas);
+  border-radius: var(--mhs-radius-md);
+  border: 1px solid var(--mhs-border-hairline-soft);
+  transition: box-shadow 0.2s;
+}
+.mhs-step:hover {
+  box-shadow: var(--mhs-shadow-subtle);
+}
+.mhs-step.active {
+  border-color: var(--mhs-primary);
+  background: rgba(204, 120, 92, 0.05);
+}
+.mhs-step-number {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-title-md);
+  font-weight: 600;
+  color: var(--mhs-primary);
+  background: var(--mhs-bg-surface-card);
+  border-radius: var(--mhs-radius-full);
+}
+.mhs-step.active .mhs-step-number {
+  background: var(--mhs-primary);
+  color: var(--mhs-fg-on-primary);
+}
+.mhs-step-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mhs-step-title {
+  font-weight: 600;
+  font-size: var(--mhs-font-title-sm);
+  color: var(--mhs-fg-ink);
+  margin-bottom: 2px;
+}
+.mhs-step-description {
+  font-size: var(--mhs-font-body-sm);
+  color: var(--mhs-fg-body);
+  line-height: 1.5;
+}
+.mhs-comparison-grid {
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  overflow: hidden;
+  margin: var(--mhs-spacing-lg) 0;
+}
+.mhs-comparison-header {
+  display: flex; background: var(--mhs-bg-surface-card);
+  border-bottom: 1px solid var(--mhs-border-hairline);
+  font-weight: 500; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;
+}
+.pro-head, .con-head { flex: 1; padding: 12px 20px; }
+.pro-head { border-right: 1px solid var(--mhs-border-hairline); color: var(--mhs-success); }
+.con-head { color: var(--mhs-error); }
+
+.mhs-comparison-row { display: flex; border-bottom: 1px solid var(--mhs-border-hairline-soft); }
+.mhs-comparison-row:last-child { border-bottom: none; }
+.pro-cell, .con-cell { flex: 1; padding: 16px 20px; font-size: 15px; }
+.pro-cell { border-right: 1px solid var(--mhs-border-hairline-soft); position: relative; }
+.pro-cell::before { content: "✓"; color: var(--mhs-success); margin-right: 8px; }
+.con-cell::before { content: "✗"; color: var(--mhs-error); margin-right: 8px; }
+
+/* Metric Block & Badge Group */
+.mhs-metrics-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: var(--mhs-spacing-md) 0;
+}
+
+.mhs-metric-block {
+  display: inline-flex; flex-direction: column; 
+  padding: 12px 20px; 
+  background: var(--mhs-bg-surface-card); 
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-md); 
+  min-width: 120px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  transition: transform 0.2s ease;
+}
+.mhs-metric-block:hover { transform: translateY(-2px); }
+.mhs-metric-title { font-size: 11px; color: var(--mhs-fg-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.mhs-metric-value { font-family: var(--mhs-font-mono); font-size: 18px; font-weight: 600; color: var(--mhs-primary); }
+
+.mhs-badge-group {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mhs-metric-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--mhs-primary-soft);
+  color: var(--mhs-primary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* Terminal Window */
+.mhs-terminal {
+  background: #1e1e1e; border-radius: var(--mhs-radius-md); overflow: hidden;
+  margin: var(--mhs-spacing-lg) 0; border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+.mhs-terminal-header {
+  background: #2d2d2d; padding: 10px 16px; display: flex; align-items: center; gap: 8px;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot-r { background: #ff5f56; }
+.dot-y { background: #ffbd2e; }
+.dot-g { background: #27c93f; }
+.mhs-terminal-title { color: #888; font-size: 12px; margin-left: 8px; font-family: var(--mhs-font-mono); }
+.mhs-terminal-body { padding: 16px; color: #d4d4d4; font-family: var(--mhs-font-mono); font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+.mhs-terminal-body pre { margin: 0; background: transparent !important; padding: 0 !important; }
+
+/* Prompt Block */
+.mhs-prompt-block {
+  background: var(--mhs-bg-surface-card); border-left: 4px solid var(--mhs-primary);
+  padding: 24px; border-radius: var(--mhs-radius-md); margin: var(--mhs-spacing-lg) 0;
+  box-shadow: var(--mhs-shadow-sm);
+}
+.mhs-prompt-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--mhs-primary);
+  letter-spacing: 0.1em; margin-bottom: 8px;
+}
+.mhs-prompt-content { font-family: var(--mhs-font-serif); font-size: 18px; line-height: 1.5; color: var(--mhs-fg-ink); }
+
+/* Recommendation Section */
+.mhs-recommendation {
+  background: linear-gradient(to right, #fdfaf5, var(--mhs-bg-canvas));
+  border: 1px solid var(--mhs-border-hairline); border-radius: var(--mhs-radius-lg);
+  padding: 32px; margin: var(--mhs-spacing-xl) 0;
+}
+.mhs-rec-title { margin-top: 0; color: var(--mhs-primary); font-size: 1.25rem; }
+.mhs-rec-body { color: var(--mhs-fg-default); font-size: 1.05rem; line-height: 1.7; }
+.mhs-rec-item { margin: 0.5em 0; }
+.mhs-rec-item:first-child { margin-top: 0; }
+.mhs-rec-item:last-child { margin-bottom: 0; }
+
+/* Buttons */
+.mhs-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 12px 20px; font-size: var(--mhs-font-button); font-weight: 500;
+  border-radius: var(--mhs-radius-md); cursor: pointer; transition: all 0.2s;
+  text-decoration: none !important; border: 1px solid transparent; height: 40px;
+}
+/* SPECIFICITY FIX: Ensure button colors override general a tag */
+a.mhs-btn.mhs-btn-primary, .nt-md2html-content a.mhs-btn.mhs-btn-primary, .mhs-btn.mhs-btn-primary { 
+  background: var(--mhs-primary); color: var(--mhs-fg-on-primary) !important; border-bottom: none; 
+}
+a.mhs-btn.mhs-btn-primary:hover, .nt-md2html-content a.mhs-btn.mhs-btn-primary:hover, .mhs-btn.mhs-btn-primary:hover { 
+  background: var(--mhs-primary-active); color: var(--mhs-fg-on-primary) !important; border-bottom: none; 
+}
+
+a.mhs-btn.mhs-btn-secondary, .nt-md2html-content a.mhs-btn.mhs-btn-secondary, .mhs-btn.mhs-btn-secondary { 
+  background: var(--mhs-bg-canvas); border: 1px solid var(--mhs-border-hairline); color: var(--mhs-fg-ink) !important; border-bottom: 1px solid var(--mhs-border-hairline); 
+}
+a.mhs-btn.mhs-btn-secondary:hover, .nt-md2html-content a.mhs-btn.mhs-btn-secondary:hover, .mhs-btn.mhs-btn-secondary:hover { 
+  background: var(--mhs-bg-surface-soft); color: var(--mhs-fg-ink) !important; 
+}
+
+/* Quote */
+.mhs-quote { text-align: center; margin: var(--mhs-spacing-section) 0; padding: var(--mhs-spacing-xxl) 0; position: relative; }
+.mhs-quote::before { content: "❝"; font-family: var(--mhs-font-serif); font-size: 80px; color: var(--mhs-border-hairline-soft); position: absolute; top: 0px; left: 50%; transform: translateX(-50%); z-index: -1; line-height: 1; }
+.mhs-quote-text { font-family: var(--mhs-font-serif); font-size: var(--mhs-font-display-sm); color: var(--mhs-fg-ink); line-height: 1.4; margin-bottom: var(--mhs-spacing-lg); }
+.mhs-quote-author { font-size: var(--mhs-font-body-sm); color: var(--mhs-fg-muted); }
+
+/* Columns */
+.mhs-columns { display: grid; gap: var(--mhs-spacing-xl); margin: var(--mhs-spacing-xxl) 0; }
+.mhs-columns.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.mhs-columns.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+/* Feature Grid */
+.mhs-feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--mhs-spacing-lg); margin: var(--mhs-spacing-xxl) 0; }
+.mhs-feature-card { background: var(--mhs-bg-surface-card); border-radius: var(--mhs-radius-lg); padding: var(--mhs-spacing-xl); }
+.mhs-feature-icon { font-size: 28px; margin-bottom: var(--mhs-spacing-md); color: var(--mhs-primary); }
+.mhs-feature-title { font-weight: 500; font-size: var(--mhs-font-title-md); color: var(--mhs-fg-ink); margin-bottom: var(--mhs-spacing-xs); }
+.mhs-feature-description { font-size: var(--mhs-font-body-md); color: var(--mhs-fg-body); line-height: 1.55; }
+
+/* Stats */
+.mhs-stats { display: flex; gap: var(--mhs-spacing-xxl); flex-wrap: wrap; margin: var(--mhs-spacing-xxl) 0; padding: var(--mhs-spacing-xxl); background: var(--mhs-bg-surface-soft); border-radius: var(--mhs-radius-lg); justify-content: center; }
+.mhs-stat-item { text-align: center; }
+.mhs-stat-value { font-family: var(--mhs-font-serif); font-size: var(--mhs-font-display-lg); color: var(--mhs-primary); line-height: 1; margin-bottom: var(--mhs-spacing-sm); }
+.mhs-stat-label { font-size: var(--mhs-font-caption); font-weight: 500; color: var(--mhs-fg-muted); }
+
+/* Progress */
+.mhs-progress { width: 100%; height: 8px; background: var(--mhs-border-hairline); border-radius: var(--mhs-radius-pill); overflow: hidden; margin: var(--mhs-spacing-md) 0; }
+.mhs-progress-bar { height: 100%; background: var(--mhs-primary); border-radius: var(--mhs-radius-pill); transition: width 0.5s ease; }
+
+/* Timeline */
+.mhs-timeline { margin: var(--mhs-spacing-xxl) 0; position: relative; }
+.mhs-timeline::before { content: ''; position: absolute; top: 0; bottom: 0; left: 60px; width: 1px; background: var(--mhs-border-hairline); }
+.mhs-timeline-item { display: flex; position: relative; margin-bottom: var(--mhs-spacing-xl); }
+.mhs-timeline-time { width: 45px; flex-shrink: 0; font-family: var(--mhs-font-mono); font-size: 13px; color: var(--mhs-fg-muted-soft); text-align: right; padding-top: 2px; }
+.mhs-timeline-marker { width: 12px; height: 12px; border-radius: 50%; background: var(--mhs-bg-canvas); border: 2px solid var(--mhs-primary); position: absolute; left: 52px; top: 5px; z-index: 2; }
+.mhs-timeline-content { margin-left: 24px; flex: 1; padding: var(--mhs-spacing-lg); background: var(--mhs-bg-surface-card); border-radius: var(--mhs-radius-lg); }
+.mhs-timeline-title { font-weight: 500; font-size: var(--mhs-font-title-md); color: var(--mhs-fg-ink); margin-bottom: var(--mhs-spacing-xs); }
+.mhs-timeline-body { font-size: var(--mhs-font-body-md); color: var(--mhs-fg-body); }
+
+/* Tooltip */
+.mhs-tooltip { position: relative; cursor: help; border-bottom: 1px dashed var(--mhs-fg-muted-soft); color: var(--mhs-fg-body-strong); }
+.mhs-tooltip:hover::after { content: attr(data-tooltip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%) translateY(-8px); background: var(--mhs-bg-surface-dark); color: var(--mhs-fg-on-dark); padding: 8px 12px; font-size: 13px; border-radius: var(--mhs-radius-md); white-space: nowrap; z-index: 100; box-shadow: var(--mhs-shadow-subtle); pointer-events: none; }
+
+/* Kanban Board */
+.mhs-kanban { display: flex; gap: var(--mhs-spacing-lg); margin: var(--mhs-spacing-xxl) 0; overflow-x: auto; padding-bottom: var(--mhs-spacing-md); }
+.mhs-kanban-col { flex: 1; min-width: 280px; background: var(--mhs-bg-surface-soft); border-radius: var(--mhs-radius-lg); padding: var(--mhs-spacing-md); }
+.mhs-kanban-col-header { font-weight: 500; font-size: var(--mhs-font-title-sm); color: var(--mhs-fg-ink); padding: var(--mhs-spacing-xs) var(--mhs-spacing-sm); margin-bottom: var(--mhs-spacing-sm); display: flex; justify-content: space-between; align-items: center; }
+.mhs-ticket { background: var(--mhs-bg-surface-card); border-radius: var(--mhs-radius-md); padding: var(--mhs-spacing-md); margin-bottom: var(--mhs-spacing-sm); cursor: grab; }
+.mhs-ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--mhs-spacing-xs); }
+.mhs-ticket-id { font-family: var(--mhs-font-mono); font-size: 12px; color: var(--mhs-fg-muted-soft); }
+.mhs-ticket-title { font-weight: 500; font-size: 14px; color: var(--mhs-fg-ink); margin-bottom: var(--mhs-spacing-xs); line-height: 1.4; }
+.mhs-ticket-body { font-size: 13px; color: var(--mhs-fg-muted); }
+
+/* =======================================================================
+   MODAL & PANEL (Interactive Components)
+   ======================================================================== */
+
+/* Shared Toggle & Overlay */
+.mhs-modal-toggle,
+.mhs-panel-toggle { display: none; }
+
+.mhs-modal-overlay,
+.mhs-panel-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.mhs-modal-toggle:checked + .mhs-modal-overlay,
+.mhs-panel-toggle:checked + .mhs-panel-overlay {
+  opacity: 1; pointer-events: auto;
+}
+
+.mhs-modal-backdrop,
+.mhs-panel-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(20, 20, 19, 0.45);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+
+/* Modal */
+.mhs-modal {
+  position: relative; z-index: 1001;
+  background: var(--mhs-bg-surface-card);
+  border-radius: var(--mhs-radius-xl);
+  box-shadow: 0 20px 60px rgba(20, 20, 19, 0.25);
+  max-width: 560px; width: calc(100% - 48px);
+  max-height: 80vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  transform: scale(0.96) translateY(12px);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mhs-modal-toggle:checked + .mhs-modal-overlay .mhs-modal {
+  transform: scale(1) translateY(0);
+}
+
+.mhs-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--mhs-spacing-lg) var(--mhs-spacing-xl);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+  flex-shrink: 0;
+}
+
+.mhs-modal-title { font-size: var(--mhs-font-title-md); font-weight: 500; color: var(--mhs-fg-ink); }
+
+.mhs-modal-close {
+  width: 32px; height: 32px; border-radius: var(--mhs-radius-full);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; color: var(--mhs-fg-muted); cursor: pointer;
+  transition: background 0.2s, color 0.2s; line-height: 1;
+}
+
+.mhs-modal-close:hover { background: var(--mhs-bg-surface-soft); color: var(--mhs-fg-ink); }
+
+.mhs-modal-body {
+  padding: var(--mhs-spacing-xl);
+  overflow-y: auto; flex: 1;
+  font-size: var(--mhs-font-body-md); color: var(--mhs-fg-body); line-height: 1.6;
+}
+
+.mhs-modal-footer {
+  padding: var(--mhs-spacing-md) var(--mhs-spacing-xl);
+  border-top: 1px solid var(--mhs-border-hairline-soft);
+  display: flex; justify-content: flex-end; gap: var(--mhs-spacing-sm);
+  flex-shrink: 0;
+}
+
+.mhs-modal-trigger { cursor: pointer; }
+
+/* Panel / Drawer */
+.mhs-panel {
+  position: fixed; z-index: 1001;
+  background: var(--mhs-bg-surface-card);
+  box-shadow: -10px 0 40px rgba(20, 20, 19, 0.2);
+  max-width: 420px; width: 85vw;
+  height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mhs-panel-right { top: 0; right: 0; transform: translateX(100%); }
+.mhs-panel-left { top: 0; left: 0; transform: translateX(-100%); box-shadow: 10px 0 40px rgba(20, 20, 19, 0.2); }
+.mhs-panel-bottom { bottom: 0; left: 0; right: 0; width: 100%; max-width: none; height: auto; max-height: 60vh; transform: translateY(100%); box-shadow: 0 -10px 40px rgba(20, 20, 19, 0.2); }
+
+.mhs-panel-toggle:checked + .mhs-panel-overlay .mhs-panel-right,
+.mhs-panel-toggle:checked + .mhs-panel-overlay .mhs-panel-left {
+  transform: translateX(0);
+}
+
+.mhs-panel-toggle:checked + .mhs-panel-overlay .mhs-panel-bottom {
+  transform: translateY(0);
+}
+
+.mhs-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--mhs-spacing-lg) var(--mhs-spacing-xl);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+  flex-shrink: 0;
+}
+
+.mhs-panel-title { font-size: var(--mhs-font-title-md); font-weight: 500; color: var(--mhs-fg-ink); }
+
+.mhs-panel-close {
+  width: 32px; height: 32px; border-radius: var(--mhs-radius-full);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; color: var(--mhs-fg-muted); cursor: pointer;
+  transition: background 0.2s, color 0.2s; line-height: 1;
+}
+
+.mhs-panel-close:hover { background: var(--mhs-bg-surface-soft); color: var(--mhs-fg-ink); }
+
+.mhs-panel-body {
+  padding: var(--mhs-spacing-xl);
+  overflow-y: auto; flex: 1;
+  font-size: var(--mhs-font-body-md); color: var(--mhs-fg-body); line-height: 1.6;
+}
+
+.mhs-panel-footer {
+  padding: var(--mhs-spacing-md) var(--mhs-spacing-xl);
+  border-top: 1px solid var(--mhs-border-hairline-soft);
+  display: flex; justify-content: flex-end; gap: var(--mhs-spacing-sm);
+  flex-shrink: 0;
+}
+
+.mhs-panel-trigger { cursor: pointer; }
+
+/* Mermaid Charts - inspired by html-effectiveness flowchart style */
+.mhs-mermaid {
+  margin: var(--mhs-spacing-xxl) 0;
+  background: #ffffff;
+  border: 1.5px solid var(--mhs-border-hairline);
+  border-radius: 14px;
+  padding: 28px;
+  overflow-x: auto;
+}
+
+.mhs-mermaid pre {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+}
+
+.mhs-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mhs-mermaid svg text {
+  font-size: 14px !important;
+  fill: #141413 !important;
+}
+
+.mhs-mermaid svg .nodeLabel,
+.mhs-mermaid svg .edgeLabel,
+.mhs-mermaid svg span.nodeLabel,
+.mhs-mermaid svg div.nodeLabel,
+.mhs-mermaid svg foreignObject div {
+  color: #141413 !important;
+  fill: #141413 !important;
+}
+
+/* ========================================================================
+   STATUS REPORT COMPONENTS (Engineering Status Report)
+   Inspired by: https://thariqs.github.io/html-effectiveness/11-status-report.html
+   ======================================================================== */
+
+/* Status Report Header */
+.mhs-status-header {
+  margin: var(--mhs-spacing-xxl) 0 var(--mhs-spacing-xl);
+  padding-bottom: var(--mhs-spacing-lg);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+}
+.mhs-status-header-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mhs-spacing-md);
+  flex-wrap: wrap;
+}
+.mhs-status-title {
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-display-lg);
+  font-weight: 400;
+  letter-spacing: -0.8px;
+  color: var(--mhs-fg-ink);
+  margin: 0 !important;
+  line-height: 1.15;
+}
+.mhs-status-tag {
+  display: inline-block;
+  font-size: var(--mhs-font-caption);
+  font-weight: 500;
+  color: var(--mhs-fg-muted);
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  padding: 2px 10px;
+  border-radius: var(--mhs-radius-pill);
+  letter-spacing: 0.3px;
+}
+.mhs-status-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--mhs-spacing-md);
+  margin-top: var(--mhs-spacing-sm);
+  font-size: var(--mhs-font-body-sm);
+  color: var(--mhs-fg-muted);
+}
+.mhs-status-date {
+  color: var(--mhs-fg-body);
+}
+.mhs-status-repo {
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted-soft);
+  background: var(--mhs-bg-surface-soft);
+  padding: 2px 8px;
+  border-radius: var(--mhs-radius-xs);
+}
+
+/* KPI Row & Cards */
+.mhs-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--mhs-spacing-md);
+  margin: var(--mhs-spacing-xl) 0;
+}
+@media (max-width: 768px) {
+  .mhs-kpi-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+.mhs-kpi-card {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  padding: var(--mhs-spacing-lg) var(--mhs-spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.mhs-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(20, 20, 19, 0.08);
+}
+.mhs-kpi-value {
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-title-lg);
+  font-weight: 400;
+  color: var(--mhs-fg-ink);
+  line-height: 1.2;
+}
+.mhs-kpi-label {
+  font-size: var(--mhs-font-caption);
+  font-weight: 500;
+  color: var(--mhs-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.mhs-kpi-delta {
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-caption);
+  font-weight: 600;
+  margin-top: 2px;
+}
+.mhs-kpi-delta.up { color: var(--mhs-success); }
+.mhs-kpi-delta.down { color: var(--mhs-error); }
+.mhs-kpi-delta.neutral { color: var(--mhs-fg-muted); }
+.mhs-kpi-sub {
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted-soft);
+  margin-top: 2px;
+}
+
+/* Highlights Section */
+.mhs-highlights {
+  margin: var(--mhs-spacing-xxl) 0;
+}
+.mhs-highlights-title {
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-display-md);
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--mhs-fg-ink);
+  margin: 0 0 var(--mhs-spacing-md) !important;
+  padding-bottom: var(--mhs-spacing-sm);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+}
+.mhs-highlights-body {
+  padding: var(--mhs-spacing-md) 0;
+}
+.mhs-highlights-body ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.mhs-highlights-body li {
+  position: relative;
+  padding-left: var(--mhs-spacing-lg);
+  margin-bottom: var(--mhs-spacing-md);
+  font-size: var(--mhs-font-body-md);
+  line-height: 1.65;
+  color: var(--mhs-fg-body);
+}
+.mhs-highlights-body li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mhs-primary);
+}
+.mhs-highlights-body li strong {
+  color: var(--mhs-fg-ink);
+  font-weight: 600;
+}
+
+/* Velocity Chart */
+.mhs-velocity {
+  margin: var(--mhs-spacing-xxl) 0;
+  background: var(--mhs-bg-surface-soft);
+  border-radius: var(--mhs-radius-lg);
+  padding: var(--mhs-spacing-lg);
+}
+.mhs-velocity-header {
+  margin-bottom: var(--mhs-spacing-md);
+}
+.mhs-velocity-title {
+  font-family: var(--mhs-font-sans);
+  font-size: var(--mhs-font-title-md);
+  font-weight: 500;
+  color: var(--mhs-fg-ink);
+  margin: 0 !important;
+}
+.mhs-velocity-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 6px;
+  height: 160px;
+  padding: var(--mhs-spacing-sm) 0;
+  border-bottom: 1px solid var(--mhs-border-hairline);
+}
+.mhs-velocity-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+}
+.mhs-vbar-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 0;
+}
+.mhs-vbar {
+  width: 100%;
+  max-width: 48px;
+  background: var(--mhs-primary);
+  border-radius: var(--mhs-radius-sm) var(--mhs-radius-sm) 0 0;
+  min-height: 4px;
+  position: relative;
+  transition: opacity 0.2s;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 4px;
+}
+.mhs-vbar:hover {
+  opacity: 0.85;
+}
+.mhs-vbar-value {
+  font-family: var(--mhs-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.mhs-vbar:hover .mhs-vbar-value {
+  opacity: 1;
+}
+.mhs-vbar-day {
+  margin-top: 6px;
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted-soft);
+  text-align: center;
+  white-space: nowrap;
+}
+.mhs-velocity-labels {
+  margin-top: var(--mhs-spacing-sm);
+}
+.mhs-velocity-note {
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted-soft);
+  line-height: 1.5;
+}
+
+/* Carryover Section */
+.mhs-carryover {
+  margin: var(--mhs-spacing-xxl) 0;
+}
+.mhs-carryover-title {
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-display-md);
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--mhs-fg-ink);
+  margin: 0 0 var(--mhs-spacing-lg) !important;
+  padding-bottom: var(--mhs-spacing-sm);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+}
+.mhs-carryover-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--mhs-spacing-md);
+}
+@media (max-width: 768px) {
+  .mhs-carryover-grid { grid-template-columns: 1fr; }
+}
+.mhs-carryover-item {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-md);
+  padding: var(--mhs-spacing-md);
+  transition: transform 0.2s ease;
+}
+.mhs-carryover-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(20, 20, 19, 0.06);
+}
+.mhs-carryover-item-header {
+  margin-bottom: var(--mhs-spacing-xs);
+}
+.mhs-carryover-status {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  letter-spacing: 0.3px;
+  padding: 2px 10px;
+  border-radius: var(--mhs-radius-pill);
+}
+.mhs-carryover-In-review {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.mhs-carryover-Blocked {
+  background: #fef3c7;
+  color: #92400e;
+}
+.mhs-carryover-Slipped {
+  background: var(--mhs-bg-surface-cream-strong);
+  color: var(--mhs-fg-muted);
+}
+.mhs-carryover-default {
+  background: var(--mhs-bg-surface-soft);
+  color: var(--mhs-fg-muted);
+}
+.mhs-carryover-item-title {
+  font-weight: 500;
+  font-size: var(--mhs-font-body-sm);
+  color: var(--mhs-fg-ink);
+  margin-bottom: 4px;
+}
+.mhs-carryover-item-desc {
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted);
+  line-height: 1.5;
+}
+.mhs-carryover-item-assignee {
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted-soft);
+  margin-top: 4px;
+}
+
+/* ========================================================================
+   SVG ILLUSTRATION COMPONENTS
+   Inspired by: https://thariqs.github.io/html-effectiveness/10-svg-illustrations.html
+   Flat-fill hand-drawn SVGs, palette-locked, self-contained.
+   ======================================================================== */
+
+/* SVG Figure - main illustration container */
+.mhs-svg-figure {
+  margin: var(--mhs-spacing-xxl) 0;
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  overflow: hidden;
+  background: var(--mhs-bg-canvas);
+}
+.mhs-svg-figure.full-width {
+  max-width: none;
+  width: 100%;
+}
+.mhs-svg-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mhs-spacing-lg);
+  background: #faf9f5;
+  min-height: 200px;
+  overflow: hidden;
+  border-radius: var(--mhs-radius-md);
+}
+.mhs-svg-wrap svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  overflow: hidden;
+}
+
+/* SVG Caption */
+.mhs-svg-caption {
+  padding: var(--mhs-spacing-sm) var(--mhs-spacing-lg);
+  border-top: 1px solid var(--mhs-border-hairline-soft);
+  font-size: var(--mhs-font-body-sm);
+  color: var(--mhs-fg-muted);
+  line-height: 1.5;
+}
+.mhs-svg-meta {
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted-soft);
+}
+
+/* SVG Inline Icon */
+.mhs-svg-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.mhs-svg-inline svg {
+  display: block;
+  width: 1em;
+  height: 1em;
+}
+.mhs-svg-inline.sm { font-size: 14px; }
+.mhs-svg-inline.md { font-size: 20px; }
+.mhs-svg-inline.lg { font-size: 28px; }
+.mhs-svg-inline.xl { font-size: 40px; }
+
+/* SVG Palette Variables (for use inside inline <style> blocks in SVGs)
+   Reference colors from html-effectiveness design system:
+   --svg-ivory:    #FAF9F5
+   --svg-slate:    #141413
+   --svg-clay:     #D97757
+   --svg-olive:    #788C5D
+   --svg-oat:      #E3DACC
+   --svg-gray150:  #F0EEE6
+   --svg-gray300:  #D1CFC5
+   --svg-gray500:  #87867F
+*/
+
+/* ========================================================================
+   IMPLEMENTATION PLAN COMPONENTS
+   Inspired by: https://thariqs.github.io/html-effectiveness/16-implementation-plan.html
+   Structured planning docs with milestones, risks, mockups, and decisions.
+   ======================================================================== */
+
+/* Plan Header - reuse status-report widget */
+
+/* Numbered Section */
+.mhs-numbered-section {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mhs-spacing-lg);
+  margin: var(--mhs-spacing-xxl) 0 var(--mhs-spacing-xl);
+  padding-top: var(--mhs-spacing-lg);
+  border-top: 2px solid var(--mhs-border-hairline-soft);
+}
+.mhs-ns-num {
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-title-lg);
+  font-weight: 600;
+  color: var(--mhs-fg-muted-soft);
+  line-height: 1;
+  min-width: 3ch;
+}
+.mhs-ns-title {
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-display-md);
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--mhs-fg-ink);
+  margin: 0 !important;
+}
+
+/* Milestone Card */
+.mhs-milestone {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  padding: var(--mhs-spacing-lg);
+  margin-bottom: var(--mhs-spacing-md);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.mhs-milestone:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(20, 20, 19, 0.06);
+}
+.mhs-milestone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--mhs-spacing-xs);
+  margin-bottom: var(--mhs-spacing-xs);
+}
+.mhs-milestone-time {
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-caption);
+  font-weight: 500;
+  color: var(--mhs-primary);
+  letter-spacing: 0.3px;
+}
+.mhs-milestone-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mhs-milestone-title {
+  font-family: var(--mhs-font-sans);
+  font-size: var(--mhs-font-title-sm);
+  font-weight: 600;
+  color: var(--mhs-fg-ink);
+  margin: var(--mhs-spacing-xs) 0 var(--mhs-spacing-sm) !important;
+}
+.mhs-milestone-body {
+  font-size: var(--mhs-font-body-sm);
+  color: var(--mhs-fg-body);
+  line-height: 1.65;
+}
+.mhs-milestone-body ul,
+.mhs-milestone-body ol {
+  margin: var(--mhs-spacing-xs) 0;
+  padding-left: var(--mhs-spacing-lg);
+}
+
+/* Mockup Card - reuse svg widget with label/caption params */
+
+/* Risk Table - use standard markdown table with severity styling */
+
+/* Open Question */
+.mhs-open-q {
+  background: var(--mhs-bg-surface-card);
+  border-left: 3px solid var(--mhs-primary);
+  border-radius: 0 var(--mhs-radius-sm) var(--mhs-radius-sm) 0;
+  padding: var(--mhs-spacing-md) var(--mhs-spacing-lg);
+  margin-bottom: var(--mhs-spacing-md);
+}
+.mhs-open-q-text {
+  font-size: var(--mhs-font-body-md);
+  font-weight: 500;
+  color: var(--mhs-fg-ink);
+  margin: 0 0 var(--mhs-spacing-xs) !important;
+  line-height: 1.5;
+}
+.mhs-open-q-decision {
+  font-size: var(--mhs-font-caption);
+  color: var(--mhs-fg-muted);
+}
+
+/* Eval Code Executor */
+.mhs-eval {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  overflow: hidden;
+  margin: var(--mhs-spacing-lg) 0;
+  box-shadow: var(--mhs-shadow-subtle);
+}
+.mhs-eval-header {
+  background: var(--mhs-bg-surface-soft);
+  padding: var(--mhs-spacing-sm) var(--mhs-spacing-md);
+  border-bottom: 1px solid var(--mhs-border-hairline);
+  display: flex;
+  align-items: center;
+  gap: var(--mhs-spacing-sm);
+}
+.mhs-eval-label {
+  font-size: var(--mhs-font-caption);
+  font-weight: 500;
+  color: var(--mhs-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.mhs-eval-input,
+.mhs-eval-output {
+  padding: var(--mhs-spacing-md);
+  font-family: var(--mhs-font-mono);
+  font-size: var(--mhs-font-code);
+  line-height: 1.6;
+}
+.mhs-eval-input {
+  background: var(--mhs-bg-surface-dark);
+  color: var(--mhs-fg-on-dark);
+  border-bottom: 1px solid var(--mhs-border-hairline);
+}
+.mhs-eval-input pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.mhs-eval-output {
+  background: var(--mhs-bg-canvas);
+  color: var(--mhs-fg-body);
+}
+.mhs-eval-output pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+/* ========================================================================
+   MISSING COMPONENT STYLES (TOC, Avatar, Tabs, Details, Kbd, etc.)
+   ======================================================================== */
+
+/* TOC - Table of Contents */
+.mhs-toc {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  padding: var(--mhs-spacing-lg);
+  margin: var(--mhs-spacing-xl) 0;
+}
+.mhs-toc-title {
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-title-md);
+  font-weight: 500;
+  color: var(--mhs-fg-ink);
+  margin-bottom: var(--mhs-spacing-md);
+  padding-bottom: var(--mhs-spacing-sm);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+}
+.mhs-toc ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.mhs-toc ol {
+  padding-left: var(--mhs-spacing-lg);
+  margin: 0;
+}
+.mhs-toc li {
+  margin: var(--mhs-spacing-xs) 0;
+}
+.mhs-toc a {
+  color: var(--mhs-fg-body);
+  text-decoration: none;
+  display: block;
+  padding: 2px 0;
+  transition: color 0.2s;
+}
+.mhs-toc a:hover {
+  color: var(--mhs-primary);
+}
+.mhs-toc li > ul, .mhs-toc li > ol {
+  margin-top: var(--mhs-spacing-xs);
+  padding-left: var(--mhs-spacing-lg);
+}
+
+/* Avatar */
+.mhs-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--mhs-radius-full);
+  background: var(--mhs-bg-surface-card);
+  border: 2px solid var(--mhs-border-hairline);
+  font-family: var(--mhs-font-serif);
+  font-size: var(--mhs-font-title-sm);
+  font-weight: 600;
+  color: var(--mhs-fg-ink);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.mhs-avatar.sm { width: 28px; height: 28px; font-size: 12px; }
+.mhs-avatar.lg { width: 56px; height: 56px; font-size: var(--m-font-title-lg); }
+.mhs-avatar.xl { width: 72px; height: 72px; font-size: var(--mhs-font-display-sm); }
+
+/* Tabs Component */
+.mhs-tabs {
+  margin: var(--mhs-spacing-xl) 0;
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-lg);
+  overflow: hidden;
+  background: var(--mhs-bg-canvas);
+}
+.mhs-tabs-list {
+  display: flex;
+  background: var(--mhs-bg-surface-soft);
+  border-bottom: 1px solid var(--mhs-border-hairline);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mhs-tabs-list::-webkit-scrollbar { display: none; }
+.mhs-tab-btn {
+  padding: var(--mhs-spacing-sm) var(--mhs-spacing-lg);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-family: var(--mhs-font-sans);
+  font-size: var(--mhs-font-body-sm);
+  font-weight: 500;
+  color: var(--mhs-fg-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.mhs-tab-btn:hover { color: var(--mhs-fg-body); background: rgba(0,0,0,0.03); }
+.mhs-tab-btn.active { color: var(--mhs-primary); border-bottom-color: var(--mhs-primary); }
+.mhs-tab-panel {
+  padding: var(--mhs-spacing-lg);
+  display: none;
+}
+.mhs-tab-panel:first-child { display: block; }
+
+/* Details / Accordion */
+.mhs-details {
+  background: var(--mhs-bg-surface-card);
+  border: 1px solid var(--mhs-border-hairline);
+  border-radius: var(--mhs-radius-md);
+  padding: var(--mhs-spacing-md) var(--mhs-spacing-lg);
+  margin: var(--mhs-spacing-md) 0;
+}
+.mhs-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--mhs-fg-ink);
+  outline: none;
+  padding: var(--mhs-spacing-xs) 0;
+}
+.mhs-details summary::-webkit-details-marker { 
+  color: var(--mhs-primary); 
+}
+.mhs-details[open] summary {
+  margin-bottom: var(--mhs-spacing-md);
+  border-bottom: 1px solid var(--mhs-border-hairline-soft);
+  padding-bottom: var(--mhs-spacing-sm);
+}
+.mhs-details-body {
+  color: var(--mhs-fg-body);
+  font-size: var(--mhs-font-body-sm);
+  line-height: 1.6;
+}
+
+/* Keyboard Key */
+.mhs-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  background: var(--mhs-bg-surface-dark-elevated);
+  color: var(--mhs-fg-on-dark-soft);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--mhs-radius-xs);
+  font-family: var(--mhs-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.3);
+  vertical-align: middle;
+  line-height: 1;
+}
+
+/* Chart Container - fix for bar chart orientation */
+.mhs-chart-bars {
+  flex-direction: row !important;
+  align-items: flex-end !important;
+  gap: 8px;
+  min-height: 200px;
+  padding: var(--mhs-spacing-md) 0;
+}
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ 
+  startOnLoad: true,
+  theme: 'default',
+  themeVariables: {
+    primaryColor: '#4A90D9',
+    primaryTextColor: '#ffffff',
+    primaryBorderColor: '#3a7bc8',
+    lineColor: '#87867F',
+    secondaryColor: '#50C878',
+    tertiaryColor: '#FF6B6B',
+    quaternaryColor: '#F5A623',
+    fontSize: '14px'
+  },
+  flowchart: { useMaxWidth: true, curve: 'basis' },
+  mindmap: {
+    useMaxWidth: true,
+    padding: 20,
+    nodeMaxWidth: 200
+  },
+  sequenceDiagram: { wrap: true, width: 200 }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const svgs = document.querySelectorAll('.mhs-mermaid svg');
+    svgs.forEach(svg => {
+      const texts = svg.querySelectorAll('text');
+      texts.forEach(t => {
+        if (!t.getAttribute('fill') || t.getAttribute('fill') === 'none' || t.getAttribute('fill') === 'transparent') {
+          t.setAttribute('fill', '#141413');
+        }
+      });
+      const foreignObjects = svg.querySelectorAll('foreignObject');
+      foreignObjects.forEach(fo => {
+        fo.style.overflow = 'visible';
+        const divs = fo.querySelectorAll('div.nodeLabel');
+        divs.forEach(d => {
+          d.style.color = '#141413';
+          d.style.fontSize = '14px';
+        });
+      });
+    });
+  }, 500);
+});
+</script>
+</head>
+<body>
+<article class="nt-md2html-content">
+<section class="mhs-hero"><div class="mhs-hero-content"><h1>WorldFish（创世鱼缸）</h1><p class="mhs-hero-subtitle">AI 驱动的世界观构建平台 · 世界推演引擎 · 互动叙事与 TRPG 跑团平台</p><div class="mhs-hero-actions"><p><strong>报告口径</strong>：本文以 WorldFish（创世鱼缸）未来成熟形态为分析对象，服务于品牌化运营、市场定位、融资/合作沟通与产品路线规划。</p>
+<p><strong>商业化方向</strong>：<span class="mhs-badge mhs-badge-success"></span>[MIT 开源单人核心] + <span class="mhs-badge mhs-badge-warning"></span>[闭源云端协作/联机平台]</p>
+</div></div><div class="mhs-hero-visual"></div></section>
+<hr>
+<h2 id="目录">目录</h2>
+<h2 id="mhswitch-ph-3"><div class="mhs-toc"><div class="mhs-toc-title">目录</div></div></h2>
+<h2 id="核心摘要">核心摘要</h2>
+<div class="mhs-callout mhs-callout-info"><div class="mhs-callout-icon">🐟</div><div><div class="mhs-callout-title">品牌核心定位</div><div class="mhs-callout-body"><p>WorldFish（创世鱼缸）是我正在开发的面向创作者、开发者、叙事团队与互动娱乐用户的 <strong>AI 驱动型世界观构建与推演平台</strong>。</p>
+</div></div></div>
+<p>我的长期愿景不是做单一的 TRPG 工具，也不是普通 AI 写作助手，而是构建一个围绕「<strong>创造世界、理解世界、推演世界、进入世界</strong>」的完整创作与互动生态。</p>
+<p>在我规划的成熟形态中，WorldFish 将由 <strong>三大核心能力</strong> 构成：</p>
+<div class="mhs-feature-grid"><div class="mhs-feature-card"><div class="mhs-feature-icon">🌍</div><div class="mhs-feature-title">AI 驱动的世界观构建平台</div><div class="mhs-feature-description">用户可以通过自然语言、设定文档、小说正文、游戏策划案、剧本、PDF、Markdown 等资料输入，由 AI 自动提取人物、地点、组织、势力、事件、规则体系等世界观元素，并生成结构化、可编辑、可检索、可协作的世界观数据库。</div></div>
+<div class="mhs-feature-card"><div class="mhs-feature-icon">🔮</div><div class="mhs-feature-title">世界推演引擎</div><div class="mhs-feature-description">用户可以基于既有世界观提出推演问题，系统将根据世界观设定、实体关系、时间线、冲突压力、资源分布与叙事风格进行多轮推演，生成因果链、事件分支、实体状态变化、时间线更新和剧情指导建议。</div></div>
+<div class="mhs-feature-card"><div class="mhs-feature-icon">🎭</div><div class="mhs-feature-title">互动叙事与 TRPG 跑团平台</div><div class="mhs-feature-description">在世界观与推演能力之上，承载 TRPG 跑团、多人互动叙事、AI Dungeon Master、角色扮演、虚拟桌面、剧情分支探索、用户共创世界等场景，使创作者不仅能「写出世界」，还能「运行世界」和「进入世界」。</div></div>
+</div>
+<div class="mhs-card"><div class="mhs-card-title">总体判断</div><div class="mhs-card-body"><p>WorldFish（创世鱼缸）具备成为<strong>中文创作者世界观基础设施</strong>的潜力。其长期竞争力不在于单点 AI 生成，而在于构建一个围绕「世界」的创作、推演和互动平台。</p>
+</div></div>
+<p>从我对市场格局的观察来看，全球和国内都缺少一款真正打通「<strong>世界观构建 — 世界推演 — 互动叙事/跑团</strong>」的一体化平台。海外产品如 World Anvil、LoreKeeper、Friends &amp; Fables、Foundry VTT 分别在结构化世界观管理、AI 世界观辅助、AI 跑团、虚拟桌面生态方面形成优势，但往往只覆盖链路中的一部分；国内产品则更多聚焦 AI 剧情生成、轻量化跑团或泛娱乐文字互动，缺少面向专业创作者与内容团队的世界观资产平台。</p>
+<hr>
+<h2 id="1-项目背景与研究方法论">1. 项目背景与研究方法论</h2>
+<h3 id="11-研究目标">1.1 研究目标</h3>
+<p>本报告旨在为 WorldFish（创世鱼缸）的品牌化运营、产品定位与市场发展策略提供支撑，重点回答以下问题：</p>
+<ul>
+<li>WorldFish 未来成熟形态应如何定位；</li>
+<li>它与现有世界观工具、AI 写作工具、TRPG 平台和互动叙事产品有何区别；</li>
+<li>国内外同类产品的能力边界与市场短板在哪里；</li>
+<li>WorldFish 在国内市场有哪些差异化机会；</li>
+<li>「MIT 开源单人核心 + 闭源云平台」的商业模式是否可行；</li>
+<li>品牌化运营阶段应优先强调哪些卖点。</li>
+</ul>
+<h3 id="12-核心定义">1.2 核心定义</h3>
+<div class="mhs-quote"><div class="mhs-quote-icon">"</div><div class="mhs-quote-text"><p><strong>WorldFish（创世鱼缸）是一个 AI 驱动的世界观构建、世界推演与互动叙事平台。它帮助用户创造一个世界、整理一个世界、推演一个世界，并最终让用户进入这个世界。</strong></p>
+</div><div class="mhs-quote-author">WorldFish 品牌定义</div></div>
+<p>这里的「世界观」不只指 TRPG 模组，而是泛指所有需要设定体系和叙事逻辑支撑的内容资产，包括：</p>
+<div class="mhs-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;"><ul>
+<li>游戏世界观</li>
+<li>小说世界观</li>
+<li>影视动画设定</li>
+<li>漫画与 IP 宇宙</li>
+<li>TRPG 跑团世界</li>
+<li>虚拟角色与虚拟偶像背景</li>
+<li>品牌故事宇宙</li>
+<li>历史架空模拟</li>
+<li>教育与社会沙盘</li>
+<li>AI Agent 所处的虚拟环境</li>
+<li>用户共创的多人互动世界</li>
+</ul>
+</div>
+<h3 id="13-worldfish-的市场边界">1.3 WorldFish 的市场边界</h3>
+<p>我规划的成熟产品形态可拆分为 <strong>四层架构</strong>：</p>
+<div class="mhs-steps"><div class="mhs-step "><div class="mhs-step-number">1</div><div class="mhs-step-title">世界观资产层</div><div class="mhs-step-description">管理人物、地点、组织、势力、事件、规则、文化、历史、历法、地图等基础资料，解决资料分散、关系混乱、设定不一致等问题。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">2</div><div class="mhs-step-title">AI 构建层</div><div class="mhs-step-description">通过 AI 从用户输入的自然语言、文档、小说、剧本、策划案等内容中提取结构化世界观，降低从零搭建的高成本。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">3</div><div class="mhs-step-title">世界推演层</div><div class="mhs-step-description">基于世界观数据进行多轮推演，回答「如果……会怎样」的问题，生成剧情分支、历史演化、势力变化和世界状态更新。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">4</div><div class="mhs-step-title">互动运行层</div><div class="mhs-step-description">支持多人协作、联机跑团、互动叙事、AI DM、AI NPC、角色扮演、虚拟桌面、场景生成与世界共创。</div></div>
+</div>
+<hr>
+<h2 id="2-worldfish-产品愿景与能力体系">2. WorldFish 产品愿景与能力体系</h2>
+<h3 id="21-品牌定位">2.1 品牌定位</h3>
+<div class="mhs-callout mhs-callout-info"><div class="mhs-callout-icon">🎯</div><div><div class="mhs-callout-title">品牌定位语</div><div class="mhs-callout-body"><p><strong>WorldFish 创世鱼缸：让你的世界自己生长。</strong></p>
+</div></div></div>
+<p>我认为 WorldFish 的品牌中文名「创世鱼缸」具有很强的隐喻价值：</p>
+<ul>
+<li>「<strong>创世</strong>」代表世界的生成、创造和设定；</li>
+<li>「<strong>鱼缸</strong>」代表一个可观察、可干预、可演化的封闭世界系统；</li>
+<li>用户既是 <strong>造物主</strong>，也是 <strong>观察者</strong>、<strong>导演</strong>、<strong>主持人</strong> 和 <strong>参与者</strong>。</li>
+</ul>
+<p>我推荐的品牌定位语包括：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>定位语</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通用版</td>
+<td>WorldFish 是一个 <strong>AI 驱动的世界观构建与推演平台</strong>。</td>
+</tr>
+<tr>
+<td>创作者版</td>
+<td>把你的设定文档变成一个 <strong>可推演、可协作、可运行</strong> 的世界。</td>
+</tr>
+<tr>
+<td>游戏版</td>
+<td>为游戏世界观、阵营关系和剧情分支提供 <strong>AI 推演引擎</strong>。</td>
+</tr>
+<tr>
+<td>小说版</td>
+<td>帮长篇作者管理 <strong>人物、势力、时间线和设定一致性</strong>。</td>
+</tr>
+<tr>
+<td>TRPG 版</td>
+<td>让主持人用 AI 构建世界、推演剧情，并带玩家 <strong>进入其中</strong>。</td>
+</tr>
+<tr>
+<td>品牌版</td>
+<td><strong>创造一个世界，然后让它自己生长。</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-成熟产品能力总览">2.2 成熟产品能力总览</h3>
+<table>
+<thead>
+<tr>
+<th>能力模块</th>
+<th>成熟形态能力</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[世界观生成]</td>
+<td>从一句话、故事梗概、文档、小说、剧本、策划案中生成完整世界框架</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[结构化管理]</td>
+<td>管理人物、组织、地点、事件、规则、文化、历史、地图、历法、物品、能力等</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[资料导入]</td>
+<td>支持 TXT、Markdown、PDF、Word、表格、网页、知识库等资料来源</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[AI 提取]</td>
+<td>从长文本中自动提取世界观元素，并按类别整理为可编辑数据</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[RAG 知识库]</td>
+<td>将原始资料沉淀为可检索知识库，为问答、推演和一致性检查提供上下文</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[知识图谱]</td>
+<td>可视化人物关系、势力关系、事件链、地理关系和设定关联</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[逻辑校验]</td>
+<td>检查设定冲突、时间线矛盾、人物行为不一致、规则体系漏洞</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[世界推演]</td>
+<td>基于设定进行多轮演化，生成剧情分支、历史变化、势力变迁和实体状态变化</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[剧情指导]</td>
+<td>为游戏任务线、小说章节、影视桥段、TRPG 模组提供发展建议</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[场景生成]</td>
+<td>根据世界观生成地点、遭遇、NPC、任务、线索、对白和冲突</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[推演回写]</td>
+<td>将推演中产生的新事件、新状态、新设定反向写入世界数据库</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[多人协作]</td>
+<td>支持团队共同编辑世界观、评论、版本管理、权限分级和工作区管理</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[跑团平台]</td>
+<td>支持角色卡、骰子、地图、AI DM、NPC 对话、房间联机和战斗/剧情记录</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[内容导出]</td>
+<td>支持 Markdown、JSON、CSV、策划案、TRPG 模组、VTT 格式、API 对接</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[模板市场]</td>
+<td>提供国风、科幻、奇幻、都市、怪谈、历史架空等题材模板</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[云端平台]</td>
+<td>提供账号、同步、协作、AI 额度、素材库、发布、分享和商业化服务</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-三大核心能力详述">2.3 三大核心能力详述</h3>
+<div class="mhs-columns cols-3"><div class="mhs-col"><div class="mhs-card">
+<div class="mhs-card-title">世界观构建平台</div>
+<div class="mhs-card-body"><p>传统世界观创作依赖文档、表格等通用工具。这些工具可以记录内容，但无法真正理解世界观结构，也无法自动推演设定变化。</p>
+<p>WorldFish 将创作者输入转化为 <strong>结构化世界观数据库</strong>，每一个人物、地点、组织、事件都成为可管理、可检索、可推演的对象。</p>
+</div></div></div>
+<div class="mhs-col"><div class="mhs-card">
+<div class="mhs-card-title">世界推演引擎</div>
+<div class="mhs-card-body"><p>将静态设定变成动态系统。用户不只是问「这个角色是谁」，而是可以问：</p>
+<ul>
+<li>如果这个角色死亡，世界会怎样变化？</li>
+<li>如果魔法体系被工业化，社会阶层如何重组？</li>
+<li>如果时间推进 100 年，这个文明会演化成什么样？</li>
+</ul>
+<p>推演结果可以指导游戏剧情分支、RPG 任务线、小说章节走向等。</p>
+</div></div></div>
+<div class="mhs-col"><div class="mhs-card">
+<div class="mhs-card-title">TRPG 与互动叙事平台</div>
+<div class="mhs-card-body"><p>WorldFish 将前两层能力自然延伸到跑团场景，与传统 VTT 的区别在于：<strong>不只是把桌面搬到线上，而是让整个世界成为可运行的叙事系统。</strong></p>
+<p>玩家行为产生新事件 → 新事件反向写回世界状态 → 世界因玩家行为而持续演化。</p>
+</div></div></div></div>
+<h3 id="24-面向多行业的应用场景">2.4 面向多行业的应用场景</h3>
+<p>我规划 WorldFish 的服务对象不应局限于 TRPG，而应覆盖泛创作与互动娱乐行业。</p>
+<div class="mhs-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;"><div class="mhs-card"><div class="mhs-card-title">🎮 游戏开发</div><div class="mhs-card-body"><p>开放世界设定、RPG 阵营关系、NPC 背景与任务线、世界事件推演、多结局剧情模拟、游戏策划文档导出。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">📖 小说与网文</div><div class="mhs-card-body"><p>长篇人物关系维护、宗门/国家/势力体系管理、时间线与伏笔整理、剧情分支推演、设定一致性检查。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🎬 影视动画与漫画</div><div class="mhs-card-body"><p>IP 宇宙设定管理、角色关系图谱、季度剧情推演、世界观 Bible 生成、衍生作品设定统一。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🎲 TRPG 与互动叙事</div><div class="mhs-card-body"><p>模组准备、AI DM、NPC 对话、即兴剧情应对、玩家行为后果推演、跑团记录回写。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🤖 虚拟 IP 与 AI 角色</div><div class="mhs-card-body"><p>虚拟角色背景世界、AI 角色长期记忆、角色关系与事件历史、粉丝共创设定、多角色互动剧场。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🏛️ 品牌叙事与文旅</div><div class="mhs-card-body"><p>品牌故事宇宙、城市/景区文化世界观、沉浸式剧本、互动营销活动、文化 IP 延展。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">📚 教育与模拟</div><div class="mhs-card-body"><p>历史事件推演、社会结构模拟、政治/经济/文化系统演化、课堂互动沙盘、多 Agent 场景实验。</p>
+</div></div>
+</div>
+<hr>
+<h2 id="3-海外同类市场竞品分析">3. 海外同类市场竞品分析</h2>
+<div class="mhs-callout mhs-callout-info"><div class="mhs-callout-icon">🌐</div><div><div class="mhs-callout-title">海外市场格局</div><div class="mhs-callout-body"><p>海外市场的成熟度显著高于国内市场，已形成「结构化世界观工具、VTT 跑团平台、AI 叙事工具」三类产品并行发展的格局。但在我观察中，<strong>真正将「世界观构建 + AI 推演 + 互动运行」完整打通的平台仍然稀缺。</strong></p>
+</div></div></div>
+<h3 id="31-竞品矩阵">3.1 竞品矩阵</h3>
+<div class="mhs-comparison-grid"><div class="mhs-comparison-header"><div class="pro-head">支持 (Pro)</div><div class="con-head">限制 (Con)</div></div><div class="mhs-comparison-body"><div class="mhs-comparison-row"><div class="pro-cell">🌍 World Anvil<br>结构化知识库能力强、模板成熟、社区生态完善</div><div class="con-cell">AI 能力辅助性、推演能力不足、中文支持弱、学习曲线高</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🧠 LoreKeeper<br>AI 世界观生成能力强、TRPG 结合紧密、代表 AI 原生方向</div><div class="con-cell">中文本地化不足、国内题材适配有限、跨行业边界待拓展</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🎲 Friends &amp; Fables<br>AI DM 体验突出、跑团娱乐属性强、轻量用户友好</div><div class="con-cell">非专业世界观资产平台、专业工作流支撑不足、结构化深度有限</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🖥️ Foundry VTT<br>VTT 功能强大、插件生态成熟、自托管心智明确</div><div class="con-cell">非世界观构建平台、AI 依赖插件、非技术用户门槛高</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🗺️ LegendKeeper<br>轻量可视化世界观管理、地图式交互</div><div class="con-cell">功能深度有限、AI 能力不足</div></div>
+</div></div>
+<h3 id="32-竞品启示总结">3.2 竞品启示总结</h3>
+<section class="mhs-highlights"><h2 class="mhs-highlights-title">对各竞品的战略启示</h2><div class="mhs-highlights-body"><ul>
+<li><strong>World Anvil</strong>：借鉴结构化管理和模板体系，但在 AI 生成、世界推演、推演回写和中文语境上形成差异化。</li>
+<li><strong>LoreKeeper</strong>：重要参照对象，但不应只复制 TRPG 定位，应扩展到游戏、小说、影视动画等更广泛场景。</li>
+<li><strong>Friends &amp; Fables</strong>：借鉴 AI DM 和互动体验，但核心差异放在「世界观资产 + 推演引擎 + 多场景内容生产」。</li>
+<li><strong>Foundry VTT</strong>：更像未来可对接的<strong>下游运行平台</strong>，WorldFish 的差异化在于上游世界观生成、推演和叙事指导。</li>
+</ul>
+</div></section>
+<h3 id="33-其他海外产品速览">3.3 其他海外产品速览</h3>
+<table>
+<thead>
+<tr>
+<th>产品</th>
+<th>定位</th>
+<th>对 WorldFish 的参考意义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>LegendKeeper</strong></td>
+<td>轻量可视化世界观管理</td>
+<td>地图式交互体验</td>
+</tr>
+<tr>
+<td><strong>WorldSmith</strong></td>
+<td>AI 快速生成 TRPG 内容</td>
+<td>轻量生成入口</td>
+</tr>
+<tr>
+<td><strong>NovelAI</strong></td>
+<td>高质量叙事生成</td>
+<td>文风模仿和长篇文本体验</td>
+</tr>
+<tr>
+<td><strong>Campfire</strong></td>
+<td>写作者世界观和小说规划</td>
+<td>作者工作流</td>
+</tr>
+<tr>
+<td><strong>Kanka</strong></td>
+<td>RPG campaign 管理</td>
+<td>开源与社区路线</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4-国内同类市场竞品分析">4. 国内同类市场竞品分析</h2>
+<div class="mhs-callout mhs-callout-warning"><div class="mhs-callout-icon">🇨🇳</div><div><div class="mhs-callout-title">国内市场格局</div><div class="mhs-callout-body"><p>国内市场相比海外仍处在早期阶段。现有产品通常只覆盖 WorldFish 目标链路中的一部分，<strong>尚未形成真正面向多行业创作者的「世界观构建 + 推演 + 互动运行」平台。</strong></p>
+</div></div></div>
+<h3 id="41-国内竞品矩阵">4.1 国内竞品矩阵</h3>
+<div class="mhs-comparison-grid"><div class="mhs-comparison-header"><div class="pro-head">支持 (Pro)</div><div class="con-head">限制 (Con)</div></div><div class="mhs-comparison-body"><div class="mhs-comparison-row"><div class="pro-cell">📱 有间宇宙<br>移动端 TRPG 跑团辅助、贴近国内跑团用户、体验轻量</div><div class="con-cell">世界观构建能力弱、AI 推演不足、非专业资产平台</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🎨 介子工坊<br>AI 辅助叙事创作、贴近专业剧情创作、适配游戏/网文</div><div class="con-cell">世界观长期资产管理有限、与互动运行结合不强、开源传播优势不足</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">💭 白日梦 Online<br>AI 剧情与角色扮演、娱乐化体验强、用户门槛低</div><div class="con-cell">专业工具属性不足、世界观管理弱、偏消费型内容</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🔧 World Maker<br>开源世界构建工具、世界观整理方向明确</div><div class="con-cell">AI 推演不足、商业化生态有限、多人协作弱</div></div>
+<div class="mhs-comparison-row"><div class="pro-cell">🎭 兰亭演绎<br>轻量线上 TRPG、国内用户认知明确</div><div class="con-cell">世界观构建不足、AI 推演不足、跨行业场景有限</div></div>
+</div></div>
+<h3 id="42-与国内竞品的战略关系">4.2 与国内竞品的战略关系</h3>
+<table>
+<thead>
+<tr>
+<th>竞品</th>
+<th>与 WorldFish 的关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>有间宇宙</strong></td>
+<td>更偏跑团工具，WorldFish 更偏世界观资产和推演引擎，核心切入点不同</td>
+</tr>
+<tr>
+<td><strong>介子工坊</strong></td>
+<td>重要国内参照对象，WorldFish 通过开源核心、世界观结构化、推演回写和多场景拓展形成差异化</td>
+</tr>
+<tr>
+<td><strong>白日梦 Online</strong></td>
+<td>更像 AI 娱乐社区，WorldFish 更像创作者基础设施，覆盖不同用户层级</td>
+</tr>
+<tr>
+<td><strong>World Maker</strong></td>
+<td>都有开源世界构建属性，WorldFish 的长期差异化在于 AI 构建、世界推演和云平台生态</td>
+</tr>
+<tr>
+<td><strong>兰亭演绎</strong></td>
+<td>偏跑团平台，WorldFish 更偏上游世界观与推演系统</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5-worldfish-与竞品核心能力对比">5. WorldFish 与竞品核心能力对比</h2>
+<table>
+<thead>
+<tr>
+<th>能力维度</th>
+<th>WorldFish 成熟愿景</th>
+<th>海外竞品情况</th>
+<th>国内竞品情况</th>
+<th>WorldFish 差异化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[世界观结构化管理]</td>
+<td>管理人物、组织、地点、事件、规则、地图、历法、文化等完整世界资产</td>
+<td>World Anvil 较成熟</td>
+<td>国内多数偏轻量</td>
+<td>可做<strong>中文世界观资产中台</strong></td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[AI 世界观生成]</td>
+<td>从自然语言和文档生成世界框架</td>
+<td>LoreKeeper、WorldSmith 具备部分能力</td>
+<td>多集中在剧情生成</td>
+<td>结合中文长文本和专业资产管理</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[长文本资料提取]</td>
+<td>从小说、剧本、策划案、模组中提取结构化设定</td>
+<td>部分海外产品支持</td>
+<td>国内成熟产品较少</td>
+<td>适合网文、游戏策划、中文模组资料</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[RAG 知识库]</td>
+<td>将世界资料沉淀为可检索上下文</td>
+<td>部分产品具备类似能力</td>
+<td>国内较少作为核心能力</td>
+<td>支撑长期创作和推演一致性</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[知识图谱]</td>
+<td>可视化实体、关系、事件和因果链</td>
+<td>World Anvil 等有部分能力</td>
+<td>国内普遍较弱</td>
+<td>适合复杂世界管理</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[世界推演]</td>
+<td>基于设定进行多轮演化、剧情分支和因果推导</td>
+<td>Friends &amp; Fables、LoreKeeper 有部分能力</td>
+<td>介子工坊偏剧情推演</td>
+<td>可成为<strong>核心差异化引擎</strong></td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[推演回写]</td>
+<td>推演结果沉淀为新事件、新状态、新阶段</td>
+<td>少数产品有闭环</td>
+<td>国内普遍不足</td>
+<td>让世界观成为<strong>动态资产</strong></td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[剧情指导]</td>
+<td>指导游戏、小说、影视、TRPG 的剧情发展</td>
+<td>多数产品聚焦单场景</td>
+<td>国内多偏文本生成</td>
+<td>跨行业叙事指导能力</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[TRPG 跑团]</td>
+<td>AI DM、房间、角色卡、骰子、地图、玩家行为回写</td>
+<td>Foundry/Friends &amp; Fables 成熟</td>
+<td>有间宇宙/兰亭演绎较成熟</td>
+<td>基于世界推演而非单纯 VTT</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[多行业适配]</td>
+<td>游戏、小说、影视、漫画、IP、TRPG、教育、品牌叙事</td>
+<td>多数竞品垂直单一</td>
+<td>国内更分散</td>
+<td>「<strong>世界观基础设施</strong>」定位更宽</td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[开源与云平台]</td>
+<td>MIT 单人核心 + 闭源云平台</td>
+<td>Foundry/Kanka 等有自托管心智</td>
+<td>国内多闭源 SaaS</td>
+<td><strong>开源获客 + 云端商业化</strong></td>
+</tr>
+<tr>
+<td><span class="mhs-badge mhs-badge-primary"></span>[中文本地化]</td>
+<td>深耕中文语境和本土题材</td>
+<td>海外普遍不足</td>
+<td>国内有本地化但功能分散</td>
+<td>国风、玄幻、科幻、网文生态适配</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-worldfish-的核心竞争力">6. WorldFish 的核心竞争力</h2>
+<div class="mhs-kpi-row"><div class="mhs-kpi-card"><div class="mhs-kpi-value">AI 创世</div><div class="mhs-kpi-label">从「AI 写作」到「AI 创世」</div><div class="mhs-kpi-delta up">文本→世界</div></div>
+<div class="mhs-kpi-card"><div class="mhs-kpi-value">资产化</div><div class="mhs-kpi-label">从「设定文档」到「世界观资产」</div><div class="mhs-kpi-delta up">静态→动态</div></div>
+<div class="mhs-kpi-card"><div class="mhs-kpi-value">因果推演</div><div class="mhs-kpi-label">从「剧情生成」到「因果推演」</div><div class="mhs-kpi-delta up">生成→推演</div></div>
+<div class="mhs-kpi-card"><div class="mhs-kpi-value">可运行世界</div><div class="mhs-kpi-label">从「跑团工具」到「可运行世界」</div><div class="mhs-kpi-delta up">桌面→宇宙</div></div>
+<div class="mhs-kpi-card"><div class="mhs-kpi-value">开源生态</div><div class="mhs-kpi-label">从「闭源工具」到「开源核心 + 云生态」</div><div class="mhs-kpi-delta up">闭源→混合</div></div>
+</div>
+<h3 id="61-五大核心竞争力详解">6.1 五大核心竞争力详解</h3>
+<div class="mhs-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;"><div class="mhs-card"><div class="mhs-card-title">1. 从「AI 写作」升级为「AI 创世」</div><div class="mhs-card-body"><p>普通 AI 写作工具生成的是文本，而 WorldFish 生成和维护的是<strong>世界</strong>。文本是一次性的，世界是可持续运行的。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">2. 从「设定文档」升级为「世界观资产」</div><div class="mhs-card-body"><p>传统设定文档难以被检索、推演和复用。WorldFish 将人物、事件、地点、势力、规则、地图等拆解为<strong>资产对象</strong>，使它们可以被 AI 调用、被团队协作、被推演引擎更新、被跑团平台运行。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">3. 从「剧情生成」升级为「因果推演」</div><div class="mhs-card-body"><p>普通 AI 剧情生成只关注文本流畅度，而 WorldFish 的推演引擎强调：<strong>世界状态、事件因果、实体变化、时间线连续、设定一致性、规则约束、后果回写</strong>。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">4. 从「跑团工具」升级为「可运行世界」</div><div class="mhs-card-body"><p>传统 VTT 是桌面工具，WorldFish 的长期目标是让<strong>整个世界观可运行</strong>。跑团只是其中一个入口，未来可扩展到 AI 互动剧、多人共创世界、虚拟 IP 剧场等场景。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">5. 从「闭源工具」升级为「开源核心 + 云生态」</div><div class="mhs-card-body"><p>MIT 开源单人核心吸引早期开发者和创作者，降低信任门槛；闭源云平台承载高价值商业功能。这种混合模式有利于在早期建立口碑，在中后期形成可持续收入。</p>
+</div></div>
+</div>
+<hr>
+<h2 id="7-中国市场综合潜力分析">7. 中国市场综合潜力分析</h2>
+<h3 id="71-五大市场机会">7.1 五大市场机会</h3>
+<section class="mhs-highlights"><h2 class="mhs-highlights-title">中国市场五大机会</h2><div class="mhs-highlights-body"></div></section>
+<div class="mhs-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;"><div class="mhs-card"><div class="mhs-card-title">📦 世界观基础设施缺失</div><div class="mhs-card-body"><p>国内游戏、网文、短剧、动画、漫画、TRPG、虚拟 IP 等内容行业都依赖世界观，但多数团队仍使用通用文档工具管理设定。痛点包括：设定分散、时间线混乱、人物关系复杂、团队协作困难。WorldFish 可以成为创作团队的<strong>世界观资产中台</strong>。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">📖 中文网文天然入口</div><div class="mhs-card-body"><p>中文网文、玄幻、仙侠、科幻、都市异能等内容天然具有复杂世界观：大量人物、多层势力、等级体系、地图区域、技能体系、长时间线。非常适合 WorldFish 做 <strong>AI 提取、图谱生成、时间线整理和剧情推演</strong>。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🎮 游戏行业推演需求</div><div class="mhs-card-body"><p>开放世界、RPG、SLG、模拟经营、剧情向游戏都需要大量世界观设计。WorldFish 可帮助游戏团队生成世界框架、管理阵营与 NPC、推导任务线、模拟势力变化、检查剧情逻辑。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🎲 TRPG 高粘性种子用户</div><div class="mhs-card-body"><p>TRPG 用户天然需要世界观、NPC、地图、事件、玩家行为后果、即兴剧情推演、长期战役记录。他们能快速理解「让世界自己生长」的价值，是品牌早期的<strong>重要社区入口</strong>。</p>
+</div></div>
+<div class="mhs-card"><div class="mhs-card-title">🤖 虚拟 IP 与 AI 角色增量</div><div class="mhs-card-body"><p>随着 AI 角色、虚拟陪伴、虚拟偶像、AI Agent 发展，角色需要稳定背景、记忆、关系和世界环境。WorldFish 可为 AI 角色提供「<strong>世界观底座</strong>」，让角色生活在持续演化的世界中。</p>
+</div></div>
+</div>
+<hr>
+<h2 id="8-商业模式可行性分析">8. 商业模式可行性分析</h2>
+<h3 id="81-mit-开源单人核心">8.1 MIT 开源单人核心</h3>
+<div class="mhs-card"><div class="mhs-card-title">开源核心承载能力</div><div class="mhs-card-body"><ul>
+<li>本地世界观管理</li>
+<li>基础 AI 构建 &amp; 资料导入</li>
+<li>基础知识库 &amp; 基础推演</li>
+<li>本地数据保存</li>
+<li>模板和插件扩展</li>
+<li>个人创作工作流</li>
+</ul>
+</div></div>
+<p><strong>开源核心的价值</strong>：降低用户试用门槛 → 获取开发者信任 → 建立开源社区 → 适合敏感设定和未公开作品 → 为云平台导流</p>
+<h3 id="82-闭源云端平台">8.2 闭源云端平台</h3>
+<div class="mhs-card"><div class="mhs-card-title">云平台承载能力</div><div class="mhs-card-body"><ul>
+<li>账号系统、云端同步、多人协作</li>
+<li>团队工作区、权限管理、版本历史</li>
+<li>AI 调用额度、高质量托管模型</li>
+<li>素材库、模板市场</li>
+<li>联机跑团、AI DM、房间系统</li>
+<li>企业私有部署、审计与合规</li>
+</ul>
+</div></div>
+<p><strong>核心收入来源</strong>：个人订阅 / 专业版订阅 / 团队版订阅 / AI 点数额度 / 高级模板 / 素材包 / 私有部署 / 企业定制 / 内容市场分成</p>
+<h3 id="83-功能分层建议">8.3 功能分层建议</h3>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>收费模式</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>开源单人核心</strong></td>
+<td><span class="mhs-badge mhs-badge-success"></span>[免费 MIT]</td>
+<td>本地世界观管理、基础提取、基础推演、本地知识库、基础导出</td>
+</tr>
+<tr>
+<td><strong>个人云端版</strong></td>
+<td><span class="mhs-badge mhs-badge-warning"></span>[订阅]</td>
+<td>云同步、免部署、托管模型、更多额度、高级模板</td>
+</tr>
+<tr>
+<td><strong>专业创作者版</strong></td>
+<td><span class="mhs-badge mhs-badge-warning"></span>[高级订阅]</td>
+<td>高级推演、长文本处理、高级导出、版本历史、素材库</td>
+</tr>
+<tr>
+<td><strong>团队版</strong></td>
+<td><span class="mhs-badge mhs-badge-warning"></span>[团队订阅]</td>
+<td>多人协作、权限、评论、审阅、工作区、团队资产库</td>
+</tr>
+<tr>
+<td><strong>跑团云平台</strong></td>
+<td><span class="mhs-badge mhs-badge-warning"></span>[订阅+点数]</td>
+<td>房间、AI DM、角色卡、骰子、地图、联机互动</td>
+</tr>
+<tr>
+<td><strong>企业版</strong></td>
+<td><span class="mhs-badge mhs-badge-error"></span>[定制报价]</td>
+<td>私有部署、专属模型、数据隔离、审计、API 对接</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="9-品牌化运营建议">9. 品牌化运营建议</h2>
+<h3 id="91-品牌核心叙事">9.1 品牌核心叙事</h3>
+<div class="mhs-quote"><div class="mhs-quote-icon">"</div><div class="mhs-quote-text"><p>不仅是写一个故事，而是创造一个世界；不仅是生成一段文本，而是运行一个宇宙。让 AI 帮你整理世界、推演世界、扩展世界——<strong>每个创作者都可以拥有自己的创世鱼缸。</strong></p>
+</div><div class="mhs-quote-author">WorldFish 品牌叙事</div></div>
+<h3 id="92-品牌关键词云">9.2 品牌关键词云</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>关键词</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>核心词</td>
+<td>AI 创世、世界观引擎、世界推演、可运行世界</td>
+</tr>
+<tr>
+<td>场景词</td>
+<td>互动叙事、创作者宇宙、设定资产、剧情沙盘</td>
+</tr>
+<tr>
+<td>功能词</td>
+<td>AI DM、多人共创、推演回写、知识图谱</td>
+</tr>
+<tr>
+<td>情感词</td>
+<td>让世界自己生长、观察世界、进入世界</td>
+</tr>
+</tbody>
+</table>
+<h3 id="93-早期传播案例建议">9.3 早期传播案例建议</h3>
+<div class="mhs-steps"><div class="mhs-step "><div class="mhs-step-number">1</div><div class="mhs-step-title">《红楼梦》世界观推演</div><div class="mhs-step-description">提取人物关系、家族势力、事件时间线，推演「如果某个关键人物提前死亡会怎样」。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">2</div><div class="mhs-step-title">架空王国百年演化</div><div class="mhs-step-description">创建一个国家、宗教、地理和资源体系，推演 100 年后的政治格局。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">3</div><div class="mhs-step-title">独立游戏世界观生成</div><div class="mhs-step-description">从一句游戏创意生成世界设定、阵营、NPC、任务线和地图区域。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">4</div><div class="mhs-step-title">TRPG 模组快速准备</div><div class="mhs-step-description">生成城镇、NPC、线索、冲突、遭遇和玩家行为后果。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">5</div><div class="mhs-step-title">网文设定整理</div><div class="mhs-step-description">从长篇文本中提取人物、宗门、功法、地图、事件和时间线。</div></div>
+</div>
+<h3 id="94-社区运营方向">9.4 社区运营方向</h3>
+<p>WorldFish 的早期社区不应只建 TRPG 社区，而应覆盖：</p>
+<div class="mhs-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;"><p><span class="mhs-badge mhs-badge-primary"></span>[独立游戏开发者]
+<span class="mhs-badge mhs-badge-primary"></span>[网文作者]
+<span class="mhs-badge mhs-badge-primary"></span>[TRPG 主持人]
+<span class="mhs-badge mhs-badge-primary"></span>[剧本杀/互动叙事作者]
+<span class="mhs-badge mhs-badge-primary"></span>[动画漫画设定创作者]
+<span class="mhs-badge mhs-badge-primary"></span>[AI Agent 开发者]
+<span class="mhs-badge mhs-badge-primary"></span>[虚拟 IP 运营者]
+<span class="mhs-badge mhs-badge-primary"></span>[世界观爱好者]
+<span class="mhs-badge mhs-badge-primary"></span>[开源开发者]</p>
+</div>
+<hr>
+<h2 id="10-产品路线建议">10. 产品路线建议</h2>
+<h3 id="101-五阶段路线图">10.1 五阶段路线图</h3>
+<div class="mhs-timeline"><div class="mhs-timeline-item"><div class="mhs-timeline-time">第一阶段</div><div class="mhs-timeline-marker"></div><div class="mhs-timeline-content"><div class="mhs-timeline-title">世界观构建与 AI 提取</div><div class="mhs-timeline-body"><p><strong>重点目标</strong>：让用户快速从资料中生成世界观。</p>
+<p>关键能力：文本/文件导入、AI 提取人物/组织/地点/事件/规则、结构化编辑、图谱和时间线、题材模板、本地开源单人核心。</p>
+</div></div></div>
+<div class="mhs-timeline-item"><div class="mhs-timeline-time">第二阶段</div><div class="mhs-timeline-marker"></div><div class="mhs-timeline-content"><div class="mhs-timeline-title">世界推演与剧情指导</div><div class="mhs-timeline-body"><p><strong>重点目标</strong>：让世界观从静态资料变成动态系统。</p>
+<p>关键能力：多轮推演、因果链、实体状态变化、事件分支、一致性检查、推演结果回写、剧情指导建议。</p>
+</div></div></div>
+<div class="mhs-timeline-item"><div class="mhs-timeline-time">第三阶段</div><div class="mhs-timeline-marker"></div><div class="mhs-timeline-content"><div class="mhs-timeline-title">云端协作与专业创作</div><div class="mhs-timeline-body"><p><strong>重点目标</strong>：让团队可以共同维护一个世界。</p>
+<p>关键能力：账号系统、云端同步、团队工作区、权限分级、评论审阅、版本管理、高级导出、AI 额度订阅。</p>
+</div></div></div>
+<div class="mhs-timeline-item"><div class="mhs-timeline-time">第四阶段</div><div class="mhs-timeline-marker"></div><div class="mhs-timeline-content"><div class="mhs-timeline-title">互动叙事与 TRPG 跑团</div><div class="mhs-timeline-body"><p><strong>重点目标</strong>：让用户进入世界。</p>
+<p>关键能力：房间系统、角色卡、骰子、地图、AI DM、AI NPC、玩家行为推演、跑团记录回写、联机体验。</p>
+</div></div></div>
+<div class="mhs-timeline-item"><div class="mhs-timeline-time">第五阶段</div><div class="mhs-timeline-marker"></div><div class="mhs-timeline-content"><div class="mhs-timeline-title">世界生态平台</div><div class="mhs-timeline-body"><p><strong>重点目标</strong>：形成围绕世界观的创作者生态。</p>
+<p>关键能力：世界观模板市场、素材市场、插件市场、世界分享、创作者主页、IP 宇宙展示、API 与第三方工具对接、企业级世界观资产管理。</p>
+</div></div></div>
+</div>
+<hr>
+<h2 id="11-风险提示">11. 风险提示</h2>
+<div class="mhs-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;"><div class="mhs-alert mhs-alert-warning"><div class="mhs-alert-icon"></div><div class="mhs-alert-body"><strong>⚠️ 定位过窄风险</strong><p>如果 WorldFish 只被市场理解为 TRPG 工具，会限制其想象空间。品牌化运营必须强调「<strong>世界观构建与推演平台</strong>」，TRPG 是重要场景之一，而不是全部。</p>
+</div></div>
+<div class="mhs-alert mhs-alert-warning"><div class="mhs-alert-icon"></div><div class="mhs-alert-body"><strong>⚠️ 定位过泛风险</strong><p>如果同时讲游戏、小说、影视、TRPG、教育、品牌、AI Agent，可能导致早期用户不知道产品到底解决什么问题。建议早期传播统一在「<strong>AI 世界观构建与推演</strong>」这一核心。</p>
+</div></div>
+<div class="mhs-alert mhs-alert-error"><div class="mhs-alert-icon"></div><div class="mhs-alert-body"><strong>⚠️ AI 质量风险</strong><p>世界推演对一致性、因果和长期记忆要求高。如果 AI 生成内容无法遵守设定，用户会失去信任。需要持续强化<strong>结构化上下文、状态账本、一致性校验和可解释推演</strong>。</p>
+</div></div>
+<div class="mhs-alert mhs-alert-error"><div class="mhs-alert-icon"></div><div class="mhs-alert-body"><strong>⚠️ 成本风险</strong><p>长文本提取、RAG、推演和 AI DM 都可能产生较高模型成本。云平台需要建立清晰的<strong>额度、缓存、增量解析和成本控制策略</strong>。</p>
+</div></div>
+<div class="mhs-alert mhs-alert-warning"><div class="mhs-alert-icon"></div><div class="mhs-alert-body"><strong>⚠️ 开源与闭源边界风险</strong><p>MIT 开源核心需要与闭源云平台形成合理边界。应避免开源版本过弱导致社区不认可，也避免云平台缺少付费价值。</p>
+</div></div>
+<div class="mhs-alert mhs-alert-warning"><div class="mhs-alert-icon"></div><div class="mhs-alert-body"><strong>⚠️ 合规风险</strong><p>若服务国内用户并提供云端平台，需要关注：ICP 备案、公安备案、用户数据存储、生成式 AI 内容管理、内容审核、未成年人保护、用户上传内容版权、隐私政策和用户协议。</p>
+</div></div>
+</div>
+<hr>
+<h2 id="12-结论">12. 结论</h2>
+<section class="mhs-hero"><div class="mhs-hero-content"><h1>结论：WorldFish 的长期价值</h1><p class="mhs-hero-subtitle">一个围绕「世界」的 AI 创作基础设施</p><div class="mhs-hero-actions"><p>我认为 WorldFish（创世鱼缸）的长期价值，不应被局限在 TRPG 或 AI 写作工具中。它更适合被定位为一个围绕「世界」的 AI 创作基础设施：帮助用户<strong>创造世界、整理世界、推演世界，并最终进入世界</strong>。</p>
+</div></div><div class="mhs-hero-visual"></div></section>
+<p>从未来成熟形态看，我认为 WorldFish 可以成为 <strong>三类产品的结合体</strong>：</p>
+<div class="mhs-feature-grid"><div class="mhs-feature-card"><div class="mhs-feature-icon">🌍</div><div class="mhs-feature-title">AI 世界观构建平台</div><div class="mhs-feature-description">帮助用户从灵感、文本和资料中生成结构化世界观。</div></div>
+<div class="mhs-feature-card"><div class="mhs-feature-icon">🔮</div><div class="mhs-feature-title">世界推演引擎</div><div class="mhs-feature-description">帮助用户推导剧情、历史、势力、人物和社会结构变化。</div></div>
+<div class="mhs-feature-card"><div class="mhs-feature-icon">🎭</div><div class="mhs-feature-title">互动叙事与 TRPG 平台</div><div class="mhs-feature-description">让用户和玩家进入这个世界，并让世界根据互动持续变化。</div></div>
+</div>
+<h3 id="国内市场的三个缺口">国内市场的三个缺口</h3>
+<div class="mhs-kpi-row"><div class="mhs-kpi-card"><div class="mhs-kpi-value">缺口一</div><div class="mhs-kpi-label">缺少专业世界观资产管理工具</div><div class="mhs-kpi-delta up">工具缺失</div></div>
+<div class="mhs-kpi-card"><div class="mhs-kpi-value">缺口二</div><div class="mhs-kpi-label">缺少中文语境下的世界推演引擎</div><div class="mhs-kpi-delta up">引擎空白</div></div>
+<div class="mhs-kpi-card"><div class="mhs-kpi-value">缺口三</div><div class="mhs-kpi-label">缺少打通创作、推演、互动和跑团的一体化平台</div><div class="mhs-kpi-delta up">平台断层</div></div>
+</div>
+<h3 id="项目后续主线建议">项目后续主线建议</h3>
+<div class="mhs-steps"><div class="mhs-step "><div class="mhs-step-number">1</div><div class="mhs-step-title">核心品牌定位</div><div class="mhs-step-description">以「AI 世界观构建与推演平台」作为核心品牌定位。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">2</div><div class="mhs-step-title">场景策略</div><div class="mhs-step-description">明确 TRPG 是重要场景，但不是唯一场景；用游戏、小说、影视、TRPG、虚拟 IP 等案例展示多场景适配。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">3</div><div class="mhs-step-title">开源策略</div><div class="mhs-step-description">保持 MIT 开源单人核心，建立开发者和创作者信任。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">4</div><div class="mhs-step-title">商业策略</div><div class="mhs-step-description">用闭源云平台承载多人协作、联机跑团、素材市场和商业化能力。</div></div>
+<div class="mhs-step "><div class="mhs-step-number">5</div><div class="mhs-step-title">品牌心智</div><div class="mhs-step-description">将「让世界自己生长」作为长期品牌心智。</div></div>
+</div>
+<div class="mhs-callout mhs-callout-success"><div class="mhs-callout-icon">🌟</div><div><div class="mhs-callout-title">最终判断</div><div class="mhs-callout-body"><p>如果 WorldFish 能持续强化<strong>世界观结构化、中文长文本理解、因果推演、推演回写和互动运行能力</strong>，我认为它有机会成为国内 AI 时代内容创作领域的重要基础设施，甚至成为「<strong>世界观创作平台</strong>」这一新品类的代表品牌。</p>
+</div></div></div>
+<hr>
+<div class="mhs-card"><div class="mhs-card-title">报告信息</div><div class="mhs-card-body"><p><strong>报告名称</strong>：WorldFish（创世鱼缸）项目市场竞品分析与国内潜力发展研究报告</p>
+<p><strong>品牌定位</strong>：AI 驱动的世界观构建平台 + 世界推演引擎 + 互动叙事与 TRPG 跑团平台</p>
+<p><strong>商业化方向</strong>：MIT 开源单人核心 + 闭源云端协作/联机平台</p>
+<p><strong>报告口径</strong>：本文以 WorldFish（创世鱼缸）未来成熟形态为分析对象</p>
+</div></div>
+<p><a href="#top" class="mhs-btn mhs-btn-ghost">返回顶部</a></p>
+
+</article>
+</body>
+</html>
