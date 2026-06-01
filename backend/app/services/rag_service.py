@@ -24,41 +24,32 @@ from ..utils.logger import get_logger
 logger = get_logger("worldfish.rag")
 
 def get_rag_text_volume_profile(text_len: int) -> Dict[str, Any]:
-    """根据文本量为 RAG 选择切块策略。巨大文本适当增大块，降低索引成本。"""
+    """根据文本量为 RAG 自动选择切块策略。
+
+    RAG 分块不再依赖 LLM/环境变量里的手动块大小配置，而是由程序按文本量分档决定。
+    短文本保持较细粒度，超长文本增大块大小以降低 Embedding 与向量写入成本。
+    """
     text_len = max(0, int(text_len or 0))
     if text_len <= 15_000:
-        profile = {
-            "profile": "short",
-            "rag_chunk_size": Config.RAG_CHUNK_SIZE,
-            "rag_chunk_overlap": Config.RAG_CHUNK_OVERLAP,
-        }
+        profile_name, chunk_size = "short", 800
     elif text_len <= 120_000:
-        profile = {
-            "profile": "medium",
-            "rag_chunk_size": max(Config.RAG_CHUNK_SIZE, 1000),
-            "rag_chunk_overlap": max(Config.RAG_CHUNK_OVERLAP, 120),
-        }
+        profile_name, chunk_size = "medium", 1000
     elif text_len <= 500_000:
-        profile = {
-            "profile": "long",
-            "rag_chunk_size": max(Config.RAG_LARGE_CHUNK_SIZE, 1400),
-            "rag_chunk_overlap": 160,
-        }
+        profile_name, chunk_size = "long", 1400
     elif text_len <= 1_500_000:
-        profile = {
-            "profile": "huge",
-            "rag_chunk_size": max(Config.RAG_HUGE_CHUNK_SIZE, 1800),
-            "rag_chunk_overlap": 180,
-        }
+        profile_name, chunk_size = "huge", 1800
     else:
-        profile = {
-            "profile": "massive",
-            "rag_chunk_size": max(Config.RAG_HUGE_CHUNK_SIZE, 2200),
-            "rag_chunk_overlap": 220,
-        }
-    profile["text_length"] = text_len
-    profile["rag_chunk_preset"] = "novel"
-    return profile
+        profile_name, chunk_size = "massive", 2200
+
+    chunk_overlap = max(80, min(260, int(chunk_size * 0.1)))
+    return {
+        "profile": profile_name,
+        "text_length": text_len,
+        "rag_chunk_size": chunk_size,
+        "rag_chunk_overlap": chunk_overlap,
+        "rag_chunk_preset": "novel",
+        "strategy": "auto_by_text_volume",
+    }
 
 
 RAG_CHUNK_PRESETS = [
@@ -395,8 +386,8 @@ class RagService:
 
         Args:
             text: 原始文本
-            chunk_size: 块大小（默认用配置）
-            chunk_overlap: 重叠大小（默认用配置）
+            chunk_size: 兼容旧接口参数；实际会被按文本量自动策略覆盖
+            chunk_overlap: 兼容旧接口参数；实际会被按文本量自动策略覆盖
             source: 来源标识
             metadata: 附加元数据
 
@@ -405,8 +396,10 @@ class RagService:
         """
         text_len = len(text or "")
         rag_profile = get_rag_text_volume_profile(text_len)
-        chunk_size = chunk_size or rag_profile["rag_chunk_size"]
-        chunk_overlap = chunk_overlap if chunk_overlap is not None else rag_profile["rag_chunk_overlap"]
+        requested_chunk_size = chunk_size
+        requested_chunk_overlap = chunk_overlap
+        chunk_size = int(rag_profile["rag_chunk_size"])
+        chunk_overlap = int(rag_profile["rag_chunk_overlap"])
         preset = str(chunk_preset or rag_profile["rag_chunk_preset"] or "default").strip().lower()
         if preset not in {item["id"] for item in RAG_CHUNK_PRESETS}:
             preset = "default"
@@ -429,12 +422,15 @@ class RagService:
             logger.info(f"RAG [{self.world_id}]: source_hash 已存在，跳过重复索引 ({len(existing_doc_ids)} 文档)")
             return existing_doc_ids
 
-        self._emit_progress(progress_callback, "preprocessing", 5, f"正在预处理文本：{text_len} 字符（{rag_profile['profile']} RAG策略，{chunk_size} 字/块）", {
+        self._emit_progress(progress_callback, "preprocessing", 5, f"正在预处理文本：{text_len} 字符（自动 {rag_profile['profile']} RAG策略，{chunk_size} 字/块）", {
             "chunk_preset": preset,
             "text_length": text_len,
             "rag_volume_profile": rag_profile,
             "chunk_size": chunk_size,
             "chunk_overlap": chunk_overlap,
+            "chunk_strategy": rag_profile.get("strategy"),
+            "requested_chunk_size_ignored": requested_chunk_size,
+            "requested_chunk_overlap_ignored": requested_chunk_overlap,
         })
         chunks_with_meta = self._split_text_by_preset(text, preset, chunk_size, chunk_overlap)
         if not chunks_with_meta:
@@ -453,6 +449,7 @@ class RagService:
             "rag_volume_profile": rag_profile,
             "chunk_size": chunk_size,
             "chunk_overlap": chunk_overlap,
+            "chunk_strategy": rag_profile.get("strategy"),
         })
 
         cursor = 0

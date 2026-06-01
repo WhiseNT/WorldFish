@@ -49,9 +49,9 @@ def add_documents(world_id: str):
     请求（JSON）：
         {
             "texts": ["文本1", "文本2"],          // 或
-            "text": "长文本",                      // 单个长文本（会自动切块）
-            "chunk_size": 800,                     // 可选
-            "chunk_overlap": 100,                  // 可选
+            "text": "长文本",                      // 单个长文本（按文本量自动切块）
+            "chunk_size": 800,                     // 兼容旧参数，会被自动策略忽略
+            "chunk_overlap": 100,                  // 兼容旧参数，会被自动策略忽略
             "source": "manual",                    // 可选
             "metadata": {}                         // 可选
         }
@@ -82,13 +82,9 @@ def add_documents(world_id: str):
                 metadatas=[dict(metadata or {}) for _ in texts] if metadata else None,
             )
         elif single_text and str(single_text).strip():
-            chunk_size = data.get("chunk_size")
-            chunk_overlap = data.get("chunk_overlap")
-            chunk_preset = data.get("chunk_preset", "default")
+            chunk_preset = data.get("chunk_preset")
             doc_ids = rag.add_text_chunks(
                 text=str(single_text).strip(),
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
                 source=source,
                 metadata=metadata,
                 chunk_preset=chunk_preset,
@@ -285,11 +281,9 @@ def create_index_task(world_id: str):
 
                 doc_ids = rag.add_text_chunks(
                     text=text,
-                    chunk_size=data.get("chunk_size"),
-                    chunk_overlap=data.get("chunk_overlap"),
                     source=data.get("source", "manual"),
                     metadata=data.get("metadata") or {},
-                    chunk_preset=data.get("chunk_preset", "novel"),
+                    chunk_preset=data.get("chunk_preset"),
                     progress_callback=progress_cb,
                 )
                 result = {"added_count": len(doc_ids), "total_count": rag.count(), "doc_ids": doc_ids}
@@ -335,9 +329,7 @@ def upload_rag_file(world_id: str):
             return jsonify({"success": False, "error": "请上传文件"}), 400
 
         files = request.files.getlist("files")
-        chunk_size = int(request.form.get("chunk_size", 800))
-        chunk_overlap = int(request.form.get("chunk_overlap", 100))
-        chunk_preset = request.form.get("chunk_preset", "novel")
+        chunk_preset = request.form.get("chunk_preset") or None
 
         results = []
         total_added = 0
@@ -378,8 +370,6 @@ def upload_rag_file(world_id: str):
 
                 doc_ids = rag.add_text_chunks(
                     text=text,
-                    chunk_size=chunk_size,
-                    chunk_overlap=chunk_overlap,
                     source="file",
                     metadata={"filename": file.filename},
                     chunk_preset=chunk_preset,

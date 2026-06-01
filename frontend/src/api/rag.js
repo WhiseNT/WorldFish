@@ -48,13 +48,11 @@ export const ragApi = {
   },
 
   // 上传文件到 RAG
-  uploadFile: (worldId, files, chunkSize = 800, chunkOverlap = 100, chunkPreset = 'novel') => {
+  uploadFile: (worldId, files, chunkPreset = 'novel') => {
     const formData = new FormData()
     for (const file of files) {
       formData.append('files', file)
     }
-    formData.append('chunk_size', chunkSize)
-    formData.append('chunk_overlap', chunkOverlap)
     formData.append('chunk_preset', chunkPreset)
     return service.post(`/api/${worldId}/rag/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

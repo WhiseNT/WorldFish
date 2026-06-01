@@ -207,10 +207,6 @@ class Config:
         }
 
     # RAG 配置
-    RAG_CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "800"))
-    RAG_CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
-    RAG_LARGE_CHUNK_SIZE = int(os.environ.get("RAG_LARGE_CHUNK_SIZE", "1400"))
-    RAG_HUGE_CHUNK_SIZE = int(os.environ.get("RAG_HUGE_CHUNK_SIZE", "1800"))
     RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
 
     # 大文本提取配置
@@ -285,10 +281,6 @@ class Config:
         cls.EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
         cls.EMBEDDING_API_TYPE = os.environ.get("EMBEDDING_API_TYPE", "openai_compatible")
         cls.EMBEDDING_URL_MODE = os.environ.get("EMBEDDING_URL_MODE", "base_url")
-        cls.RAG_CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "800"))
-        cls.RAG_CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
-        cls.RAG_LARGE_CHUNK_SIZE = int(os.environ.get("RAG_LARGE_CHUNK_SIZE", "1400"))
-        cls.RAG_HUGE_CHUNK_SIZE = int(os.environ.get("RAG_HUGE_CHUNK_SIZE", "1800"))
         cls.RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
         cls.EXTRACTION_MAX_WORKERS = int(os.environ.get("EXTRACTION_MAX_WORKERS", "12"))
         cls.EXTRACTION_HUGE_WORKERS = int(os.environ.get("EXTRACTION_HUGE_WORKERS", "10"))

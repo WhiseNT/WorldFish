@@ -379,13 +379,17 @@
           </div>
 
           <!-- 提取进度条 -->
-          <div v-if="isExtracting && extractProgress.message" class="extract-progress">
+          <div v-if="(isExtracting || isScanCompleted) && extractProgress.message" class="extract-progress">
             <div class="progress-bar-container">
               <div class="progress-bar-fill" :style="{ width: extractProgress.progress + '%' }"></div>
             </div>
             <div class="progress-info">
               <span class="progress-stage">{{ extractProgress.message }}</span>
               <span class="progress-pct">{{ extractProgress.progress }}%</span>
+            </div>
+            <div v-if="scanCompletionText" class="scan-complete-banner">{{ scanCompletionText }}</div>
+            <div v-if="scanEstimateText" class="cache-progress-note">
+              {{ scanEstimateText }}<span v-if="scanEstimateSourceText">（{{ scanEstimateSourceText }}）</span>
             </div>
             <div v-if="cacheProgressText" class="cache-progress-note">{{ cacheProgressText }}</div>
             <div v-if="extractProgress.ragProgress" class="rag-sub-progress">
@@ -400,11 +404,12 @@
               <p v-if="ragDocumentText" class="rag-sub-message">{{ ragDocumentText }}</p>
             </div>
             <div v-if="extractionMode === 'deep' && deepStateText" class="cache-progress-note">{{ deepStateText }}</div>
-            <div class="extract-inline-actions">
-              <button type="button" class="btn btn-secondary" :disabled="isPausingExtract || isCancellingExtract" @click="pauseExtraction">
+            <div v-if="scanActivityText" class="cache-progress-note scan-live-note"><span class="scan-live-dot"></span>{{ scanActivityText }}</div>
+            <div v-if="canPauseExtract || canCancelExtract" class="extract-inline-actions">
+              <button v-if="canPauseExtract" type="button" class="btn btn-secondary" :disabled="isPausingExtract || isCancellingExtract" @click="pauseExtraction">
                 {{ isPausingExtract ? '暂停中...' : '暂停' }}
               </button>
-              <button type="button" class="btn btn-secondary" :disabled="isCancellingExtract" @click="cancelExtraction">
+              <button v-if="canCancelExtract" type="button" class="btn btn-secondary" :disabled="isCancellingExtract" @click="cancelExtraction">
                 {{ isCancellingExtract ? '正在中止...' : '强制中止' }}
               </button>
             </div>
@@ -425,7 +430,12 @@
                 <div class="progress-bar-container deep-main-bar">
                   <div class="progress-bar-fill" :style="{ width: (extractProgress.progress || 0) + '%' }"></div>
                 </div>
+                <div v-if="scanCompletionText" class="scan-complete-banner">{{ scanCompletionText }}</div>
+                <div v-if="scanEstimateText" class="deep-scan-meta">
+                  {{ scanEstimateText }}<span v-if="scanEstimateSourceText">（{{ scanEstimateSourceText }}）</span>
+                </div>
                 <div class="deep-scan-meta">已处理: {{ deepProcessedText }} / {{ extractProgress.detail?.total_chars_label || '未知总量' }}</div>
+                <div v-if="scanActivityText" class="deep-scan-meta scan-live-note"><span class="scan-live-dot"></span>{{ scanActivityText }}</div>
               </div>
 
               <div class="deep-scan-section">
@@ -436,6 +446,10 @@
                 <div class="deep-row">
                   <span class="deep-label">当前阅读</span>
                   <strong>{{ deepCurrentTitle }}</strong>
+                </div>
+                <div v-if="scanHeartbeatText" class="deep-row">
+                  <span class="deep-label">活跃心跳</span>
+                  <strong>{{ scanHeartbeatText }}</strong>
                 </div>
                 <div class="deep-row stacked">
                   <span class="deep-label">块进度</span>
@@ -496,24 +510,56 @@
             </div>
           </div>
 
-          <!-- 提取结果预览 -->
-          <div v-if="extractedData" class="extract-preview">
-            <div class="preview-header">
-              <h3 class="preview-title">提取结果预览</h3>
-              <span v-if="extractedData.rag_indexed" class="rag-index-badge">
+          <div v-if="extractedData && !showExtractResultDialog" class="extract-result-reminder">
+            <span>已有未应用的扫描结果：{{ extractedResultSummaryText }}</span>
+            <button type="button" class="btn btn-secondary" @click="openExtractResultDialog(false)">查看结果并选择是否应用</button>
+          </div>
+        </div>
+
+        <div v-if="showExtractResultDialog && extractedData" class="dialog extract-result-dialog-overlay">
+          <div class="dialog-content extract-result-dialog">
+            <div class="dialog-header">
+              <div>
+                <h2 class="dialog-title">扫描解析已完成</h2>
+                <p class="dialog-subtitle">请检查解析结果，并选择是否合并到当前世界观。</p>
+              </div>
+              <button class="close-btn" @click="dismissExtractResultDialog" title="稍后处理"><SvgIcon name="close" :size="16" /></button>
+            </div>
+            <div class="dialog-body">
+              <div class="extract-result-summary-grid">
+                <div>
+                  <span>实体</span>
+                  <strong>{{ extractedResultSummary.entities }}</strong>
+                </div>
+                <div>
+                  <span>事件</span>
+                  <strong>{{ extractedResultSummary.events }}</strong>
+                </div>
+                <div>
+                  <span>设定</span>
+                  <strong>{{ extractedResultSummary.settings }}</strong>
+                </div>
+                <div>
+                  <span>扫描模式</span>
+                  <strong>{{ extractionMode === 'deep' ? '深度扫描' : '快速扫描' }}</strong>
+                </div>
+              </div>
+              <div v-if="extractedData.rag_indexed" class="rag-index-badge result-rag-badge">
                 已索引 {{ extractedData.rag_document_count || 0 }} 条至 RAG 知识库
-              </span>
+              </div>
+              <div v-if="hasExtractionFailures" class="extract-warning">
+                有 {{ extractionDiagnostics.failed_chunks.length }} / {{ extractionDiagnostics.total_chunks }} 个章节组解析失败，当前结果可能不完整。可以暂不应用，调整后重新扫描。
+              </div>
+              <div class="preview-content">
+                <pre class="preview-code result-preview-code">{{ JSON.stringify(extractedData, null, 2) }}</pre>
+              </div>
+              <p class="preview-note">应用会保留当前已编辑内容，仅补充新增信息，并尽量合并重复实体、事件和设定。</p>
             </div>
-            <div v-if="hasExtractionFailures" class="extract-warning">
-              有 {{ extractionDiagnostics.failed_chunks.length }} / {{ extractionDiagnostics.total_chunks }} 个章节组解析失败，当前结果可能不完整。请查看预览中的 extraction_diagnostics 或降低并发/重试。
+            <div class="dialog-actions extract-result-actions">
+              <button type="button" class="btn btn-secondary" @click="dismissExtractResultDialog">暂不应用</button>
+              <button type="button" class="btn btn-danger" @click="discardExtractedData">不应用并丢弃</button>
+              <button type="button" class="btn btn-primary" @click="applyExtractedData">应用到世界观</button>
             </div>
-            <div class="preview-content">
-              <pre class="preview-code">{{ JSON.stringify(extractedData, null, 2) }}</pre>
-            </div>
-            <button @click="applyExtractedData" class="btn btn-secondary apply-btn">
-              合并提取的数据
-            </button>
-            <p class="preview-note">会保留当前已编辑内容，仅补充新增信息，并尽量合并重复实体、事件和设定。</p>
           </div>
         </div>
 
@@ -3657,8 +3703,11 @@ export default {
       extractScanSource: 'input',
       extractionMode: 'fast',
       isExtracting: false,
-      extractProgress: { stage: '', progress: 0, message: '', detail: {}, ragProgress: null },
+      extractProgress: { stage: '', progress: 0, message: '', detail: {}, ragProgress: null, updatedAt: '', startedAt: '', running: false },
       extractPollTimer: null,
+      extractPollingTaskId: '',
+      extractUiTickTimer: null,
+      extractUiTick: 0,
       extractTaskId: '',
       isCancellingExtract: false,
       isPausingExtract: false,
@@ -3666,6 +3715,8 @@ export default {
       isDeletingExtractTask: false,
       showExtractScanPanel: false,
       extractPanelDismissed: false,
+      showExtractResultDialog: false,
+      extractResultDialogDismissed: false,
       extractedData: null,
       selectedFiles: [],
       isDragOver: false,
@@ -4522,6 +4573,19 @@ export default {
     extractionDiagnostics() {
       return this.extractedData?.extraction_diagnostics || {}
     },
+    extractedResultSummary() {
+      const data = this.extractedData || {}
+      const settings = data.settings || {}
+      return {
+        entities: Array.isArray(data.entities) ? data.entities.length : 0,
+        events: Array.isArray(data.events) ? data.events.length : 0,
+        settings: Array.isArray(settings.items) ? settings.items.length : 0,
+      }
+    },
+    extractedResultSummaryText() {
+      const summary = this.extractedResultSummary
+      return `${summary.entities} 个实体、${summary.events} 个事件${summary.settings ? `、${summary.settings} 条设定` : ''}`
+    },
     extractUsesRagSource() {
       return this.extractScanSource === 'rag' || this.extractScanSource === 'input_and_rag'
     },
@@ -4554,10 +4618,11 @@ export default {
       const detail = this.extractProgress.detail || {}
       const total = detail.total_chunks || this.extractedData?.extraction_diagnostics?.total_chunks || 0
       if (!total) return ''
-      const completed = detail.completed_chunks ?? this.extractedData?.completed_chunks ?? 0
-      const failed = detail.failed_chunks ?? this.extractedData?.failed_chunks ?? 0
+      const completed = Number(detail.completed_chunks ?? this.extractedData?.completed_chunks ?? 0)
+      const failed = Number(detail.failed_chunks ?? this.extractedData?.failed_chunks ?? 0)
+      const processed = Number(detail.processed_chunks ?? (completed + failed))
       const resumed = detail.resumed_from_cache ? '已从缓存恢复，' : ''
-      return `${resumed}已完成 ${completed}/${total} 块${failed ? `，失败 ${failed} 块，可再次点击解析继续` : ''}`
+      return `${resumed}已处理 ${processed}/${total} 块（成功 ${completed}${failed ? `，失败 ${failed}` : ''}）${failed ? '，可再次点击解析继续' : ''}`
     },
     ragDocumentText() {
       const detail = this.extractProgress.ragProgress?.detail || {}
@@ -4585,6 +4650,10 @@ export default {
     scanStatusLabel() {
       return {
         running: '运行中',
+        starting: '启动中',
+        preparing: '准备中',
+        chunking: '切分中',
+        indexing: '索引中',
         extracting: '解析中',
         pause_requested: '正在暂停',
         paused: '已暂停',
@@ -4598,6 +4667,7 @@ export default {
       }[this.extractStatus] || '准备中'
     },
     scanModalTitle() {
+      if (this.isScanCompleted) return this.extractionMode === 'deep' ? '深度扫描已完成' : '快速扫描已完成'
       if (this.isCancellingExtract || this.extractStatus === 'cancel_requested') return '正在强制中止...'
       if (this.extractStatus === 'paused') return '扫描已暂停'
       if (this.extractStatus === 'cancelled') return '扫描已强制中止'
@@ -4611,6 +4681,67 @@ export default {
       const detail = this.extractProgress.detail || {}
       return detail.processed_chars_label || `${detail.processed_chars || 0}字`
     },
+    scanEstimatedChars() {
+      return Number(this.extractProgress.estimatedTextChars || this.extractProgress.detail?.estimated_text_chars || this.extractProgress.detail?.total_chars || 0)
+    },
+    scanEstimateText() {
+      if (!this.scanEstimatedChars) return ''
+      const label = this.extractProgress.estimatedTextCharsLabel || this.extractProgress.detail?.estimated_text_chars_label || this.formatScanCharCount(this.scanEstimatedChars)
+      return `预估总文本：${label}`
+    },
+    scanEstimateBreakdown() {
+      return Array.isArray(this.extractProgress.textEstimateBreakdown) ? this.extractProgress.textEstimateBreakdown : []
+    },
+    scanEstimateSourceText() {
+      if (!this.scanEstimateBreakdown.length) return ''
+      return this.scanEstimateBreakdown
+        .slice(0, 4)
+        .map(item => `${item.name || '文本'} ${item.chars_label || this.formatScanCharCount(item.chars || 0)}`)
+        .join('；')
+    },
+    isScanCompleted() {
+      return ['completed', 'done'].includes(this.extractStatus)
+    },
+    scanCompletionText() {
+      if (!this.isScanCompleted) return ''
+      const settings = this.extractedData?.settings || {}
+      const settingCount = Array.isArray(settings.items) ? settings.items.length : 0
+      const entityCount = Array.isArray(this.extractedData?.entities) ? this.extractedData.entities.length : 0
+      const eventCount = Array.isArray(this.extractedData?.events) ? this.extractedData.events.length : 0
+      return `扫描已完成：提取到 ${entityCount} 个实体、${eventCount} 个事件${settingCount ? `、${settingCount} 条设定` : ''}。`
+    },
+    scanProcessedChunks() {
+      const detail = this.extractProgress.detail || {}
+      const completed = Number(detail.completed_chunks || 0)
+      const failed = Number(detail.failed_chunks || 0)
+      return Number(detail.processed_chunks ?? (completed + failed)) || 0
+    },
+    scanRuntimeText() {
+      this.extractUiTick
+      const elapsed = Number(this.deepState.current_chunk_elapsed_seconds || 0)
+      const startedAt = this.deepState.current_chunk_started_at
+      const seconds = elapsed || this.secondsSince(startedAt)
+      return seconds ? this.formatScanDuration(seconds) : ''
+    },
+    scanHeartbeatText() {
+      this.extractUiTick
+      const heartbeatAt = this.deepState.current_chunk_heartbeat_at || this.extractProgress.updatedAt
+      const seconds = this.secondsSince(heartbeatAt)
+      if (!heartbeatAt) return ''
+      return seconds <= 1 ? '刚刚' : `${seconds}秒前`
+    },
+    scanActivityText() {
+      this.extractUiTick
+      if (!this.extractTaskId) return ''
+      const active = ['running', 'extracting', 'preparing', 'chunking', 'indexing', 'starting', 'pause_requested', 'cancel_requested'].includes(this.extractStatus)
+        || (this.isExtracting && !this.extractProgress.done)
+        || this.extractProgress.running
+      if (!active) return ''
+      const parts = []
+      if (this.scanRuntimeText) parts.push(`当前块已运行 ${this.scanRuntimeText}`)
+      if (this.scanHeartbeatText) parts.push(`最近心跳 ${this.scanHeartbeatText}`)
+      return parts.length ? `扫描仍在运行：${parts.join('，')}` : '扫描仍在运行，正在等待最新进度...'
+    },
     deepCurrentTitle() {
       return this.deepState.current_chunk_title || '准备读取文本块...'
     },
@@ -4622,15 +4753,15 @@ export default {
       const detail = this.extractProgress.detail || {}
       const total = Number(detail.total_chunks || 0)
       if (!total) return this.deepChunkProgress
-      const completed = Number(detail.completed_chunks || 0)
-      return Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
+      return Math.max(0, Math.min(100, Math.round((this.scanProcessedChunks / total) * 100)))
     },
     scanChunkText() {
       const detail = this.extractProgress.detail || {}
-      const completed = detail.completed_chunks || 0
-      const total = detail.total_chunks || 0
-      const failed = detail.failed_chunks || 0
-      return `已完成 ${completed}/${total || '?'} 块${failed ? `，失败 ${failed} 块` : ''}`
+      const completed = Number(detail.completed_chunks || 0)
+      const total = Number(detail.total_chunks || 0)
+      const failed = Number(detail.failed_chunks || 0)
+      const processed = this.scanProcessedChunks
+      return `已处理 ${processed}/${total || '?'} 块，成功 ${completed}${failed ? `，失败 ${failed}` : ''}`
     },
     deepDiscoveries() {
       return Array.isArray(this.deepState.discoveries) ? this.deepState.discoveries : []
@@ -4647,13 +4778,13 @@ export default {
       return ['人物', '物品', '势力', '地点', '事件'].map(label => ({ label, count: stats[label] || 0 }))
     },
     canPauseExtract() {
-      return this.extractStatus === 'running' || this.extractStatus === 'extracting'
+      return ['running', 'extracting', 'preparing', 'chunking', 'indexing', 'starting'].includes(this.extractStatus)
     },
     canResumeExtract() {
       return ['paused', 'stale', 'cancelled'].includes(this.extractStatus)
     },
     canCancelExtract() {
-      return ['running', 'extracting', 'pause_requested', 'paused', 'stale'].includes(this.extractStatus)
+      return ['running', 'extracting', 'preparing', 'chunking', 'indexing', 'starting', 'pause_requested', 'paused', 'stale'].includes(this.extractStatus)
     },
     canDeleteExtract() {
       return ['paused', 'stale', 'cancelled', 'failed', 'error', 'completed', 'done'].includes(this.extractStatus)
@@ -5150,8 +5281,21 @@ export default {
       this.savedWorldTemplateId = this.resolveKnownTemplateId(payload.template_id || this.selectedTemplateId)
       this.savedWorldTemplateName = payload.template_name || this.getWorldTemplateName(this.savedWorldTemplateId)
     },
+    isWorldBuilderRouteActive() {
+      return this.$route?.name === 'WorldBuilder'
+    },
+    clearPendingAutoSave() {
+      if (this.autoSaveTimer) {
+        clearTimeout(this.autoSaveTimer)
+        this.autoSaveTimer = null
+      }
+      if (this.editHistoryTimer) {
+        clearTimeout(this.editHistoryTimer)
+        this.editHistoryTimer = null
+      }
+    },
     scheduleAutoSave(delay = 5000) {
-      if (this.isApplyingStoredWorld) return
+      if (this.isApplyingStoredWorld || !this.isWorldBuilderRouteActive()) return
       if (this.autoSaveTimer) {
         clearTimeout(this.autoSaveTimer)
       }
@@ -5161,18 +5305,23 @@ export default {
       this.saveStatus = this.worldId ? '有未保存修改，将稍后自动保存' : '有未保存修改，将自动创建世界观'
       this.autoSaveTimer = window.setTimeout(() => {
         this.autoSaveTimer = null
+        if (!this.isWorldBuilderRouteActive()) return
         this.saveWorld({ silent: true, skipReload: true })
       }, waitTime)
     },
-    async flushAutoSave() {
+    async flushAutoSave(options = {}) {
+      const { requireActiveRoute = true } = options
       if (this.autoSaveTimer) {
         clearTimeout(this.autoSaveTimer)
         this.autoSaveTimer = null
       }
+      if (requireActiveRoute && !this.isWorldBuilderRouteActive()) {
+        return false
+      }
       if (this.isApplyingStoredWorld) {
         await this.$nextTick()
       }
-      return await this.saveWorld({ silent: true, skipReload: true })
+      return await this.saveWorld({ silent: true, skipReload: true, requireActiveRoute })
     },
     buildWorldPayload() {
       this.syncEntitySettingLinks()
@@ -5719,7 +5868,7 @@ export default {
       this.extractScanSource = 'input'
       this.extractionMode = 'fast'
       this.isExtracting = false
-      this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null }
+      this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null, updatedAt: '', startedAt: '', running: false, estimatedTextChars: 0, estimatedTextCharsLabel: '', textEstimateBreakdown: [] }
       this.extractTaskId = ''
       this.isCancellingExtract = false
       this.isPausingExtract = false
@@ -5727,11 +5876,15 @@ export default {
       this.isDeletingExtractTask = false
       this.showExtractScanPanel = false
       this.extractPanelDismissed = false
+      this.showExtractResultDialog = false
+      this.extractResultDialogDismissed = false
       this.extractedData = null
       if (this.extractPollTimer) {
         clearTimeout(this.extractPollTimer)
         this.extractPollTimer = null
       }
+      this.extractPollingTaskId = ''
+      this.stopExtractUiTicker()
       this.selectedFiles = []
       this.isDragOver = false
       this.entities = []
@@ -5797,7 +5950,7 @@ export default {
       this.resetEditHistory()
     },
     syncRouteWorldId() {
-      if (!this.worldId || !this.$router || !this.$route) {
+      if (!this.worldId || !this.$router || !this.$route || !this.isWorldBuilderRouteActive()) {
         return
       }
 
@@ -5951,7 +6104,10 @@ export default {
     },
 
     async saveWorld(options = {}) {
-      const { silent = false, successMessage, skipReload = false } = options
+      const { silent = false, successMessage, skipReload = false, requireActiveRoute = true } = options
+      if (requireActiveRoute && !this.isWorldBuilderRouteActive()) {
+        return false
+      }
       if (this.isSaving) {
         this.pendingAutoSave = true
         return false
@@ -6018,7 +6174,11 @@ export default {
         this.isSaving = false
         if (this.pendingAutoSave) {
           this.pendingAutoSave = false
-          this.scheduleAutoSave()
+          if (requireActiveRoute && !this.isWorldBuilderRouteActive()) {
+            this.clearPendingAutoSave()
+          } else {
+            this.scheduleAutoSave()
+          }
         }
       }
     },
@@ -6051,6 +6211,39 @@ export default {
       }
     },
 
+    startExtractUiTicker() {
+      if (this.extractUiTickTimer) return
+      this.extractUiTickTimer = window.setInterval(() => {
+        this.extractUiTick += 1
+      }, 1000)
+    },
+    stopExtractUiTicker() {
+      if (this.extractUiTickTimer) {
+        clearInterval(this.extractUiTickTimer)
+        this.extractUiTickTimer = null
+      }
+    },
+    formatScanDuration(seconds) {
+      const safeSeconds = Math.max(0, Math.round(Number(seconds || 0)))
+      if (safeSeconds >= 3600) {
+        return `${Math.floor(safeSeconds / 3600)}时${Math.floor((safeSeconds % 3600) / 60)}分`
+      }
+      if (safeSeconds >= 60) {
+        return `${Math.floor(safeSeconds / 60)}分${safeSeconds % 60}秒`
+      }
+      return `${safeSeconds}秒`
+    },
+    formatScanCharCount(chars) {
+      const safeChars = Math.max(0, Math.round(Number(chars || 0)))
+      if (safeChars >= 10000) return `${(safeChars / 10000).toFixed(1)}万字`
+      return `${safeChars}字`
+    },
+    secondsSince(timestamp) {
+      if (!timestamp) return 0
+      const time = new Date(timestamp).getTime()
+      if (!Number.isFinite(time)) return 0
+      return Math.max(0, Math.round((Date.now() - time) / 1000))
+    },
     clearStoredExtractTask(taskId) {
       if (!taskId || localStorage.getItem(LAST_EXTRACT_TASK_KEY) === taskId) {
         localStorage.removeItem(LAST_EXTRACT_TASK_KEY)
@@ -6061,6 +6254,8 @@ export default {
         clearTimeout(this.extractPollTimer)
         this.extractPollTimer = null
       }
+      this.extractPollingTaskId = ''
+      this.stopExtractUiTicker()
       this.clearStoredExtractTask(taskId)
       if (taskId && this.extractTaskId && taskId !== this.extractTaskId) {
         return
@@ -6072,7 +6267,9 @@ export default {
       this.isResumingExtract = false
       this.showExtractScanPanel = false
       this.extractPanelDismissed = true
-      this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null }
+      this.showExtractResultDialog = false
+      this.extractResultDialogDismissed = false
+      this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null, updatedAt: '', startedAt: '', running: false, estimatedTextChars: 0, estimatedTextCharsLabel: '', textEstimateBreakdown: [] }
     },
     emitExtractTaskDeleted(taskId) {
       window.dispatchEvent(new CustomEvent(EXTRACT_TASK_DELETED_EVENT, { detail: { taskId } }))
@@ -6093,6 +6290,16 @@ export default {
           stage: this.extractProgress.stage || 'starting',
           progress: this.extractProgress.progress || 0,
           message: this.extractProgress.message || '提取任务已启动',
+          detail: this.extractProgress.detail || {},
+          ragProgress: this.extractProgress.ragProgress || null,
+          updatedAt: this.extractProgress.updatedAt || '',
+          startedAt: this.extractProgress.startedAt || '',
+          running: this.extractProgress.running || false,
+          extractedData: this.extractedData || null,
+          resultSummary: this.extractedResultSummary || null,
+          estimatedTextChars: this.extractProgress.estimatedTextChars || 0,
+          estimatedTextCharsLabel: this.extractProgress.estimatedTextCharsLabel || '',
+          textEstimateBreakdown: this.extractProgress.textEstimateBreakdown || [],
           ...extra,
         }
       }))
@@ -6121,28 +6328,68 @@ export default {
       this.$router.replace({ query })
     },
 
+    openExtractResultDialog(auto = false) {
+      if (!this.extractedData) return
+      this.showExtractResultDialog = true
+      if (!auto) {
+        this.extractResultDialogDismissed = false
+      }
+    },
+    dismissExtractResultDialog() {
+      this.showExtractResultDialog = false
+      this.extractResultDialogDismissed = true
+    },
+    discardExtractedData() {
+      this.extractedData = null
+      this.showExtractResultDialog = false
+      this.extractResultDialogDismissed = false
+      this.extractText = ''
+      this.selectedFiles = []
+    },
+    maybeOpenExtractResultDialog(progResp = {}) {
+      const status = progResp.status || progResp.stage || this.extractStatus
+      if (!progResp.done || !['completed', 'done'].includes(status)) return
+      if (!this.extractedData || this.extractResultDialogDismissed) return
+      this.showExtractScanPanel = false
+      this.extractPanelDismissed = true
+      this.showExtractResultDialog = true
+    },
     applyExtractProgress(progResp = {}) {
+      const rawDetail = progResp.detail || {}
+      const completedChunks = progResp.completed_chunks ?? rawDetail.completed_chunks
+      const failedChunks = progResp.failed_chunks ?? rawDetail.failed_chunks
+      const processedChunks = progResp.processed_chunks ?? rawDetail.processed_chunks ?? ((Number(completedChunks || 0) + Number(failedChunks || 0)) || 0)
+      const progressValue = Math.max(0, Math.min(100, Math.round(Number(progResp.progress || 0))))
       this.extractProgress = {
         status: progResp.status || progResp.stage || '',
         stage: progResp.stage || '',
-        progress: progResp.progress || 0,
+        progress: progressValue,
         message: progResp.message || '',
+        done: Boolean(progResp.done),
+        running: Boolean(progResp.running),
+        updatedAt: progResp.updated_at || rawDetail.updated_at || this.extractProgress.updatedAt || '',
+        startedAt: progResp.started_at || rawDetail.started_at || this.extractProgress.startedAt || '',
+        finishedAt: progResp.finished_at || rawDetail.finished_at || '',
+        estimatedTextChars: Number(progResp.estimated_text_chars ?? rawDetail.estimated_text_chars ?? this.extractProgress.estimatedTextChars ?? 0),
+        estimatedTextCharsLabel: progResp.estimated_text_chars_label || rawDetail.estimated_text_chars_label || this.extractProgress.estimatedTextCharsLabel || '',
+        textEstimateBreakdown: progResp.text_estimate_breakdown || rawDetail.text_estimate_breakdown || this.extractProgress.textEstimateBreakdown || [],
         detail: {
-          ...(progResp.detail || {}),
-          cache_key: progResp.cache_key || progResp.detail?.cache_key,
-          cache_status: progResp.cache_status || progResp.detail?.cache_status,
-          resumed_from_cache: progResp.resumed_from_cache ?? progResp.detail?.resumed_from_cache,
-          completed_chunks: progResp.completed_chunks ?? progResp.detail?.completed_chunks,
-          failed_chunks: progResp.failed_chunks ?? progResp.detail?.failed_chunks,
-          total_chunks: progResp.total_chunks ?? progResp.detail?.total_chunks,
-          processed_chars: progResp.processed_chars ?? progResp.detail?.processed_chars,
-          total_chars: progResp.total_chars ?? progResp.detail?.total_chars,
-          processed_chars_label: progResp.processed_chars_label || progResp.detail?.processed_chars_label,
-          total_chars_label: progResp.total_chars_label || progResp.detail?.total_chars_label,
-          context_window: progResp.context_window || progResp.detail?.context_window,
-          target_chunk_chars: progResp.target_chunk_chars || progResp.detail?.target_chunk_chars,
+          ...rawDetail,
+          cache_key: progResp.cache_key || rawDetail.cache_key,
+          cache_status: progResp.cache_status || rawDetail.cache_status,
+          resumed_from_cache: progResp.resumed_from_cache ?? rawDetail.resumed_from_cache,
+          completed_chunks: completedChunks,
+          failed_chunks: failedChunks,
+          processed_chunks: processedChunks,
+          total_chunks: progResp.total_chunks ?? rawDetail.total_chunks,
+          processed_chars: progResp.processed_chars ?? rawDetail.processed_chars,
+          total_chars: progResp.total_chars ?? rawDetail.total_chars,
+          processed_chars_label: progResp.processed_chars_label || rawDetail.processed_chars_label,
+          total_chars_label: progResp.total_chars_label || rawDetail.total_chars_label,
+          context_window: progResp.context_window || rawDetail.context_window,
+          target_chunk_chars: progResp.target_chunk_chars || rawDetail.target_chunk_chars,
         },
-        ragProgress: progResp.rag_progress || progResp.detail?.rag_progress || null,
+        ragProgress: progResp.rag_progress || rawDetail.rag_progress || null,
       }
       if (progResp.extraction_mode) {
         this.extractionMode = progResp.extraction_mode
@@ -6151,7 +6398,12 @@ export default {
         this.selectedTemplateId = this.resolveKnownTemplateId(progResp.template_id)
       }
       if (progResp.extracted_data) {
+        const wasEmpty = !this.extractedData
         this.extractedData = progResp.extracted_data
+        if (wasEmpty) {
+          this.extractResultDialogDismissed = false
+        }
+        this.maybeOpenExtractResultDialog(progResp)
       }
       if (progResp.error) {
         this.extractError = progResp.error
@@ -6162,16 +6414,39 @@ export default {
       if (this.extractPollTimer) {
         clearTimeout(this.extractPollTimer)
       }
+      this.extractPollingTaskId = taskId
+      this.startExtractUiTicker()
       const pollInterval = 1500
       const pollProgress = async () => {
+        if (this.extractPollingTaskId !== taskId) return
         try {
           const progResp = await worldApi.getExtractProgress(taskId)
+          if (this.extractPollingTaskId !== taskId) return
           this.applyExtractProgress(progResp)
+          this.emitExtractTaskSync(taskId, {
+            worldId: progResp.world_id || this.worldId,
+            extractionMode: progResp.extraction_mode || this.extractionMode,
+            status: progResp.status || progResp.stage || 'running',
+            stage: progResp.stage || 'starting',
+            progress: progResp.progress || 0,
+            message: progResp.message || '扫描任务正在运行',
+            detail: progResp.detail || {},
+            ragProgress: progResp.rag_progress || progResp.detail?.rag_progress || null,
+            updatedAt: progResp.updated_at || '',
+            startedAt: progResp.started_at || '',
+            finishedAt: progResp.finished_at || '',
+            running: Boolean(progResp.running),
+            done: Boolean(progResp.done),
+            resultSummary: progResp.result_summary || null,
+            extractedData: progResp.extracted_data || null,
+          })
           if (progResp.done) {
             this.isExtracting = false
             this.isCancellingExtract = false
             this.isPausingExtract = false
             this.isResumingExtract = false
+            this.extractPollingTaskId = ''
+            this.stopExtractUiTicker()
             if (['completed', 'failed', 'error', 'done'].includes(progResp.status || progResp.stage)) {
               this.clearStoredExtractTask(taskId)
             }
@@ -6180,7 +6455,7 @@ export default {
         } catch (e) {
           console.warn('进度轮询失败:', e)
         }
-        if (this.isExtracting) {
+        if (this.isExtracting && this.extractPollingTaskId === taskId) {
           this.extractPollTimer = setTimeout(pollProgress, pollInterval)
         }
       }
@@ -6212,7 +6487,9 @@ export default {
       this.isDeletingExtractTask = false
       this.showExtractScanPanel = true
       this.extractPanelDismissed = false
-      this.extractProgress = { status: 'running', stage: 'starting', progress: 0, message: '正在提交提取任务...', detail: {}, ragProgress: null }
+      this.showExtractResultDialog = false
+      this.extractResultDialogDismissed = false
+      this.extractProgress = { status: 'running', stage: 'starting', progress: 0, message: '正在提交提取任务并预估文本总量...', detail: {}, ragProgress: null, updatedAt: new Date().toISOString(), startedAt: new Date().toISOString(), running: true, estimatedTextChars: 0, estimatedTextCharsLabel: '', textEstimateBreakdown: [] }
       try {
         if (this.templateSwitchHasConflict) {
           const confirmed = window.confirm(this.buildTemplateConflictMessage(this.selectedTemplateId, '继续使用'))
@@ -6220,7 +6497,9 @@ export default {
             this.isExtracting = false
             this.showExtractScanPanel = false
             this.extractPanelDismissed = true
-            this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null }
+            this.showExtractResultDialog = false
+            this.extractResultDialogDismissed = false
+            this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null, updatedAt: '', startedAt: '', running: false, estimatedTextChars: 0, estimatedTextCharsLabel: '', textEstimateBreakdown: [] }
             return
           }
         }
@@ -6260,6 +6539,19 @@ export default {
         const taskId = initResponse.task_id
         this.extractTaskId = taskId || ''
         if (taskId) {
+          this.applyExtractProgress({
+            ...initResponse,
+            status: 'running',
+            stage: 'starting',
+            progress: 0,
+            done: false,
+            running: true,
+            detail: {
+              estimated_text_chars: initResponse.estimated_text_chars,
+              estimated_text_chars_label: initResponse.estimated_text_chars_label,
+              text_estimate_breakdown: initResponse.text_estimate_breakdown,
+            },
+          })
           localStorage.setItem(LAST_EXTRACT_TASK_KEY, taskId)
           this.emitExtractTaskSync(taskId, {
             worldId: initResponse.world_id || this.worldId,
@@ -6291,6 +6583,8 @@ export default {
         this.isExtracting = false
         this.isCancellingExtract = false
         this.isPausingExtract = false
+        this.extractPollingTaskId = ''
+        this.stopExtractUiTicker()
       }
     },
     closeExtractScanPanel() {
@@ -6335,6 +6629,8 @@ export default {
         await worldApi.pauseExtract(this.extractTaskId)
         this.extractProgress = {
           ...this.extractProgress,
+          status: 'pause_requested',
+          stage: 'pause_requested',
           message: '正在暂停解析，当前块完成后保存进度...',
         }
       } catch (error) {
@@ -6394,6 +6690,8 @@ export default {
         await worldApi.cancelExtract(this.extractTaskId)
         this.extractProgress = {
           ...this.extractProgress,
+          status: 'cancel_requested',
+          stage: 'cancel_requested',
           message: '正在强制中止当前扫描...',
         }
       } catch (error) {
@@ -6470,6 +6768,8 @@ export default {
         }
 
         this.extractedData = data
+        this.extractResultDialogDismissed = false
+        this.showExtractResultDialog = true
         if (data.template_id) {
           this.selectedTemplateId = this.resolveKnownTemplateId(data.template_id)
         }
@@ -6527,6 +6827,8 @@ export default {
         }
 
         this.extractedData = data
+        this.extractResultDialogDismissed = false
+        this.showExtractResultDialog = true
         if (data.template_id) {
           this.selectedTemplateId = this.resolveKnownTemplateId(data.template_id)
         }
@@ -6590,9 +6892,11 @@ export default {
         this.syncEntitySettingLinks()
         
         this.extractedData = null
+        this.showExtractResultDialog = false
+        this.extractResultDialogDismissed = false
         this.extractText = ''
         this.selectedFiles = []
-        await this.saveWorld({ silent: true, skipReload: true, successMessage: 'AI 提取结果已自动保存到世界观' })
+        await this.saveWorld({ silent: true, skipReload: true, successMessage: 'AI 提取结果已保存到世界观' })
       }
     },
     addAttribute() {
@@ -7710,27 +8014,27 @@ export default {
     } else {
       this.resetBlankWorldBuilder()
     }
+    this.restoreExtractTaskFromRoute()
   },
   deactivated() {
+    this.clearPendingAutoSave()
     this.disconnectWorldCollab()
+  },
+  beforeRouteLeave(to, from, next) {
+    this.clearPendingAutoSave()
+    next()
   },
   beforeUnmount() {
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     this.disconnectWorldCollab()
     window.removeEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
     window.removeEventListener('keydown', this.handleEditHistoryShortcut)
-    if (this.editHistoryTimer) {
-      clearTimeout(this.editHistoryTimer)
-      this.editHistoryTimer = null
-    }
-    if (this.autoSaveTimer) {
-      clearTimeout(this.autoSaveTimer)
-      this.autoSaveTimer = null
-    }
+    this.clearPendingAutoSave()
     if (this.extractPollTimer) {
       clearTimeout(this.extractPollTimer)
       this.extractPollTimer = null
     }
+    this.stopExtractUiTicker()
     if (this.agentWorldRefreshTimer) {
       clearTimeout(this.agentWorldRefreshTimer)
       this.agentWorldRefreshTimer = null
@@ -8368,6 +8672,39 @@ export default {
   margin-top: var(--spacing-sm);
   color: var(--wf-text-secondary);
   font-size: 0.9rem;
+}
+
+.scan-complete-banner {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(16, 185, 129, 0.10);
+  color: #86efac;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.scan-live-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--wf-accent);
+}
+
+.scan-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wf-accent);
+  box-shadow: 0 0 10px var(--wf-accent-glow);
+  animation: scanLivePulse 1.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes scanLivePulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 .deep-row {
@@ -12081,7 +12418,15 @@ export default {
   }
 }
 
+.extract-result-reminder,
 .extract-preview { background: var(--wf-bg-card); border: 1px solid var(--wf-border); border-radius: var(--radius-md); padding: var(--spacing-lg); margin-top: var(--spacing-md); box-shadow: none; }
+.extract-result-reminder {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-md);
+  color: var(--wf-text-secondary);
+}
 .preview-header { margin-bottom: var(--spacing-sm); border-bottom: 1px solid var(--neutral-gray-100); padding-bottom: var(--spacing-sm); }
 .preview-title { font-size: 1rem; font-weight: 600; color: var(--wf-text-secondary); }
 .rag-index-badge {
@@ -12111,6 +12456,32 @@ export default {
   max-height: 300px;
   overflow-y: auto;
 }
+
+.extract-result-dialog { width: min(860px, calc(100vw - 32px)); }
+.extract-result-dialog .dialog-body { max-height: calc(100vh - 220px); overflow-y: auto; }
+.dialog-subtitle { margin-top: 4px; color: var(--wf-text-muted); font-size: 0.9rem; }
+.extract-result-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+.extract-result-summary-grid > div {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+.extract-result-summary-grid span {
+  display: block;
+  color: var(--wf-text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+.extract-result-summary-grid strong { color: var(--wf-text-primary); font-size: 1rem; }
+.result-rag-badge { margin: 0 0 var(--spacing-md) 0; }
+.result-preview-code { max-height: 360px; }
+.extract-result-actions { display: flex; justify-content: flex-end; gap: var(--spacing-sm); }
 
 .llm-config-dialog { width: 680px; }
 .form-hint { font-size: 0.85rem; color: var(--wf-text-muted); }

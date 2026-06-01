@@ -23,11 +23,32 @@
           <div class="extract-progress-fill" :style="{ width: progress + '%' }"></div>
         </div>
         <p class="extract-message">{{ currentTask.message || '等待任务状态...' }}</p>
+        <p v-if="completionText" class="extract-complete-note">{{ completionText }}</p>
+        <p v-if="estimateText" class="extract-estimate-note">{{ estimateText }}<span v-if="estimateSourceText">（{{ estimateSourceText }}）</span></p>
+        <p v-if="activityText" class="extract-live-note"><span class="extract-live-dot"></span>{{ activityText }}</p>
 
-        <div class="extract-meta-grid">
+        <div v-if="isCompletedTask" class="extract-meta-grid">
+          <div>
+            <span>实体</span>
+            <strong>{{ finalSummary.entities }}</strong>
+          </div>
+          <div>
+            <span>事件</span>
+            <strong>{{ finalSummary.events }}</strong>
+          </div>
+          <div>
+            <span>设定</span>
+            <strong>{{ finalSummary.settings }}</strong>
+          </div>
+          <div>
+            <span>完成时间</span>
+            <strong>{{ finishedText }}</strong>
+          </div>
+        </div>
+        <div v-else class="extract-meta-grid">
           <div>
             <span>块进度</span>
-            <strong>{{ detail.completed_chunks || 0 }}/{{ detail.total_chunks || 0 }}</strong>
+            <strong>{{ processedChunks }}/{{ detail.total_chunks || 0 }}</strong>
           </div>
           <div>
             <span>已处理</span>
@@ -38,8 +59,16 @@
             <strong>{{ deepState.current_chunk_title || '准备中' }}</strong>
           </div>
           <div>
+            <span>最近心跳</span>
+            <strong>{{ heartbeatText || '等待中' }}</strong>
+          </div>
+          <div>
             <span>实体快照</span>
             <strong>{{ deepState.confirmed_entity_count || deepState.snapshot_stats?.entity_count || 0 }}</strong>
+          </div>
+          <div>
+            <span>当前块耗时</span>
+            <strong>{{ runtimeText || '0秒' }}</strong>
           </div>
         </div>
 
@@ -82,35 +111,144 @@ const currentTask = ref(null)
 const busy = ref(false)
 const router = useRouter()
 let timer = null
+let uiTickTimer = null
+const uiTick = ref(0)
 
 const status = computed(() => currentTask.value?.status || currentTask.value?.stage || '')
 const detail = computed(() => currentTask.value?.detail || {})
 const deepState = computed(() => detail.value.deep_state || currentTask.value?.deep_state || {})
 const progress = computed(() => Math.max(0, Math.min(100, Math.round(Number(currentTask.value?.progress || 0)))))
+const processedChunks = computed(() => {
+  const completed = Number(detail.value.completed_chunks || 0)
+  const failed = Number(detail.value.failed_chunks || 0)
+  return Number(detail.value.processed_chunks ?? (completed + failed)) || 0
+})
 const discoveries = computed(() => Array.isArray(deepState.value.discoveries) ? deepState.value.discoveries : [])
 const summaryText = computed(() => deepState.value.rolling_summary_preview || '')
-const isActiveTask = computed(() => ['running', 'pause_requested', 'cancel_requested'].includes(status.value))
-const canPause = computed(() => status.value === 'running')
+const activeStatuses = ['running', 'extracting', 'preparing', 'chunking', 'indexing', 'starting', 'pause_requested', 'cancel_requested']
+const isActiveTask = computed(() => activeStatuses.includes(status.value) || Boolean(currentTask.value?.running))
+const canPause = computed(() => ['running', 'extracting', 'preparing', 'chunking', 'indexing', 'starting'].includes(status.value))
 const canResume = computed(() => ['paused', 'stale', 'cancelled'].includes(status.value))
-const canCancel = computed(() => ['running', 'pause_requested', 'paused', 'stale'].includes(status.value))
-const canDelete = computed(() => ['paused', 'stale', 'cancelled', 'failed', 'completed', 'done'].includes(status.value) || (currentTask.value?.done && ['pause_requested', 'cancel_requested'].includes(status.value)))
+const canCancel = computed(() => ['running', 'extracting', 'preparing', 'chunking', 'indexing', 'starting', 'pause_requested', 'paused', 'stale'].includes(status.value))
+const canDelete = computed(() => ['paused', 'stale', 'cancelled', 'failed', 'error', 'completed', 'done'].includes(status.value) || (currentTask.value?.done && ['pause_requested', 'cancel_requested'].includes(status.value)))
 const shouldShow = computed(() => Boolean(currentTask.value) && (isActiveTask.value || canResume.value || canDelete.value))
 const taskTitle = computed(() => currentTask.value?.extraction_mode === 'deep' ? '深度扫描' : '快速扫描')
 const statusLabel = computed(() => ({
   running: '运行中',
+  starting: '启动中',
+  preparing: '准备中',
+  chunking: '切分中',
+  indexing: '索引中',
+  extracting: '解析中',
   pause_requested: '暂停中',
   paused: '已暂停',
   cancel_requested: '强制中止中',
   cancelled: '已强制中止，可继续',
   stale: '上次意外暂停，可继续',
   failed: '失败',
+  error: '失败',
+  done: '完成',
   completed: '完成',
 }[status.value] || '准备中'))
 const statusClass = computed(() => `is-${status.value || 'idle'}`)
+const isCompletedTask = computed(() => ['completed', 'done'].includes(status.value))
+const estimatedChars = computed(() => Number(currentTask.value?.estimated_text_chars || detail.value.estimated_text_chars || detail.value.total_chars || 0))
+const estimateText = computed(() => {
+  if (!estimatedChars.value) return ''
+  return `预估总文本：${currentTask.value?.estimated_text_chars_label || detail.value.estimated_text_chars_label || formatCharCount(estimatedChars.value)}`
+})
+const estimateSourceText = computed(() => {
+  const items = Array.isArray(currentTask.value?.text_estimate_breakdown) ? currentTask.value.text_estimate_breakdown : []
+  return items.slice(0, 3).map(item => `${item.name || '文本'} ${item.chars_label || formatCharCount(item.chars || 0)}`).join('；')
+})
+const finalSummary = computed(() => {
+  const result = currentTask.value?.extracted_data || currentTask.value?.result || {}
+  const settings = result.settings || {}
+  const fallback = {
+    entities: Array.isArray(result.entities) ? result.entities.length : 0,
+    events: Array.isArray(result.events) ? result.events.length : 0,
+    settings: Array.isArray(settings.items) ? settings.items.length : 0,
+  }
+  const summary = currentTask.value?.result_summary || fallback
+  return {
+    entities: Number(summary.entities || 0),
+    events: Number(summary.events || 0),
+    settings: Number(summary.settings || 0),
+  }
+})
+const completionText = computed(() => {
+  if (!isCompletedTask.value) return ''
+  return `扫描已完成：提取到 ${finalSummary.value.entities} 个实体、${finalSummary.value.events} 个事件${finalSummary.value.settings ? `、${finalSummary.value.settings} 条设定` : ''}。`
+})
+const finishedText = computed(() => {
+  const timestamp = currentTask.value?.finished_at || currentTask.value?.updated_at || currentTask.value?.updatedAt
+  if (!timestamp) return '刚刚'
+  const seconds = secondsSince(timestamp)
+  if (seconds <= 3) return '刚刚'
+  if (seconds < 60) return `${seconds}秒前`
+  return formatDuration(seconds) + '前'
+})
+const runtimeText = computed(() => {
+  uiTick.value
+  const elapsed = Number(deepState.value.current_chunk_elapsed_seconds || 0)
+  const startedAt = deepState.value.current_chunk_started_at
+  const seconds = elapsed || secondsSince(startedAt)
+  return seconds ? formatDuration(seconds) : ''
+})
+const heartbeatText = computed(() => {
+  uiTick.value
+  const heartbeatAt = deepState.value.current_chunk_heartbeat_at || currentTask.value?.updated_at || currentTask.value?.updatedAt
+  if (!heartbeatAt) return ''
+  const seconds = secondsSince(heartbeatAt)
+  return seconds <= 1 ? '刚刚' : `${seconds}秒前`
+})
+const activityText = computed(() => {
+  if (!isActiveTask.value) return ''
+  const parts = []
+  if (runtimeText.value) parts.push(`当前块已运行 ${runtimeText.value}`)
+  if (heartbeatText.value) parts.push(`最近心跳 ${heartbeatText.value}`)
+  return parts.length ? `扫描仍在运行：${parts.join('，')}` : '扫描仍在运行，正在等待最新进度...'
+})
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Math.round(Number(seconds || 0)))
+  if (safeSeconds >= 3600) return `${Math.floor(safeSeconds / 3600)}时${Math.floor((safeSeconds % 3600) / 60)}分`
+  if (safeSeconds >= 60) return `${Math.floor(safeSeconds / 60)}分${safeSeconds % 60}秒`
+  return `${safeSeconds}秒`
+}
+
+function formatCharCount(chars) {
+  const safeChars = Math.max(0, Math.round(Number(chars || 0)))
+  if (safeChars >= 10000) return `${(safeChars / 10000).toFixed(1)}万字`
+  return `${safeChars}字`
+}
+
+function secondsSince(timestamp) {
+  if (!timestamp) return 0
+  const time = new Date(timestamp).getTime()
+  if (!Number.isFinite(time)) return 0
+  return Math.max(0, Math.round((Date.now() - time) / 1000))
+}
+
+function startUiTicker() {
+  if (uiTickTimer) return
+  uiTickTimer = window.setInterval(() => { uiTick.value += 1 }, 1000)
+}
+
+function stopUiTicker() {
+  if (!uiTickTimer) return
+  clearInterval(uiTickTimer)
+  uiTickTimer = null
+}
 
 function schedule(ms = 1500) {
   clearTimeout(timer)
-  if (isActiveTask.value) timer = setTimeout(refreshCurrentTask, ms)
+  if (isActiveTask.value) {
+    startUiTicker()
+    timer = setTimeout(refreshCurrentTask, ms)
+  } else {
+    stopUiTicker()
+  }
 }
 
 function clearStoredTaskId(taskId) {
@@ -129,6 +267,7 @@ function handleExternalTaskDeleted(event) {
   clearStoredTaskId(taskId)
   currentTask.value = null
   clearTimeout(timer)
+  stopUiTicker()
 }
 
 function handleTaskSync(event) {
@@ -145,6 +284,17 @@ function handleTaskSync(event) {
     progress: event.detail?.progress || currentTask.value?.progress || 0,
     message: event.detail?.message || '提取任务已启动',
     detail: event.detail?.detail || currentTask.value?.detail || {},
+    rag_progress: event.detail?.ragProgress || event.detail?.rag_progress || currentTask.value?.rag_progress || null,
+    updated_at: event.detail?.updatedAt || event.detail?.updated_at || currentTask.value?.updated_at,
+    started_at: event.detail?.startedAt || event.detail?.started_at || currentTask.value?.started_at,
+    finished_at: event.detail?.finishedAt || event.detail?.finished_at || currentTask.value?.finished_at,
+    running: event.detail?.running ?? currentTask.value?.running,
+    done: event.detail?.done ?? currentTask.value?.done,
+    result_summary: event.detail?.resultSummary || event.detail?.result_summary || currentTask.value?.result_summary,
+    extracted_data: event.detail?.extractedData || event.detail?.extracted_data || currentTask.value?.extracted_data,
+    estimated_text_chars: event.detail?.estimatedTextChars ?? event.detail?.estimated_text_chars ?? currentTask.value?.estimated_text_chars,
+    estimated_text_chars_label: event.detail?.estimatedTextCharsLabel || event.detail?.estimated_text_chars_label || currentTask.value?.estimated_text_chars_label,
+    text_estimate_breakdown: event.detail?.textEstimateBreakdown || event.detail?.text_estimate_breakdown || currentTask.value?.text_estimate_breakdown || [],
   })
   minimized.value = false
   clearTimeout(timer)
@@ -179,12 +329,26 @@ async function loadInitialTask() {
 }
 
 function normalizeTask(task) {
+  const rawDetail = task.detail || {}
+  const completed = task.completed_chunks ?? rawDetail.completed_chunks
+  const failed = task.failed_chunks ?? rawDetail.failed_chunks
   return {
     ...task,
     task_id: task.task_id,
     world_id: task.world_id,
     status: task.status || task.stage,
-    detail: task.detail || {},
+    estimated_text_chars: task.estimated_text_chars ?? rawDetail.estimated_text_chars ?? rawDetail.total_chars ?? 0,
+    estimated_text_chars_label: task.estimated_text_chars_label || rawDetail.estimated_text_chars_label || '',
+    text_estimate_breakdown: task.text_estimate_breakdown || rawDetail.text_estimate_breakdown || [],
+    detail: {
+      ...rawDetail,
+      completed_chunks: completed,
+      failed_chunks: failed,
+      processed_chunks: task.processed_chunks ?? rawDetail.processed_chunks ?? ((Number(completed || 0) + Number(failed || 0)) || 0),
+      total_chunks: task.total_chunks ?? rawDetail.total_chunks,
+      processed_chars: task.processed_chars ?? rawDetail.processed_chars,
+      processed_chars_label: task.processed_chars_label || rawDetail.processed_chars_label,
+    },
     progress: task.progress || 0,
   }
 }
@@ -194,7 +358,7 @@ async function refreshCurrentTask() {
   try {
     const res = await worldApi.getExtractProgress(currentTask.value.task_id)
     currentTask.value = normalizeTask({ ...res, world_id: res.world_id || currentTask.value?.world_id })
-    if (['completed', 'failed'].includes(status.value)) {
+    if (['completed', 'done', 'failed', 'error'].includes(status.value)) {
       clearStoredTaskId(currentTask.value.task_id)
     }
   } catch (e) {
@@ -226,6 +390,7 @@ async function deleteTask() {
     clearStoredTaskId(taskId)
     currentTask.value = null
     clearTimeout(timer)
+    stopUiTicker()
     emitTaskDeleted(taskId)
   } finally {
     busy.value = false
@@ -266,6 +431,7 @@ onBeforeUnmount(() => {
   window.removeEventListener(TASK_DELETED_EVENT, handleExternalTaskDeleted)
   window.removeEventListener(TASK_SYNC_EVENT, handleTaskSync)
   clearTimeout(timer)
+  stopUiTicker()
 })
 </script>
 
@@ -400,6 +566,44 @@ onBeforeUnmount(() => {
   color: var(--wf-text-secondary);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.extract-complete-note,
+.extract-estimate-note,
+.extract-live-note {
+  margin: -2px 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.extract-complete-note {
+  padding: 8px 10px;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(16, 185, 129, 0.10);
+  color: #86efac;
+  font-weight: 600;
+}
+
+.extract-estimate-note {
+  color: var(--wf-text-secondary);
+}
+
+.extract-live-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--wf-accent);
+}
+
+.extract-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wf-accent);
+  box-shadow: 0 0 9px var(--wf-accent-glow);
+  animation: extractPulse 1.4s infinite;
+  flex: 0 0 auto;
 }
 
 .extract-meta-grid {

@@ -120,17 +120,19 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>切分预设</label>
+              <label>文本结构</label>
               <select v-model="chunkPreset" class="form-select">
                 <option v-for="preset in chunkPresets" :key="preset.id" :value="preset.id">
                   {{ preset.name }}
                 </option>
               </select>
-              <span class="form-hint">{{ selectedPresetDescription }}</span>
+              <span class="form-hint">{{ selectedPresetDescription }} 块大小与重叠会按文本量自动分配。</span>
             </div>
             <div class="form-group">
-              <label>切块大小（字符）</label>
-              <input v-model.number="chunkSize" type="number" min="100" max="4000" class="form-input" />
+              <label>自动分块策略</label>
+              <div class="auto-chunk-card">
+                {{ autoChunkStrategyText }}
+              </div>
             </div>
             <div class="form-group">
               <label>检索 Top-K</label>
@@ -255,13 +257,23 @@ const stats = ref({ document_count: 0, collection_name: '', has_documents: false
 // Add tab
 const addText = ref('')
 const addSource = ref('manual')
-const chunkSize = ref(800)
 const chunkPreset = ref('novel')
 const chunkPresets = ref([
   { id: 'novel', name: '小说章节', description: '优先按“第X章”等章节标题切分，超长章节自动再切块。' },
   { id: 'default', name: '通用段落', description: '按段落和句子边界切分。' },
 ])
 const selectedPresetDescription = computed(() => chunkPresets.value.find(p => p.id === chunkPreset.value)?.description || '')
+const autoChunkStrategyText = computed(() => {
+  const textLen = addSource.value === 'file'
+    ? pendingFiles.value.reduce((sum, file) => sum + (file.size || 0), 0)
+    : addText.value.length
+  if (!textLen) return '提交后按解析出的文本量自动选择：短文本细分，长文本增大块以降低索引成本。'
+  if (textLen <= 15000) return '预计短文本策略：约 800 字/块。'
+  if (textLen <= 120000) return '预计中等文本策略：约 1000 字/块。'
+  if (textLen <= 500000) return '预计长文本策略：约 1400 字/块。'
+  if (textLen <= 1500000) return '预计超长文本策略：约 1800 字/块。'
+  return '预计巨量文本策略：约 2200 字/块。'
+})
 const topK = ref(5)
 const adding = ref(false)
 const addResult = ref(null)
@@ -382,8 +394,6 @@ async function addToRag() {
       const res = await ragApi.uploadFile(
         selectedWorldId.value,
         pendingFiles.value,
-        chunkSize.value || undefined,
-        Math.floor((chunkSize.value || 800) / 8),
         chunkPreset.value,
       )
       const r = res.data
@@ -414,8 +424,6 @@ async function addToRag() {
   try {
     const taskRes = await ragApi.createIndexTask(selectedWorldId.value, {
       text: addText.value.trim(),
-      chunk_size: chunkSize.value || undefined,
-      chunk_overlap: Math.floor((chunkSize.value || 800) / 8),
       chunk_preset: chunkPreset.value,
       source: addSource.value,
     })
@@ -678,6 +686,20 @@ onMounted(async () => {
   font-size: 12px;
   color: var(--wf-text-muted);
   line-height: 1.4;
+}
+
+.auto-chunk-card {
+  width: 100%;
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-md);
+  background: var(--wf-bg-input);
+  color: var(--wf-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .form-textarea {

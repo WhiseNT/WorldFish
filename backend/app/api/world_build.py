@@ -68,6 +68,13 @@ def _now_iso():
     return datetime.now().isoformat()
 
 
+def _format_char_count(value):
+    value = max(0, int(value or 0))
+    if value >= 10_000:
+        return f'{value / 10_000:.1f}万字'
+    return f'{value}字'
+
+
 def _task_dir():
     path = os.path.join(Config.UPLOAD_FOLDER, 'extraction_tasks')
     os.makedirs(path, exist_ok=True)
@@ -187,6 +194,57 @@ def _task_result_summary(result):
     }
 
 
+def _coerce_int(value, default=0):
+    try:
+        return int(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _terminal_progress_interval():
+    return max(2, _coerce_int(getattr(Config, 'EXTRACTION_TERMINAL_LOG_INTERVAL_SECONDS', 10), 10))
+
+
+def _log_extract_task_progress(task_id, label='定时'):
+    with _tasks_lock:
+        task_ref = _extraction_tasks.get(task_id) or {}
+        task = {key: copy.deepcopy(value) for key, value in task_ref.items() if key != 'result'}
+    if not task:
+        logger.info(f'扫描进度[{task_id}] {label}: 任务记录不存在')
+        return
+
+    detail = task.get('detail') or {}
+    deep_state = detail.get('deep_state') or {}
+    completed_chunks = _coerce_int(detail.get('completed_chunks'))
+    failed_chunks = _coerce_int(detail.get('failed_chunks'))
+    processed_chunks = _coerce_int(detail.get('processed_chunks'), completed_chunks + failed_chunks)
+    total_chunks = _coerce_int(detail.get('total_chunks'))
+    processed_label = detail.get('processed_chars_label') or _format_char_count(detail.get('processed_chars') or 0)
+    total_label = detail.get('total_chars_label') or task.get('estimated_text_chars_label') or _format_char_count(task.get('text_length') or 0)
+    rag_progress = task.get('rag_progress') or detail.get('rag_progress') or {}
+    rag_text = ''
+    if rag_progress:
+        rag_text = f" | RAG {rag_progress.get('progress', 0)}% {rag_progress.get('stage') or ''}".rstrip()
+    current_title = deep_state.get('current_chunk_title') or '等待文本块'
+    elapsed = _coerce_int(deep_state.get('current_chunk_elapsed_seconds'))
+    elapsed_text = f' | 当前块耗时 {elapsed}s' if elapsed else ''
+    logger.info(
+        f"扫描进度[{task_id}] {label}: "
+        f"{task.get('status') or task.get('stage')}/{task.get('stage')} "
+        f"{task.get('progress', 0)}% | 块 {processed_chunks}/{total_chunks or '?'}"
+        f"（成功 {completed_chunks}, 失败 {failed_chunks}） | 文本 {processed_label}/{total_label}"
+        f" | 当前 {current_title}{elapsed_text}{rag_text} | {task.get('message') or ''}"
+    )
+
+
+def _run_extract_terminal_progress_logger(task_id, stop_event):
+    interval = _terminal_progress_interval()
+    _log_extract_task_progress(task_id, f'启动，之后每 {interval}s 输出')
+    while not stop_event.wait(interval):
+        _log_extract_task_progress(task_id, '定时')
+    _log_extract_task_progress(task_id, '结束')
+
+
 def _update_task(task_id, **updates):
     with _tasks_lock:
         task = _extraction_tasks.get(task_id)
@@ -274,6 +332,7 @@ def extract_world():
         _ensure_tasks_loaded()
         text = None
         uploaded_filenames = []
+        source_text_estimates = []
         direct_json_data = None
         request_data = request.get_json(silent=True) or {}
         if not isinstance(request_data, dict):
@@ -311,9 +370,16 @@ def extract_world():
                             uploaded_filenames.append(filename)
                     else:
                         extracted_text = FileParser.extract_text(file_path)
-                        logger.info(f"文本提取成功: {filename} ({len(extracted_text)} 字符)")
+                        extracted_len = len(extracted_text or '')
+                        logger.info(f"文本提取成功: {filename} ({extracted_len} 字符)")
                         text_parts.append(f"=== {filename} ===\n{extracted_text}")
                         uploaded_filenames.append(filename)
+                        source_text_estimates.append({
+                            'source': 'file',
+                            'name': filename,
+                            'chars': extracted_len,
+                            'chars_label': _format_char_count(extracted_len),
+                        })
                 except Exception as file_err:
                     logger.error(f"文件处理失败 {filename}: {file_err}")
                     failed_files.append(f"{filename}: {str(file_err)}")
@@ -353,10 +419,23 @@ def extract_world():
             form_text = request.form.get('text', '').strip()
             if form_text:
                 text = (text + "\n\n" + form_text) if text else form_text
+                source_text_estimates.append({
+                    'source': 'input',
+                    'name': '手动输入',
+                    'chars': len(form_text),
+                    'chars_label': _format_char_count(len(form_text)),
+                })
 
         # 普通 JSON 请求
         if not text and direct_json_data is None:
             text = str(request_data.get('text') or '').strip()
+            if text:
+                source_text_estimates.append({
+                    'source': 'input',
+                    'name': '手动输入',
+                    'chars': len(text),
+                    'chars_label': _format_char_count(len(text)),
+                })
             # 支持直接 POST JSON 数据
             if not text and (
                 'world_info' in request_data or 'entities' in request_data or 'events' in request_data or 'settings' in request_data
@@ -409,6 +488,13 @@ def extract_world():
                     'success': False,
                     'message': '当前世界观知识库为空，无法扫描。'
                 }), 400
+            source_text_estimates.append({
+                'source': 'rag',
+                'name': 'RAG 知识库',
+                'chars': len(rag_scan_text),
+                'chars_label': _format_char_count(len(rag_scan_text)),
+                'document_count': int((rag_scan_payload or {}).get('document_count') or 0),
+            })
 
         scan_text_parts = []
         if input_text:
@@ -416,6 +502,15 @@ def extract_world():
         if rag_scan_text:
             scan_text_parts.append(rag_scan_text)
         scan_text = '\n\n'.join(part for part in scan_text_parts if part).strip()
+        estimated_text_chars = len(scan_text or '')
+        estimated_text_chars_label = _format_char_count(estimated_text_chars)
+        if estimated_text_chars and not source_text_estimates:
+            source_text_estimates.append({
+                'source': scan_source,
+                'name': '扫描文本',
+                'chars': estimated_text_chars,
+                'chars_label': estimated_text_chars_label,
+            })
 
         if not scan_text and direct_json_data is None:
             logger.warning(
@@ -436,6 +531,10 @@ def extract_world():
                 'extracted_data': direct_json_data,
                 'template_id': template_payload['template_id'],
                 'template_name': template_payload['template_name'],
+                'estimated_text_chars': 0,
+                'estimated_text_chars_label': _format_char_count(0),
+                'text_estimate_breakdown': source_text_estimates,
+                'message': '结构化 JSON 已导入，无需进行文本扫描。',
             }
             if uploaded_filenames:
                 resp['source_files'] = uploaded_filenames
@@ -464,7 +563,7 @@ def extract_world():
                 'status': 'running',
                 'stage': 'starting',
                 'progress': 0,
-                'message': '正在启动提取...',
+                'message': f'已预估总文本 {estimated_text_chars_label}，正在启动提取...',
                 'done': False,
                 'result': None,
                 'error': None,
@@ -477,6 +576,9 @@ def extract_world():
                 'source_files': uploaded_filenames,
                 'text_length': len(scan_text or ''),
                 'input_text_length': len(input_text or ''),
+                'estimated_text_chars': estimated_text_chars,
+                'estimated_text_chars_label': estimated_text_chars_label,
+                'text_estimate_breakdown': source_text_estimates,
                 'rag_scan_document_count': int((rag_scan_payload or {}).get('document_count') or 0),
                 'created_at': _now_iso(),
                 'updated_at': _now_iso(),
@@ -488,14 +590,27 @@ def extract_world():
         def run_extraction():
             _rag_result = [None]
             _rag_thread = None
+            _progress_log_stop = threading.Event()
+            _progress_log_thread = threading.Thread(
+                target=_run_extract_terminal_progress_logger,
+                args=(task_id, _progress_log_stop),
+                daemon=True,
+            )
+            _progress_log_thread.start()
+
+            def stop_terminal_progress_logger():
+                _progress_log_stop.set()
+                _progress_log_thread.join(timeout=0.5)
 
             try:
                 def progress_cb(stage, progress, message, detail=None):
                     detail = detail or {}
                     total_chunks = int(detail.get('total_chunks') or 0)
                     completed_chunks = int(detail.get('completed_chunks') or 0)
+                    failed_chunks = int(detail.get('failed_chunks') or 0)
+                    processed_chunks = int(detail.get('processed_chunks') or (completed_chunks + failed_chunks))
                     if extraction_mode == 'deep' and stage == 'extracting' and total_chunks > 0:
-                        progress = 8 + int(completed_chunks / max(total_chunks, 1) * 80)
+                        progress = 8 + int(processed_chunks / max(total_chunks, 1) * 80)
                     with _tasks_lock:
                         if task_id in _extraction_tasks:
                             status = _extraction_tasks[task_id].get('status') or 'running'
@@ -577,8 +692,6 @@ def extract_world():
                             rag = RagService(world_id)
                             doc_ids = rag.add_text_chunks(
                                 text=input_text,
-                                chunk_size=volume_profile['rag_chunk_size'],
-                                chunk_overlap=volume_profile['rag_chunk_overlap'],
                                 source="extraction",
                                 metadata={
                                     "filename": ", ".join(uploaded_filenames) if uploaded_filenames else "direct_text",
@@ -590,7 +703,7 @@ def extract_world():
                                     "extraction_mode": extraction_mode,
                                     "scan_source": scan_source,
                                 },
-                                chunk_preset=volume_profile['rag_chunk_preset'],
+                                chunk_preset=None,
                                 progress_callback=rag_progress_cb,
                                 should_stop=lambda: should_cancel() or should_pause(),
                             )
@@ -669,6 +782,7 @@ def extract_world():
                         })
                         _persist_task(task_id)
                     _delete_task_result_file(task_id, _extraction_tasks.get(task_id, {}))
+                    stop_terminal_progress_logger()
                     _running_threads.discard(task_id)
                     return
 
@@ -696,6 +810,7 @@ def extract_world():
                         'finished_at': _now_iso(),
                     })
                     _persist_task(task_id)
+                stop_terminal_progress_logger()
                 _running_threads.discard(task_id)
             except Exception as e:
                 logger.error(f"后台提取失败 [{task_id}]: {e}")
@@ -708,6 +823,7 @@ def extract_world():
                         'finished_at': _now_iso(),
                     })
                     _persist_task(task_id)
+                stop_terminal_progress_logger()
                 _running_threads.discard(task_id)
 
         _running_threads.add(task_id)
@@ -717,11 +833,14 @@ def extract_world():
             'success': True,
             'task_id': task_id,
             'world_id': world_id,
-            'message': '提取任务已启动',
+            'message': f'已预估总文本 {estimated_text_chars_label}，提取任务已启动',
             'extraction_mode': extraction_mode,
             'template_id': template_payload['template_id'],
             'template_name': template_payload['template_name'],
             'force_rebuild': force_rebuild,
+            'estimated_text_chars': estimated_text_chars,
+            'estimated_text_chars_label': estimated_text_chars_label,
+            'text_estimate_breakdown': source_text_estimates,
         }
         if uploaded_filenames:
             resp['source_files'] = uploaded_filenames
@@ -831,6 +950,13 @@ def pause_extract(task_id):
 
 
 def _run_resume_task(task_id):
+    progress_log_stop = threading.Event()
+    progress_log_thread = threading.Thread(
+        target=_run_extract_terminal_progress_logger,
+        args=(task_id, progress_log_stop),
+        daemon=True,
+    )
+    progress_log_thread.start()
     try:
         with _tasks_lock:
             task_ref = _extraction_tasks.get(task_id, {})
@@ -841,8 +967,10 @@ def _run_resume_task(task_id):
             detail = detail or {}
             total_chunks = int(detail.get('total_chunks') or 0)
             completed_chunks = int(detail.get('completed_chunks') or 0)
+            failed_chunks = int(detail.get('failed_chunks') or 0)
+            processed_chunks = int(detail.get('processed_chunks') or (completed_chunks + failed_chunks))
             if total_chunks > 0:
-                progress = 8 + int(completed_chunks / max(total_chunks, 1) * 80)
+                progress = 8 + int(processed_chunks / max(total_chunks, 1) * 80)
             _update_task(
                 task_id,
                 status='running',
@@ -883,6 +1011,8 @@ def _run_resume_task(task_id):
                 })
                 _persist_task(task_id)
             _delete_task_result_file(task_id, _extraction_tasks.get(task_id, {}))
+            progress_log_stop.set()
+            progress_log_thread.join(timeout=0.5)
             return
         with _tasks_lock:
             task = _extraction_tasks.get(task_id, {})
@@ -904,6 +1034,8 @@ def _run_resume_task(task_id):
         logger.error(f"继续提取失败 [{task_id}]: {exc}")
         _update_task(task_id, status='failed', stage='error', done=True, error=str(exc), message=f'继续失败: {str(exc)[:100]}', finished_at=_now_iso())
     finally:
+        progress_log_stop.set()
+        progress_log_thread.join(timeout=0.5)
         _running_threads.discard(task_id)
 
 
@@ -974,15 +1106,27 @@ def extract_progress(task_id):
         'template_id': task.get('template_id') or DEFAULT_WORLD_TEMPLATE_ID,
         'template_name': task.get('template_name') or get_world_template_summary(task.get('template_id')).get('name'),
         'force_rebuild': task.get('force_rebuild'),
+        'running': task_id in _running_threads,
+        'created_at': task.get('created_at'),
+        'started_at': task.get('started_at'),
+        'updated_at': task.get('updated_at'),
+        'finished_at': task.get('finished_at'),
+        'scan_source': task.get('scan_source'),
+        'estimated_text_chars': int(task.get('estimated_text_chars') or task.get('text_length') or 0),
+        'estimated_text_chars_label': task.get('estimated_text_chars_label') or _format_char_count(task.get('estimated_text_chars') or task.get('text_length') or 0),
+        'text_estimate_breakdown': task.get('text_estimate_breakdown') or [],
     }
     detail = task.get('detail') or {}
-    for key in ['cache_key', 'cache_status', 'resumed_from_cache', 'completed_chunks', 'failed_chunks', 'total_chunks', 'processed_chars', 'total_chars', 'processed_chars_label', 'total_chars_label', 'context_window', 'target_chunk_chars']:
+    for key in ['cache_key', 'cache_status', 'resumed_from_cache', 'completed_chunks', 'failed_chunks', 'processed_chunks', 'total_chunks', 'processed_chars', 'total_chars', 'processed_chars_label', 'total_chars_label', 'context_window', 'target_chunk_chars']:
         if key in detail:
             resp[key] = detail[key]
+    if task.get('result_summary'):
+        resp['result_summary'] = task.get('result_summary')
     if task['done']:
         result = _load_task_result(task_id, task)
         if result:
             resp['extracted_data'] = result
+            resp['result_summary'] = task.get('result_summary') or _task_result_summary(result)
     if task.get('error'):
         resp['error'] = task['error']
     return jsonify(resp)
