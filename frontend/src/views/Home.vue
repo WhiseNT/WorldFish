@@ -12,7 +12,7 @@
           <span class="title-sub">创世鱼缸</span>
         </h1>
         <p class="hero-desc">
-          创造属于你的世界，并让它不断进化。
+          让世界，自己生长。
         </p>
         <div class="hero-actions">
           <router-link

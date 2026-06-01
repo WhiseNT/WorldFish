@@ -1755,6 +1755,12 @@ const CLIENT_ID_KEY = 'worldfish:clientId'
 const EDIT_HISTORY_LIMIT = 80
 const EDIT_HISTORY_CAPTURE_DELAY = 350
 const DEFAULT_WORLD_TEMPLATE_ID = 'generic'
+const CACHE_TTL_MS = 60000
+
+let cachedWorldTemplates = null
+let cachedWorldTemplatesAt = 0
+let cachedLlmConfig = null
+let cachedLlmConfigAt = 0
 
 const DEFAULT_TEMPLATE_DETAIL_SECTIONS = [
   {
@@ -5233,10 +5239,18 @@ export default {
     },
     async loadWorldTemplates() {
       try {
-        const response = await worldApi.listWorldTemplates()
-        const responseTemplates = Array.isArray(response.templates) && response.templates.length > 0
-          ? response.templates
-          : buildFallbackWorldTemplates()
+        const now = Date.now()
+        let responseTemplates = null
+        if (cachedWorldTemplates && now - cachedWorldTemplatesAt < CACHE_TTL_MS) {
+          responseTemplates = cachedWorldTemplates
+        } else {
+          const response = await worldApi.listWorldTemplates()
+          responseTemplates = Array.isArray(response.templates) && response.templates.length > 0
+            ? response.templates
+            : buildFallbackWorldTemplates()
+          cachedWorldTemplates = responseTemplates
+          cachedWorldTemplatesAt = now
+        }
         const fallbackTemplate = buildFallbackWorldTemplates()[0]
         this.worldTemplates = responseTemplates.map(template => ({
           ...fallbackTemplate,
@@ -5289,13 +5303,24 @@ export default {
     },
     async loadLlmConfigStatus() {
       try {
-        const response = await worldApi.getLlmConfig()
-        this.llmConfigStatus = response.config || this.llmConfigStatus
+        const now = Date.now()
+        let config = null
+        if (cachedLlmConfig && now - cachedLlmConfigAt < CACHE_TTL_MS) {
+          config = cachedLlmConfig
+        } else {
+          const response = await worldApi.getLlmConfig()
+          config = response.config || null
+          cachedLlmConfig = config
+          cachedLlmConfigAt = now
+        }
+        if (config) {
+          this.llmConfigStatus = config
+        }
         if (!this.llmConfig.baseUrl) {
-          this.llmConfig.baseUrl = this.llmConfigStatus.base_url || 'https://api.openai.com/v1'
+          this.llmConfig.baseUrl = (config && config.base_url) || this.llmConfigStatus.base_url || 'https://api.openai.com/v1'
         }
         if (!this.llmConfig.modelName) {
-          this.llmConfig.modelName = this.llmConfigStatus.model_name || ''
+          this.llmConfig.modelName = (config && config.model_name) || this.llmConfigStatus.model_name || ''
         }
       } catch (error) {
         console.error('加载 LLM 配置失败:', error)
@@ -5646,6 +5671,123 @@ export default {
         })
       }
     },
+    resetBlankWorldBuilder() {
+      this.worldId = ''
+      this.linkedProjectId = ''
+      this.linkedProjectStatus = ''
+      this.isSaving = false
+      this.isDeleting = false
+      this.isProjectLaunching = false
+      this.saveStatus = ''
+      this.pendingAutoSave = false
+      this.extractError = ''
+      this.activeTab = 'basic'
+      this.world = {
+        name: '',
+        description: '',
+        era: '',
+        anchor_time: '',
+        writing_style: '',
+        reference_text: '',
+      }
+      this.selectedTemplateId = this.resolveKnownTemplateId(this.worldTemplateDefaultId || DEFAULT_WORLD_TEMPLATE_ID)
+      this.savedWorldTemplateId = this.selectedTemplateId
+      this.savedWorldTemplateName = this.getWorldTemplateName(this.savedWorldTemplateId)
+      this.extractText = ''
+      this.extractScanSource = 'input'
+      this.extractionMode = 'fast'
+      this.isExtracting = false
+      this.extractProgress = { status: '', stage: '', progress: 0, message: '', detail: {}, ragProgress: null }
+      this.extractTaskId = ''
+      this.isCancellingExtract = false
+      this.isPausingExtract = false
+      this.isResumingExtract = false
+      this.isDeletingExtractTask = false
+      this.showExtractScanPanel = false
+      this.extractPanelDismissed = false
+      this.extractedData = null
+      if (this.extractPollTimer) {
+        clearTimeout(this.extractPollTimer)
+        this.extractPollTimer = null
+      }
+      this.selectedFiles = []
+      this.isDragOver = false
+      this.entities = []
+      this.events = []
+      if (this.agentWorldRefreshTimer) {
+        clearTimeout(this.agentWorldRefreshTimer)
+        this.agentWorldRefreshTimer = null
+      }
+      this.stopEvolutionHistoryPolling()
+      this.evolutionHistory = []
+      this.evolutionHistoryError = ''
+      this.showEntitiesExpanded = true
+      this.showEventsExpanded = true
+      this.expandedBios = {}
+      this.entityItems = []
+      this.eventItems = []
+      this.disabledEntityIds = new Set()
+      this.disabledEventIds = new Set()
+      this.showAddEntityDialog = false
+      this.showAddEventDialog = false
+      this.showEditEventDialog = false
+      this.newEntity = {
+        name: '',
+        type: '',
+        customType: '',
+        attributes: [],
+      }
+      this.newEvent = {
+        name: '',
+        description: '',
+        date: '',
+        selectedSettings: [],
+      }
+      this.mapData = createDefaultMapData()
+      this.selectedEvent = null
+      this.selectedTimelineItemId = ''
+      this.timelineSearchQuery = ''
+      this.timelineTypeFilter = 'all'
+      this.calendarGraphicZoom = 1
+      this.calendarGraphicCenter = 0
+      this.activeCategory = 'character'
+      this.activeCollectionId = ''
+      this.activeCollectionSnapshot = null
+      this.settingsSearchQuery = ''
+      this.settingCategories = createDefaultSettingCategories()
+      this.settings = createDefaultSettings()
+      this.showNewSettingDialog = false
+      this.currentSetting = null
+      this.currentSettingNewAlias = ''
+      this.activeSidebarSettingId = ''
+      this.showSettingDetail = false
+      this.showSettingSelector = false
+      this.selectedSettings = []
+      this.selectedCategoryFilter = 'all'
+      this.showCalendarEdit = false
+      this.showCalendarDetailEdit = false
+      this.currentCalendar = null
+      this.calendars = createDefaultCalendars()
+      this.editCalendars = []
+      if (this.collabPollTimer) {
+        clearInterval(this.collabPollTimer)
+        this.collabPollTimer = null
+      }
+      if (this.collabHeartbeatTimer) {
+        clearInterval(this.collabHeartbeatTimer)
+        this.collabHeartbeatTimer = null
+      }
+      this.collabRoom = null
+      this.collabMembers = []
+      this.collabEvents = []
+      this.collabLatestSeq = 0
+      this.collabStatus = '协作未连接'
+      this.hasRemoteWorldUpdate = false
+      this.remoteWorldEvent = null
+      this.lastPublishedWorldSignature = ''
+      this.markWorldAsSaved(this.buildWorldPayload())
+      this.resetEditHistory()
+    },
     syncRouteWorldId() {
       if (!this.worldId || !this.$router || !this.$route) {
         return
@@ -5674,7 +5816,7 @@ export default {
         this.applyStoredWorld(response.world, { settingsViewState })
         await this.loadLinkedProject(worldId)
         await this.loadEvolutionHistory(worldId)
-        await this.ensureWorldCollabRoom()
+        this.$nextTick(() => this.ensureWorldCollabRoom())
         this.saveStatus = successStatus
       } catch (error) {
         console.error('加载世界观失败:', error)
@@ -7539,11 +7681,25 @@ export default {
     this.loadLlmConfigStatus()
     this.loadWorldTemplates()
 
-    const worldId = this.$route?.query?.worldId
+    const worldId = String(this.$route?.query?.worldId || '').trim()
     if (worldId) {
       this.loadWorld(worldId)
+    } else {
+      this.resetBlankWorldBuilder()
     }
     this.restoreExtractTaskFromRoute()
+  },
+  activated() {
+    this.loadLlmConfigStatus()
+    this.loadWorldTemplates()
+    const worldId = String(this.$route?.query?.worldId || '').trim()
+    if (worldId && worldId !== this.worldId) {
+      this.loadWorld(worldId)
+    } else if (worldId && worldId === this.worldId) {
+      this.loadWorld(worldId, { preserveSettingState: true, successStatus: '' })
+    } else {
+      this.resetBlankWorldBuilder()
+    }
   },
   beforeUnmount() {
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
