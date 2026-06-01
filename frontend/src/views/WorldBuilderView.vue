@@ -11579,21 +11579,28 @@ export default {
 .entity-card-list, .event-card-list {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--spacing-sm);
 }
 .entity-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: var(--spacing-md);
+  display: block;
+  column-width: 320px;
+  column-gap: var(--spacing-md);
 }
 .entity-card {
   content-visibility: auto;
   contain-intrinsic-size: auto 200px;
+  display: inline-block;
+  width: 100%;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  align-self: start;
+  margin: 0 0 var(--spacing-md);
   background: var(--wf-bg-card);
   border: 1px solid var(--wf-border);
   border-radius: var(--radius-md);
   padding: var(--spacing-md);
-  min-width: 240px;
+  min-width: 0;
   flex: 1 1 auto;
   max-width: 360px;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), opacity 0.2s;
