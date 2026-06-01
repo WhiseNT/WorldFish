@@ -74,9 +74,23 @@ npm run dev
 
 默认情况下：
 
-- 前端开发服务器：`http://localhost:3000`
-- 后端服务：`http://localhost:5001`
+- 前端服务：`http://localhost:5567`
+- 后端服务：`http://localhost:5568`
 - 前端会通过 Vite 代理把 `/api` 转发到后端
+
+也可以直接使用启动脚本：
+
+```bash
+npm start
+```
+
+Windows 用户也可以双击 `start.bat`；macOS / Linux 用户可运行 `sh start.sh`。
+
+如需修改端口，可在启动前设置环境变量：
+
+```bash
+FRONTEND_PORT=5570 FLASK_PORT=5571 npm start
+```
 
 如果你想单独启动：
 
@@ -107,7 +121,7 @@ docker compose up -d
 
 - 默认不需要提前准备 `.env`，API Key 可在启动后通过前端 **LLM 配置** 页面填写
 - 如需预置端口、密钥或模型配置，可参考 `.env.example` 自行创建 `.env`
-- 默认端口：前端 `3000`、后端 `5001`
+- 默认端口：前端 `5567`、后端 `5568`
 - `backend/uploads` 会被挂载到容器中，用于保存上传数据与模拟数据
 
 如果你需要查看日志：
@@ -129,7 +143,8 @@ docker compose down
 - `npm run setup`：安装根目录依赖并安装前端依赖
 - `npm run setup:backend`：同步后端 Python 依赖
 - `npm run setup:all`：一次性完成全部依赖安装
-- `npm run dev`：同时启动后端和前端开发环境
+- `npm start`：使用启动脚本同时启动后端和前端，并检查默认端口是否可用
+- `npm run dev`：等同于 `npm start`
 - `npm run backend`：仅启动后端
 - `npm run frontend`：仅启动前端
 - `npm run build`：构建前端生产包

@@ -38,7 +38,7 @@ def main():
     
     # 获取运行配置
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
-    port = int(os.environ.get('FLASK_PORT', 5001))
+    port = int(os.environ.get('FLASK_PORT', 5568))
     debug = Config.DEBUG
     
     # 启动服务（use_reloader=False 避免 Windows 下 Flask debug 模式产生僵尸子进程）

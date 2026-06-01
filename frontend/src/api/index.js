@@ -2,7 +2,7 @@ import axios from 'axios'
 import i18n from '../i18n'
 
 const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '',
   timeout: 1800000,
 })
 

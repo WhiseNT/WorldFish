@@ -5,8 +5,8 @@ services:
     # image: ghcr.nju.edu.cn/666ghj/worldfish:latest
     container_name: worldfish
     ports:
-      - "3000:3000"
-      - "5001:5001"
+      - "5567:5567"
+      - "5568:5568"
     restart: unless-stopped
     volumes:
       - ./backend/uploads:/app/backend/uploads

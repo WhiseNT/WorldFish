@@ -17,6 +17,22 @@ _FILE_FMT = logging.Formatter(
     '[%(asctime)s] %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s',
     '%Y-%m-%d %H:%M:%S',
 )
+_SHARED_FILE_HANDLER = None
+_SHARED_CONSOLE_HANDLER = None
+
+
+class WindowsSafeRotatingFileHandler(RotatingFileHandler):
+    """避免 Windows 下日志轮转文件被短暂占用时打断请求线程。"""
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+        except PermissionError:
+            if self.stream:
+                self.stream.close()
+                self.stream = None
+            self.mode = 'a'
+            self.stream = self._open()
 
 
 def _utf8_stdout():
@@ -30,7 +46,7 @@ def _utf8_stdout():
 
 def _make_file_handler():
     filename = datetime.now().strftime('%Y-%m-%d') + '.log'
-    handler = RotatingFileHandler(
+    handler = WindowsSafeRotatingFileHandler(
         os.path.join(_LOG_ROOT, filename),
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
@@ -49,23 +65,59 @@ def _make_console_handler():
     return handler
 
 
+def _get_shared_file_handler():
+    global _SHARED_FILE_HANDLER
+    if _SHARED_FILE_HANDLER is None:
+        _SHARED_FILE_HANDLER = _make_file_handler()
+    return _SHARED_FILE_HANDLER
+
+
+def _get_shared_console_handler():
+    global _SHARED_CONSOLE_HANDLER
+    if _SHARED_CONSOLE_HANDLER is None:
+        _SHARED_CONSOLE_HANDLER = _make_console_handler()
+    return _SHARED_CONSOLE_HANDLER
+
+
+def _close_owned_handlers(logger):
+    shared_handlers = {_SHARED_FILE_HANDLER, _SHARED_CONSOLE_HANDLER}
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        if handler not in shared_handlers:
+            handler.close()
+
+
 def setup_logger(name='worldfish', level=logging.DEBUG):
     os.makedirs(_LOG_ROOT, exist_ok=True)
+    base_logger = logging.getLogger('worldfish')
+    base_logger.setLevel(level)
+    base_logger.propagate = False
+
+    if not base_logger.handlers:
+        base_logger.addHandler(_get_shared_file_handler())
+        base_logger.addHandler(_get_shared_console_handler())
+
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.propagate = False
-    if logger.handlers:
+
+    if name == 'worldfish':
+        return base_logger
+
+    if name.startswith('worldfish.'):
+        if logger.handlers:
+            _close_owned_handlers(logger)
+        logger.propagate = True
         return logger
-    logger.addHandler(_make_file_handler())
-    logger.addHandler(_make_console_handler())
+
+    if not logger.handlers:
+        logger.addHandler(_get_shared_file_handler())
+        logger.addHandler(_get_shared_console_handler())
+    logger.propagate = False
     return logger
 
 
 def get_logger(name='worldfish'):
-    target = logging.getLogger(name)
-    if not target.handlers:
-        return setup_logger(name)
-    return target
+    return setup_logger(name)
 
 
 _default = setup_logger()
