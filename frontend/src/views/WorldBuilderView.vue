@@ -1,6 +1,6 @@
 <template>
   <div class="world-builder">
-    <Teleport v-if="collabRoom" to="#wf-navbar-below-right">
+    <Teleport v-if="showCollabWidget" to="#wf-navbar-below-right">
       <div class="collab-status-card active">
         <span>协作已连接</span>
         <button type="button" class="inline-sync-btn" @click="openCollabRoom">打开房间</button>
@@ -3748,6 +3748,7 @@ export default {
       collabStatus: '协作未连接',
       collabPollTimer: null,
       collabHeartbeatTimer: null,
+      isCollabWidgetActive: false,
       hasRemoteWorldUpdate: false,
       remoteWorldEvent: null,
       lastPublishedWorldSignature: ''
@@ -4465,16 +4466,17 @@ export default {
     },
     projectActionLabel() {
       if (this.isProjectLaunching) {
-        return '项目初始化中...'
-      }
-      if (this.hasRunnableProject) {
-        return '打开关联项目'
+        return this.linkedProjectId ? '正在打开项目...' : '正在创建项目...'
       }
       if (this.linkedProjectId) {
-        return '继续初始化项目'
+        return '打开推演项目'
       }
       return '创建推演项目'
     },
+    showCollabWidget() {
+      return this.isCollabWidgetActive && Boolean(this.collabRoom) && this.$route?.name === 'WorldBuilder'
+    },
+
     templateCandidates() {
       return Array.isArray(this.worldTemplates) ? this.worldTemplates : []
     },
@@ -5532,6 +5534,26 @@ export default {
       this.collabPollTimer = setInterval(() => this.pollWorldCollabEvents().catch(() => {}), 3000)
       this.collabHeartbeatTimer = setInterval(() => this.sendWorldCollabHeartbeat().catch(() => {}), 10000)
     },
+    disconnectWorldCollab({ clearWidget = true } = {}) {
+      if (this.collabPollTimer) {
+        clearInterval(this.collabPollTimer)
+        this.collabPollTimer = null
+      }
+      if (this.collabHeartbeatTimer) {
+        clearInterval(this.collabHeartbeatTimer)
+        this.collabHeartbeatTimer = null
+      }
+      this.collabRoom = null
+      this.collabMembers = []
+      this.collabEvents = []
+      this.collabLatestSeq = 0
+      this.collabStatus = '协作未连接'
+      this.hasRemoteWorldUpdate = false
+      this.remoteWorldEvent = null
+      if (clearWidget) {
+        this.isCollabWidgetActive = false
+      }
+    },
     async sendWorldCollabHeartbeat() {
       if (!this.collabRoom) return
       await collabApi.heartbeat(this.collabRoom.id, { user_id: 'local_user' })
@@ -5769,21 +5791,7 @@ export default {
       this.currentCalendar = null
       this.calendars = createDefaultCalendars()
       this.editCalendars = []
-      if (this.collabPollTimer) {
-        clearInterval(this.collabPollTimer)
-        this.collabPollTimer = null
-      }
-      if (this.collabHeartbeatTimer) {
-        clearInterval(this.collabHeartbeatTimer)
-        this.collabHeartbeatTimer = null
-      }
-      this.collabRoom = null
-      this.collabMembers = []
-      this.collabEvents = []
-      this.collabLatestSeq = 0
-      this.collabStatus = '协作未连接'
-      this.hasRemoteWorldUpdate = false
-      this.remoteWorldEvent = null
+      this.disconnectWorldCollab({ clearWidget: false })
       this.lastPublishedWorldSignature = ''
       this.markWorldAsSaved(this.buildWorldPayload())
       this.resetEditHistory()
@@ -7675,6 +7683,7 @@ export default {
     window.addEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     window.addEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
     window.addEventListener('keydown', this.handleEditHistoryShortcut)
+    this.isCollabWidgetActive = true
     this.resetEditHistory()
     this.syncTimelineRefs()
     this.updateTimelineZoom()
@@ -7690,6 +7699,7 @@ export default {
     this.restoreExtractTaskFromRoute()
   },
   activated() {
+    this.isCollabWidgetActive = true
     this.loadLlmConfigStatus()
     this.loadWorldTemplates()
     const worldId = String(this.$route?.query?.worldId || '').trim()
@@ -7701,8 +7711,12 @@ export default {
       this.resetBlankWorldBuilder()
     }
   },
+  deactivated() {
+    this.disconnectWorldCollab()
+  },
   beforeUnmount() {
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
+    this.disconnectWorldCollab()
     window.removeEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
     window.removeEventListener('keydown', this.handleEditHistoryShortcut)
     if (this.editHistoryTimer) {
