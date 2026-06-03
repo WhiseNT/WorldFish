@@ -1380,9 +1380,14 @@ class EnhancedWorldExtractor:
             f"文本 {text_len} 字符 -> {mode}/{volume_profile['profile']} 策略 "
             f"(target={volume_profile['target_chunk_chars']}, context={volume_profile['context_window']}, workers={volume_profile['outer_workers']})"
         )
-        if text_len <= self.LONG_TEXT_THRESHOLD:
+        single_pass_threshold = max(
+            int(self.LONG_TEXT_THRESHOLD),
+            int(volume_profile.get("target_chunk_chars") or volume_profile.get("chunk_size") or self.LONG_TEXT_THRESHOLD),
+        )
+        if text_len <= single_pass_threshold:
             result = self._extract_short_text(text, progress_callback)
             result.setdefault("extraction_diagnostics", {})["volume_profile"] = volume_profile
+            result.setdefault("extraction_diagnostics", {})["single_pass_threshold"] = single_pass_threshold
             result["cache_key"] = self.build_cache_key(text, mode, volume_profile)
             result["cache_status"] = "skipped_short_text"
             result["resumed_from_cache"] = False

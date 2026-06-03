@@ -133,6 +133,7 @@ const props = defineProps({
 })
 
 const DEFAULT_TEMPLATE_ID = 'generic'
+const DND_TEMPLATE_ID = 'dnd-campaign'
 
 const buildDefaultData = () => ({
   world_info: {
@@ -156,6 +157,27 @@ const buildDefaultData = () => ({
     calendars: [],
   },
 })
+
+const buildDndTemplate = (template = {}) => ({
+  id: template.id || DND_TEMPLATE_ID,
+  name: template.name || 'DND 跑团世界模板',
+  description: template.description || '面向 DND 跑团的世界模板，覆盖战役前提、桌面规则、方格地图、势力、NPC、反派威胁、冒险遭遇、宝物和玩家角色接入。',
+  conflict_warning: template.conflict_warning || '该模板会把资料优先拆分为战役运营、规则资源和跑团地图字段。',
+  focus_tags: template.focus_tags || ['战役总览', '桌面规则', '方格地图', '冒险遭遇', '玩家接入'],
+  focus_points: template.focus_points || ['优先提取战役前提、起始等级、主要威胁、玩家角色钩子和 DND 方格战斗地图。'],
+  detail_sections: template.detail_sections || [
+    { id: 'campaign_overview', name: '战役总览', target: 'world_info.dnd_campaign', description: '战役前提、等级范围、主冲突和玩家目标。' },
+    { id: 'table_rules', name: '桌面规则', target: 'settings.items[collectionId=dnd_table_rules]', description: '版本、资料书、升级、休息、死亡、复活、暗骰和安全工具。' },
+    { id: 'maps', name: '地图与地点', target: 'settings.mapData.structuredMaps', description: '世界地图、区域地图、地牢地图和 DND 方格战斗地图。' },
+    { id: 'encounters', name: '遭遇与怪物', target: 'settings.items[collectionId=dnd_encounters]', description: '战斗、陷阱、环境危险、怪物战术和胜败条件。' },
+  ],
+  setting_collections: template.setting_collections || [],
+  world_info_guide: template.world_info_guide || [],
+  settings_guide: template.settings_guide || [],
+  default_data: template.default_data || buildDefaultData(),
+})
+
+const buildTemplate = (template = {}) => (template.id === DND_TEMPLATE_ID ? buildDndTemplate(template) : buildGenericTemplate(template))
 
 const buildGenericTemplate = (template = {}) => ({
   id: template.id || DEFAULT_TEMPLATE_ID,
@@ -240,15 +262,15 @@ async function loadTemplate() {
   const targetTemplateId = props.templateId || DEFAULT_TEMPLATE_ID
   try {
     const response = await worldApi.getWorldTemplate(targetTemplateId)
-    templateData.value = buildGenericTemplate(response.template || {})
+    templateData.value = buildTemplate(response.template || {})
   } catch (err) {
     try {
       const response = await worldApi.listWorldTemplates()
       const templates = Array.isArray(response.templates) ? response.templates : []
       const matched = templates.find(template => template?.id === targetTemplateId) || templates.find(template => template?.id === DEFAULT_TEMPLATE_ID)
-      templateData.value = buildGenericTemplate(matched || { id: targetTemplateId })
+      templateData.value = buildTemplate(matched || { id: targetTemplateId })
     } catch (_) {
-      templateData.value = buildGenericTemplate({ id: targetTemplateId })
+      templateData.value = buildTemplate({ id: targetTemplateId })
     }
   } finally {
     loading.value = false

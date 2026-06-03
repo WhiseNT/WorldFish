@@ -23,8 +23,8 @@
         <span class="role-kicker">{{ role.kicker }}</span>
         <strong>{{ role.title }}</strong>
         <span class="role-desc">{{ role.description }}</span>
-        <span class="role-status" :class="{ ready: roleStatus(role.id).api_key_configured }">
-          {{ roleStatus(role.id).api_key_configured ? '已配置' : '未配置' }}
+        <span class="role-status" :class="{ ready: roleConfigured(role.id) }">
+          {{ roleConfigured(role.id) ? '已配置' : '未配置' }}
           <template v-if="roleStatus(role.id).resolved_from && roleStatus(role.id).resolved_from !== role.id">
             · 回退到 {{ roleLabel(roleStatus(role.id).resolved_from) }}
           </template>
@@ -68,33 +68,40 @@
         </div>
 
         <div class="form-grid">
-          <label class="form-field full">
+          <label v-if="activeRole === 'embedding'" class="form-field full">
+            <span>向量来源</span>
+            <select v-model="forms.embedding.provider" @change="handleEmbeddingProviderChanged">
+              <option value="api">API Embedding</option>
+              <option value="local">本地 Embedding（ModelScope）</option>
+            </select>
+          </label>
+          <label v-if="!isLocalEmbeddingForm" class="form-field full">
             <span>API Key</span>
             <input type="password" v-model="forms[activeRole].api_key" :placeholder="roleStatus(activeRole).api_key_configured ? '留空则保持当前 Key' : '输入 API Key'" />
           </label>
-          <label class="form-field">
+          <label v-if="!isLocalEmbeddingForm" class="form-field">
             <span>API 类型</span>
             <select v-model="forms[activeRole].api_type">
               <option value="openai_compatible">OpenAI 兼容</option>
-              <option value="anthropic">Anthropic</option>
+              <option v-if="activeRole !== 'embedding'" value="anthropic">Anthropic</option>
             </select>
           </label>
-          <label class="form-field">
+          <label v-if="!isLocalEmbeddingForm" class="form-field">
             <span>URL 模式</span>
             <select v-model="forms[activeRole].url_mode">
               <option value="base_url">Base URL 模式</option>
               <option value="full_url">完整 URL 模式</option>
             </select>
           </label>
-          <label class="form-field">
+          <label v-if="!isLocalEmbeddingForm" class="form-field">
             <span>{{ forms[activeRole].url_mode === 'full_url' ? '完整 URL' : 'Base URL' }}</span>
-            <input v-model="forms[activeRole].base_url" :placeholder="urlPlaceholder(forms[activeRole])" />
+            <input v-model="forms[activeRole].base_url" :placeholder="urlPlaceholder(forms[activeRole], activeRole)" />
           </label>
           <label class="form-field">
             <span>Model Name</span>
             <div class="model-row">
-              <input v-model="forms[activeRole].model_name" placeholder="gpt-4o-mini / claude-3-5-sonnet-latest" />
-              <button type="button" class="btn-secondary" :disabled="loadingModelsRole === activeRole" @click="fetchModels(activeRole)">
+              <input v-model="forms[activeRole].model_name" :disabled="isLocalEmbeddingForm" :placeholder="activeRole === 'embedding' ? 'text-embedding-3-small / Qwen/Qwen3-Embedding-0.6B' : 'gpt-4o-mini / claude-3-5-sonnet-latest'" />
+              <button v-if="!isLocalEmbeddingForm" type="button" class="btn-secondary" :disabled="loadingModelsRole === activeRole" @click="fetchModels(activeRole)">
                 {{ loadingModelsRole === activeRole ? '获取中...' : '获取模型' }}
               </button>
             </div>
@@ -105,11 +112,11 @@
           <button v-for="model in models[activeRole]" :key="model" type="button" @click="forms[activeRole].model_name = model">{{ model }}</button>
         </div>
 
-        <div class="hint-card" v-if="activeRole === 'embedding'">
-          Embedding 未显式配置 API Key 时，会复用主 Agent 的 API Key 与 Base URL。
+        <div class="hint-card" v-if="activeRole === 'embedding' && forms.embedding.provider === 'local'">
+          本地 Embedding 将使用 ModelScope 模型：<a :href="localEmbeddingModelSource" target="_blank" rel="noopener">{{ localEmbeddingModelName }}</a>。首次实际向量化时会自动加载/下载模型。
         </div>
-        <div class="hint-card" v-if="forms[activeRole].url_mode === 'base_url'">
-          Base URL 模式请填写到 /v1，例如 https://api.littlecold.cn/v1；如果填写 /v1/chat/completions，应用会自动按完整 URL 发送请求。
+        <div class="hint-card" v-else-if="activeRole === 'embedding'">
+          Embedding 需要单独配置 API，或者选择本地 Embedding；不会再复用主 Agent 的 API。
         </div>
         <div class="hint-card" v-else-if="roleStatus(activeRole).resolved_from && roleStatus(activeRole).resolved_from !== activeRole">
           当前用途未显式配置，将按后端规则回退使用 {{ roleLabel(roleStatus(activeRole).resolved_from) }}。
@@ -177,7 +184,9 @@
 import { worldApi } from '../api/world'
 import SvgIcon from '../components/ui/SvgIcon.vue'
 
-const emptyForm = () => ({ api_key: '', api_type: 'openai_compatible', url_mode: 'base_url', base_url: '', model_name: '' })
+const LOCAL_EMBEDDING_MODEL_NAME = 'Qwen/Qwen3-Embedding-0.6B'
+const LOCAL_EMBEDDING_MODEL_SOURCE = 'https://www.modelscope.cn/models/Qwen/Qwen3-Embedding-0.6B'
+const emptyForm = () => ({ api_key: '', api_type: 'openai_compatible', url_mode: 'base_url', base_url: '', model_name: '', provider: 'api' })
 
 export default {
   name: 'LlmConfigView',
@@ -224,8 +233,21 @@ export default {
     activeRoleMeta() {
       return this.roleCards.find(role => role.id === this.activeRole) || this.roleCards[0]
     },
+    isLocalEmbeddingForm() {
+      return this.activeRole === 'embedding' && this.forms.embedding.provider === 'local'
+    },
+    localEmbeddingModelName() {
+      return this.roleStatus('embedding').local_model_name || LOCAL_EMBEDDING_MODEL_NAME
+    },
+    localEmbeddingModelSource() {
+      return this.roleStatus('embedding').local_model_source || LOCAL_EMBEDDING_MODEL_SOURCE
+    },
   },
   mounted() {
+    const queryRole = String(this.$route?.query?.role || '').trim()
+    if (['agent', 'subagent', 'parser', 'embedding', 'advanced'].includes(queryRole)) {
+      this.activeRole = queryRole
+    }
     this.loadConfig()
   },
   methods: {
@@ -238,6 +260,10 @@ export default {
     },
     apiTypeLabel(type) {
       return type === 'anthropic' ? 'Anthropic' : 'OpenAI 兼容'
+    },
+    roleConfigured(role) {
+      const status = this.roleStatus(role)
+      return role === 'embedding' ? !!status.available : !!status.api_key_configured
     },
     roleStatus(role) {
       const key = role === 'agent' ? 'agent_llm' : role === 'subagent' ? 'subagent_llm' : role === 'parser' ? 'parser_llm' : 'embedding'
@@ -269,13 +295,16 @@ export default {
         this.config = response.config || {}
         ;['agent', 'subagent', 'parser', 'embedding'].forEach(role => {
           const status = this.roleStatus(role)
+          const provider = role === 'embedding' ? (status.provider || 'api') : 'api'
           this.forms[role] = {
             api_key: '',
-            api_type: status.api_type || 'openai_compatible',
-            url_mode: status.url_mode || 'base_url',
-            base_url: status.base_url || '',
-            model_name: status.model_name || '',
+            api_type: role === 'embedding' ? 'openai_compatible' : (status.explicit_api_type || (role === 'agent' ? status.api_type : 'openai_compatible') || 'openai_compatible'),
+            url_mode: status.explicit_url_mode || (role === 'agent' ? status.url_mode : 'base_url') || 'base_url',
+            base_url: status.explicit_base_url || (role === 'agent' ? status.base_url : ''),
+            model_name: provider === 'local' ? (status.local_model_name || LOCAL_EMBEDDING_MODEL_NAME) : (status.explicit_model_name || (role === 'agent' ? status.model_name : '')),
+            provider,
           }
+
         })
         this.advanced = {
           thinking_enabled: !!this.config.thinking_enabled,
@@ -290,26 +319,49 @@ export default {
         this.loading = false
       }
     },
-    urlPlaceholder(form) {
+    urlPlaceholder(form, role = this.activeRole) {
       if (form.url_mode === 'full_url') {
+        if (role === 'embedding') return 'https://api.openai.com/v1/embeddings'
         return form.api_type === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions'
       }
       return form.api_type === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
     },
+    handleEmbeddingProviderChanged() {
+      if (this.forms.embedding.provider === 'local') {
+        this.forms.embedding.api_type = 'openai_compatible'
+        this.forms.embedding.url_mode = 'base_url'
+        this.forms.embedding.base_url = ''
+        this.forms.embedding.model_name = LOCAL_EMBEDDING_MODEL_NAME
+      } else if (!this.forms.embedding.model_name || this.forms.embedding.model_name === LOCAL_EMBEDDING_MODEL_NAME) {
+        this.forms.embedding.model_name = this.roleStatus('embedding').explicit_model_name || 'text-embedding-3-small'
+      }
+    },
     buildRolePayload(role) {
       const form = this.forms[role]
+      const provider = role === 'embedding' ? (form.provider || 'api') : 'api'
+      if (role === 'embedding' && provider === 'local') {
+        return {
+          role,
+          provider: 'local',
+          api_type: 'openai_compatible',
+          url_mode: 'base_url',
+          model_name: this.localEmbeddingModelName,
+        }
+      }
       const url = (form.base_url || '').trim()
-      const looksLikeChatEndpoint = /\/(chat\/completions|messages|embeddings)\/?$/i.test(url)
+      const looksLikeApiEndpoint = /\/(chat\/completions|messages|embeddings)\/?$/i.test(url)
       const payload = {
         role,
-        api_type: form.api_type || 'openai_compatible',
-        url_mode: looksLikeChatEndpoint ? 'full_url' : (form.url_mode || 'base_url'),
+        provider,
+        api_type: role === 'embedding' ? 'openai_compatible' : (form.api_type || 'openai_compatible'),
+        url_mode: looksLikeApiEndpoint ? 'full_url' : (form.url_mode || 'base_url'),
         base_url: url,
         model_name: form.model_name,
       }
       if ((form.api_key || '').trim()) payload.api_key = form.api_key.trim()
       return payload
     },
+
     async fetchModels(role) {
       this.loadingModelsRole = role
       try {
@@ -341,7 +393,12 @@ export default {
       try {
         const response = await worldApi.testLlmConfig(this.buildRolePayload(role))
         const modelName = response?.test_result?.model || this.forms[role].model_name
-        this.showFeedback(`${this.roleLabel(role)} 连接测试成功${modelName ? `：${modelName}` : ''}`)
+        const dimensions = response?.test_result?.embedding_dimensions
+        if (role === 'embedding') {
+          this.showFeedback(`${this.roleLabel(role)} 向量测试成功${modelName ? `：${modelName}` : ''}${dimensions ? `，维度 ${dimensions}` : ''}`)
+        } else {
+          this.showFeedback(`${this.roleLabel(role)} 连接测试成功${modelName ? `：${modelName}` : ''}`)
+        }
       } catch (error) {
         console.error('测试 LLM 连接失败:', error)
         this.showFeedback(this.errorMessage(error, '连接测试失败'), 'error')

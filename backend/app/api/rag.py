@@ -33,6 +33,20 @@ def _get_rag_service(world_id: str) -> RagService:
     return RagService(world_id)
 
 
+def _embedding_missing_response():
+    return jsonify({
+        "success": False,
+        "error": Config.EMBEDDING_REQUIRED_MESSAGE,
+        "missing_config": "embedding",
+    }), 400
+
+
+def _require_embedding_configured():
+    if not Config.is_embedding_configured():
+        return _embedding_missing_response()
+    return None
+
+
 # ============== 文档管理 ==============
 
 
@@ -67,8 +81,12 @@ def add_documents(world_id: str):
         }
     """
     try:
+        missing_embedding = _require_embedding_configured()
+        if missing_embedding:
+            return missing_embedding
         rag = _get_rag_service(world_id)
         data = request.get_json() or {}
+
 
         texts = data.get("texts")
         single_text = data.get("text")
@@ -179,8 +197,12 @@ def search_rag(world_id: str):
         }
     """
     try:
+        missing_embedding = _require_embedding_configured()
+        if missing_embedding:
+            return missing_embedding
         rag = _get_rag_service(world_id)
         data = request.get_json() or {}
+
         query = data.get("query", "").strip()
         if not query:
             return jsonify({"success": False, "error": "请提供 query 参数"}), 400
@@ -250,6 +272,9 @@ def clear_rag(world_id: str):
 def create_index_task(world_id: str):
     """异步添加文本到 RAG，提供真实 Embedding 进度。"""
     try:
+        missing_embedding = _require_embedding_configured()
+        if missing_embedding:
+            return missing_embedding
         _get_rag_service(world_id)
         data = request.get_json() or {}
         text = str(data.get("text") or "").strip()
@@ -323,6 +348,9 @@ def upload_rag_file(world_id: str):
     from ..utils.file_parser import FileParser
 
     try:
+        missing_embedding = _require_embedding_configured()
+        if missing_embedding:
+            return missing_embedding
         rag = _get_rag_service(world_id)
 
         if "files" not in request.files:

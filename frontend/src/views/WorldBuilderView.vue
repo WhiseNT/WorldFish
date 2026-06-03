@@ -628,9 +628,20 @@
             <SvgIcon class="collapse-arrow" :name="showEntitiesExpanded ? 'chevron-down' : 'chevron-right'" :size="14" />
             <h3 class="overview-title">核心实体 ({{ entities.length }})</h3>
             <span class="enabled-count">已启用 {{ enabledEntityCount }}</span>
+            <div class="entity-layout-control" @click.stop>
+              <span class="entity-layout-control-label">按行对齐</span>
+              <label class="toggle-switch entity-layout-toggle">
+                <input type="checkbox" :checked="entityCardRowAligned" @change="toggleEntityCardRowAlignment" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
           <div v-if="entities.length === 0" class="overview-empty">暂无实体数据，导入或提取世界观后自动填充</div>
-          <div v-else-if="showEntitiesExpanded" class="entity-card-list entity-card-grid">
+          <div
+            v-else-if="showEntitiesExpanded"
+            class="entity-card-list entity-card-grid"
+            :class="{ 'entity-card-grid-row-aligned': entityCardRowAligned }"
+          >
             <div
               v-for="d in entityItems"
               :key="d.id"
@@ -1792,6 +1803,11 @@ import { generateOntologyFromProject } from '../api/graph'
 import service from '../api/index'
 import WorldMapEditor from '../components/map/WorldMapEditor.vue'
 import SvgIcon from '../components/ui/SvgIcon.vue'
+import { ensureCollabIdentity } from '../utils/collabIdentity.js'
+import {
+  readEntityCardRowLayoutPreference,
+  writeEntityCardRowLayoutPreference,
+} from '../utils/entityCardLayoutPreference.js'
 
 const LAST_EXTRACT_TASK_KEY = 'worldfish:lastExtractTaskId'
 const EXTRACT_TASK_DELETED_EVENT = 'worldfish:extract-task-deleted'
@@ -1801,12 +1817,14 @@ const CLIENT_ID_KEY = 'worldfish:clientId'
 const EDIT_HISTORY_LIMIT = 80
 const EDIT_HISTORY_CAPTURE_DELAY = 350
 const DEFAULT_WORLD_TEMPLATE_ID = 'generic'
+const DND_WORLD_TEMPLATE_ID = 'dnd-campaign'
 const CACHE_TTL_MS = 60000
 
 let cachedWorldTemplates = null
 let cachedWorldTemplatesAt = 0
 let cachedLlmConfig = null
 let cachedLlmConfigAt = 0
+let cachedExtractSelectedFiles = []
 
 const DEFAULT_TEMPLATE_DETAIL_SECTIONS = [
   {
@@ -1852,6 +1870,23 @@ const buildFallbackWorldTemplates = () => ([
     focus_tags: DEFAULT_TEMPLATE_DETAIL_SECTIONS.map(section => section.name),
     focus_points: [],
     detail_sections: DEFAULT_TEMPLATE_DETAIL_SECTIONS,
+    setting_collections: [],
+    world_info_guide: [],
+    settings_guide: [],
+  },
+  {
+    id: DND_WORLD_TEMPLATE_ID,
+    name: 'DND 跑团世界模板',
+    description: '面向 DND 跑团的世界模板，覆盖战役前提、桌面规则、方格地图、势力、神祇位面、NPC、反派威胁、冒险遭遇、宝物和玩家角色接入。',
+    conflict_warning: '该模板会把资料优先拆分为战役运营、规则资源和跑团地图字段。',
+    focus_tags: ['战役总览', '桌面规则', '方格地图', '势力与神祇', '冒险遭遇', '宝物据点', '玩家接入'],
+    focus_points: ['优先提取战役前提、起始等级、主要威胁、玩家角色钩子和 DND 方格战斗地图。'],
+    detail_sections: [
+      { id: 'campaign_overview', name: '战役总览', target: 'world_info.dnd_campaign', description: '战役前提、等级范围、主冲突和玩家目标。' },
+      { id: 'table_rules', name: '桌面规则', target: 'settings.items[collectionId=dnd_table_rules]', description: '版本、资料书、升级、休息、死亡、复活、暗骰和安全工具。' },
+      { id: 'maps', name: '地图与地点', target: 'settings.mapData.structuredMaps', description: '世界地图、区域地图、地牢地图和 DND 方格战斗地图。' },
+      { id: 'encounters', name: '遭遇与怪物', target: 'settings.items[collectionId=dnd_encounters]', description: '战斗、陷阱、环境危险、怪物战术和胜败条件。' },
+    ],
     setting_collections: [],
     world_info_guide: [],
     settings_guide: [],
@@ -3813,7 +3848,7 @@ export default {
       showExtractResultDialog: false,
       extractResultDialogDismissed: false,
       extractedData: null,
-      selectedFiles: [],
+      selectedFiles: [...cachedExtractSelectedFiles],
       isDragOver: false,
       entities: [],
       events: [],
@@ -3823,6 +3858,7 @@ export default {
       evolutionHistoryPollTimer: null,
       showEntitiesExpanded: true,
       showEventsExpanded: true,
+      entityCardRowAligned: false,
       expandedBios: {},
       entityItems: [],
       eventItems: [],
@@ -4607,8 +4643,18 @@ export default {
     hasLlmConfig() {
       return !!this.llmConfigStatus.api_key_configured
     },
+    embeddingStatus() {
+      return this.llmConfigStatus.embedding || {}
+    },
+    hasEmbeddingConfig() {
+      return !!this.embeddingStatus.available
+    },
+    extractRequiresEmbedding() {
+      return this.extractScanSource === 'input' || this.extractScanSource === 'input_and_rag' || this.extractScanSource === 'rag'
+    },
     llmStatusText() {
-      return this.hasLlmConfig ? 'LLM 已连接' : 'LLM 未连接'
+      if (!this.hasLlmConfig) return 'LLM 未连接'
+      return this.hasEmbeddingConfig ? 'LLM / Embedding 已连接' : 'LLM 已连接，Embedding 未配置'
     },
     projectActionLabel() {
       if (this.isProjectLaunching) {
@@ -4689,11 +4735,15 @@ export default {
     },
     canExtractWorld() {
       if (this.isExtracting) return false
+      if (this.extractRequiresEmbedding && !this.hasEmbeddingConfig) return false
       if (this.extractUsesRagSource && !this.worldId) return false
       if (!this.extractNeedsManualInput) return !!this.worldId
       return !!this.extractText.trim() || this.selectedFiles.length > 0
     },
     extractSourceNotice() {
+      if (this.extractRequiresEmbedding && !this.hasEmbeddingConfig) {
+        return '请先配置 Embedding 模型，或在 LLM 配置页选择本地 Embedding 模型后再开始扫描。'
+      }
       if (this.extractScanSource === 'rag') {
         return this.worldId
           ? '当前模式会直接扫描当前世界观已索引的知识库内容，不会重复写回知识库。'
@@ -4972,6 +5022,13 @@ export default {
     }
   },
   methods: {
+    syncSelectedFilesCache() {
+      cachedExtractSelectedFiles = Array.isArray(this.selectedFiles) ? [...this.selectedFiles] : []
+    },
+    clearSelectedFilesCache() {
+      cachedExtractSelectedFiles = []
+      this.selectedFiles = []
+    },
     createEditSnapshot() {
       return cloneEditableState({
         world: this.world,
@@ -5538,8 +5595,9 @@ export default {
 
       return payload
     },
-    goToLlmConfig() {
-      this.$router.push({ name: 'LlmConfig' })
+    goToLlmConfig(role = '') {
+      const query = role ? { role } : undefined
+      this.$router.push({ name: 'LlmConfig', query })
     },
     openLlmConfigDialog() {
       this.goToLlmConfig()
@@ -5757,11 +5815,12 @@ export default {
     async ensureWorldCollabRoom() {
       if (!this.worldId) return
       this.ensureCollabClientId()
+      const collabIdentity = ensureCollabIdentity()
       try {
         const response = await collabApi.ensureWorldRoom(this.worldId, {
           world_name: this.world.name || '未命名世界观',
-          user_id: 'local_user',
-          display_name: '本地用户',
+          user_id: collabIdentity.userId,
+          display_name: collabIdentity.displayName,
         })
         this.collabRoom = response.room
         this.collabMembers = response.members || []
@@ -5800,7 +5859,8 @@ export default {
     },
     async sendWorldCollabHeartbeat() {
       if (!this.collabRoom) return
-      await collabApi.heartbeat(this.collabRoom.id, { user_id: 'local_user' })
+      const collabIdentity = ensureCollabIdentity()
+      await collabApi.heartbeat(this.collabRoom.id, { user_id: collabIdentity.userId })
       const members = await collabApi.listMembers(this.collabRoom.id)
       this.collabMembers = members.members || []
     },
@@ -5829,10 +5889,11 @@ export default {
         await this.ensureWorldCollabRoom()
       }
       if (!this.collabRoom) return
+      const collabIdentity = ensureCollabIdentity()
       try {
         await collabApi.appendWorldEvent(this.worldId, {
           type,
-          user_id: 'local_user',
+          user_id: collabIdentity.userId,
           world_name: this.world.name || '未命名世界观',
           summary: payload.summary || '',
           client_id: this.ensureCollabClientId(),
@@ -6172,6 +6233,16 @@ export default {
       const item = this.entityItems.find(d => d.id === id)
       if (item) item.bioExpanded = !!this.expandedBios[id]
     },
+    loadEntityCardRowLayoutPreference() {
+      this.entityCardRowAligned = readEntityCardRowLayoutPreference()
+    },
+    toggleEntityCardRowAlignment(event) {
+      const nextValue = typeof event?.target?.checked === 'boolean'
+        ? event.target.checked
+        : !this.entityCardRowAligned
+      this.entityCardRowAligned = nextValue
+      writeEntityCardRowLayoutPreference(nextValue)
+    },
     async deleteWorld() {
       if (!this.worldId) return
       if (!confirm(`确定要删除世界观 "${this.world.name}" 吗？此操作不可恢复。`)) return
@@ -6439,7 +6510,7 @@ export default {
       this.showExtractResultDialog = false
       this.extractResultDialogDismissed = false
       this.extractText = ''
-      this.selectedFiles = []
+      this.clearSelectedFilesCache()
     },
     maybeOpenExtractResultDialog(progResp = {}) {
       const status = progResp.status || progResp.stage || this.extractStatus
@@ -6569,6 +6640,11 @@ export default {
       if (!this.hasLlmConfig) {
         this.extractError = '请先配置可用的 LLM API Key、Base URL 和 Model。'
         this.openLlmConfigDialog()
+        return
+      }
+      if (this.extractRequiresEmbedding && !this.hasEmbeddingConfig) {
+        this.extractError = '请先配置 Embedding 模型，或在 LLM 配置页选择本地 Embedding 模型。'
+        this.goToLlmConfig('embedding')
         return
       }
 
@@ -6815,6 +6891,7 @@ export default {
     },
     addFiles(fileList) {
       const textExts = ['pdf', 'md', 'markdown', 'txt']
+      let changed = false
       for (const file of fileList) {
         const ext = file.name.split('.').pop()?.toLowerCase()
         if (ext === 'json') {
@@ -6822,10 +6899,14 @@ export default {
           this.importJsonFile(file)
         } else if (textExts.includes(ext)) {
           // 文本文件走 LLM 提取
-          if (!this.selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+          if (!this.selectedFiles.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified)) {
             this.selectedFiles.push(file)
+            changed = true
           }
         }
+      }
+      if (changed) {
+        this.syncSelectedFilesCache()
       }
     },
     async importJsonFile(file) {
@@ -6876,6 +6957,7 @@ export default {
     },
     removeFile(index) {
       this.selectedFiles.splice(index, 1)
+      this.syncSelectedFilesCache()
     },
     formatFileSize(bytes) {
       if (bytes < 1024) return bytes + ' B'
@@ -8088,6 +8170,7 @@ export default {
     this.updateTimelineZoom()
     this.loadLlmConfigStatus()
     this.loadWorldTemplates()
+    this.loadEntityCardRowLayoutPreference()
 
     const worldId = String(this.$route?.query?.worldId || '').trim()
     if (worldId) {
@@ -8101,6 +8184,7 @@ export default {
     this.isCollabWidgetActive = true
     this.loadLlmConfigStatus()
     this.loadWorldTemplates()
+    this.loadEntityCardRowLayoutPreference()
     const worldId = String(this.$route?.query?.worldId || '').trim()
     if (worldId && worldId !== this.worldId) {
       this.loadWorld(worldId)
@@ -8112,14 +8196,17 @@ export default {
     this.restoreExtractTaskFromRoute()
   },
   deactivated() {
+    this.syncSelectedFilesCache()
     this.clearPendingAutoSave()
     this.disconnectWorldCollab()
   },
   beforeRouteLeave(to, from, next) {
+    this.syncSelectedFilesCache()
     this.clearPendingAutoSave()
     next()
   },
   beforeUnmount() {
+    this.syncSelectedFilesCache()
     window.removeEventListener(EXTRACT_TASK_DELETED_EVENT, this.handleExtractTaskDeleted)
     this.disconnectWorldCollab()
     window.removeEventListener(WORLD_UPDATED_EVENT, this.handleWorldUpdated)
@@ -11182,6 +11269,14 @@ export default {
   .chronology-columns {
     grid-template-columns: 1fr;
   }
+
+  .entity-card-grid.entity-card-grid-row-aligned {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .entity-layout-control {
+    margin-left: 0;
+  }
 }
 
 @media (max-width: 640px) {
@@ -11197,6 +11292,15 @@ export default {
   .calendar-summary-row,
   .context-event-row,
   .context-stage-row {
+    grid-template-columns: 1fr;
+  }
+
+  .entity-layout-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .entity-card-grid.entity-card-grid-row-aligned {
     grid-template-columns: 1fr;
   }
 }
@@ -11576,6 +11680,25 @@ export default {
   padding: var(--spacing-md);
   text-align: center;
 }
+.entity-layout-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--wf-border-light);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--wf-text-secondary);
+  white-space: nowrap;
+}
+.entity-layout-control-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.entity-layout-toggle {
+  flex-shrink: 0;
+}
 .entity-card-list, .event-card-list {
   display: flex;
   flex-wrap: wrap;
@@ -11584,8 +11707,26 @@ export default {
 }
 .entity-card-grid {
   display: block;
-  column-width: 320px;
+  column-width: 360px;
   column-gap: var(--spacing-md);
+}
+.entity-card-grid.entity-card-grid-row-aligned {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  column-width: auto;
+  column-gap: 0;
+  gap: var(--spacing-md);
+  align-items: stretch;
+}
+.entity-card-grid.entity-card-grid-row-aligned .entity-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  align-self: stretch;
+  height: 100%;
 }
 .entity-card {
   content-visibility: auto;

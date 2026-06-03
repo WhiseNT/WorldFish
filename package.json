@@ -10,7 +10,8 @@
     "dev": "npm start",
     "backend": "cd backend && uv run python run.py",
     "frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build"
+    "build": "cd frontend && npm run build",
+    "check:oss-boundary": "node scripts/check-open-source-boundary.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

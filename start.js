@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const net = require('node:net')
+const os = require('node:os')
 const { spawn } = require('node:child_process')
 
 const FRONTEND_PORT = Number(process.env.FRONTEND_PORT || 5567)
@@ -35,6 +36,21 @@ async function ensurePortAvailable(label, port, host) {
     ? '  FRONTEND_PORT=5570 npm start'
     : '  FLASK_PORT=5571 npm start')
   process.exit(1)
+}
+
+function getLanAddresses() {
+  const interfaces = os.networkInterfaces()
+  const addresses = []
+
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (!entry || entry.internal || entry.family !== 'IPv4') continue
+      if (!entry.address || entry.address.startsWith('127.')) continue
+      addresses.push(entry.address)
+    }
+  }
+
+  return [...new Set(addresses)].sort()
 }
 
 function createChildEnv(extraEnv = {}) {
@@ -147,9 +163,21 @@ async function main() {
   await ensurePortAvailable('前端', FRONTEND_PORT, '0.0.0.0')
   await ensurePortAvailable('后端', BACKEND_PORT, BACKEND_HOST)
 
+  const lanAddresses = getLanAddresses()
+
   console.log('正在启动 WorldFish...')
-  console.log(`前端地址：http://localhost:${FRONTEND_PORT}`)
-  console.log(`后端地址：http://127.0.0.1:${BACKEND_PORT}`)
+  console.log(`本机前端地址：http://localhost:${FRONTEND_PORT}`)
+  console.log(`本机后端地址：http://127.0.0.1:${BACKEND_PORT}`)
+  if (lanAddresses.length) {
+    console.log('局域网联机地址：')
+    lanAddresses.forEach((address) => {
+      console.log(`  前端：http://${address}:${FRONTEND_PORT}`)
+      console.log(`  后端：http://${address}:${BACKEND_PORT}`)
+    })
+    console.log('同一局域网内其他设备访问上述前端地址后，可进入“联机房间”复制或使用房间邀请链接。')
+  } else {
+    console.log('未检测到非本机 IPv4 地址；若需要局域网联机，请确认网络适配器已连接。')
+  }
   console.log('如需修改端口，可设置 FRONTEND_PORT 或 FLASK_PORT。\n')
 
   run('后端', 'npm run backend')

@@ -290,3 +290,45 @@ def test_health_endpoint(tmp_path):
         assert 'rooms' in body['stats']
     finally:
         CollabManager.configure_base_dir(old_dir)
+
+
+def test_lan_info_endpoint_returns_joinable_addresses(tmp_path, monkeypatch):
+    old_dir = use_tmp_collab_dir(tmp_path)
+    try:
+        monkeypatch.setenv('FRONTEND_PORT', '6000')
+        monkeypatch.setenv('FLASK_PORT', '6001')
+        app = Flask(__name__)
+        registry = ModuleRegistry(ModuleStateStore(str(tmp_path / 'modules.json')))
+        install_modules(app, object, registry=registry)
+        client = app.test_client()
+
+        response = client.get('/api/collab/lan/info')
+        assert response.status_code == 200
+        lan = response.get_json()['lan']
+        assert lan['frontend_port'] == 6000
+        assert lan['backend_port'] == 6001
+        assert lan['addresses']
+        assert lan['primary_frontend_url'].startswith('http://')
+    finally:
+        CollabManager.configure_base_dir(old_dir)
+
+
+def test_room_invite_endpoint_returns_room_join_url(tmp_path, monkeypatch):
+    old_dir = use_tmp_collab_dir(tmp_path)
+    try:
+        monkeypatch.setenv('FRONTEND_PORT', '6002')
+        monkeypatch.setenv('FLASK_PORT', '6003')
+        app = Flask(__name__)
+        registry = ModuleRegistry(ModuleStateStore(str(tmp_path / 'modules.json')))
+        install_modules(app, object, registry=registry)
+        client = app.test_client()
+
+        CollabManager.ensure_local_defaults()
+        response = client.get('/api/collab/rooms/local_room/invite')
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['room']['id'] == 'local_room'
+        assert 'roomId=local_room' in body['invite_url']
+        assert body['lan']['primary_join_url'] == body['invite_url']
+    finally:
+        CollabManager.configure_base_dir(old_dir)

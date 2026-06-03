@@ -133,7 +133,11 @@ class Config:
     AGENT_CONTEXT_COMPRESSION_RATIO = _parse_float_env('AGENT_CONTEXT_COMPRESSION_RATIO', 0.70)
     
     # Embedding 配置（RAG 向量化）
-    # 可独立配置 Embedding API（不填则复用 LLM 的 key/url）
+    # Embedding 必须显式配置；不再复用主 Agent 的 API。
+    LOCAL_EMBEDDING_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
+    LOCAL_EMBEDDING_MODEL_SOURCE = "https://www.modelscope.cn/models/Qwen/Qwen3-Embedding-0.6B"
+    EMBEDDING_REQUIRED_MESSAGE = "请先配置 Embedding 模型，或在 LLM 配置页选择本地 Embedding 模型后再开始需要向量化的操作。"
+    EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "api")
     EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
     EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
     EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
@@ -195,16 +199,27 @@ class Config:
 
     @classmethod
     def get_embedding_config(cls) -> dict:
-        """获取 Embedding 配置（独立配置优先，否则复用 Agent LLM 配置）。"""
-        llm_config = cls.get_llm_config('agent')
+        """获取 Embedding 配置；必须显式配置 API 或选择本地 provider。"""
+        provider = str(cls.EMBEDDING_PROVIDER or 'api').strip().lower()
+        provider = provider if provider in {'api', 'local'} else 'api'
+        model_name = cls.LOCAL_EMBEDDING_MODEL_NAME if provider == 'local' else (cls.EMBEDDING_MODEL_NAME or 'text-embedding-3-small')
+        available = provider == 'local' or bool(cls.EMBEDDING_API_KEY)
         return {
-            "api_key": cls.EMBEDDING_API_KEY or llm_config['api_key'],
-            "base_url": cls.EMBEDDING_BASE_URL or llm_config['base_url'],
-            "model_name": cls.EMBEDDING_MODEL_NAME,
+            "provider": provider,
+            "api_key": cls.EMBEDDING_API_KEY or '',
+            "base_url": cls.EMBEDDING_BASE_URL or '',
+            "model_name": model_name,
             "api_type": cls.EMBEDDING_API_TYPE or "openai_compatible",
             "url_mode": cls.EMBEDDING_URL_MODE or "base_url",
-            "explicitly_configured": bool(cls.EMBEDDING_API_KEY),
+            "explicitly_configured": provider == 'local' or bool(cls.EMBEDDING_API_KEY),
+            "available": available,
+            "local_model_name": cls.LOCAL_EMBEDDING_MODEL_NAME,
+            "local_model_source": cls.LOCAL_EMBEDDING_MODEL_SOURCE,
         }
+
+    @classmethod
+    def is_embedding_configured(cls) -> bool:
+        return bool(cls.get_embedding_config().get('available'))
 
     # RAG 配置
     RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
@@ -276,6 +291,7 @@ class Config:
         cls.LLM_DEEPSEEK_V4_CONTEXT_WINDOW = _parse_int_env('LLM_DEEPSEEK_V4_CONTEXT_WINDOW', 1_000_000)
         cls.LLM_CONTEXT_WINDOW = _parse_int_env('LLM_CONTEXT_WINDOW', 0)
         cls.AGENT_CONTEXT_COMPRESSION_RATIO = _parse_float_env('AGENT_CONTEXT_COMPRESSION_RATIO', 0.70)
+        cls.EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "api")
         cls.EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY", "")
         cls.EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
         cls.EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
@@ -304,15 +320,26 @@ class Config:
     @classmethod
     def get_embedding_config_status(cls) -> Dict[str, Any]:
         resolved = cls.get_embedding_config()
+        provider = resolved.get('provider') or 'api'
         return {
+            'provider': provider,
+            'available': bool(resolved.get('available')),
             'api_key_configured': bool(resolved.get('api_key')),
             'api_key_masked': cls.mask_secret(resolved.get('api_key')),
             'base_url': resolved.get('base_url') or '',
             'model_name': resolved.get('model_name') or '',
             'api_type': resolved.get('api_type') or 'openai_compatible',
             'url_mode': resolved.get('url_mode') or 'base_url',
-            'resolved_from': resolved.get('resolved_from', 'embedding' if cls.EMBEDDING_API_KEY else 'agent'),
+            'resolved_from': 'embedding',
             'explicitly_configured': resolved.get('explicitly_configured', bool(cls.EMBEDDING_API_KEY)),
+            'explicit_api_key_configured': bool(cls.EMBEDDING_API_KEY),
+            'explicit_api_key_masked': cls.mask_secret(cls.EMBEDDING_API_KEY),
+            'explicit_base_url': cls.EMBEDDING_BASE_URL or '',
+            'explicit_model_name': resolved.get('model_name') or '',
+            'explicit_api_type': cls.EMBEDDING_API_TYPE or 'openai_compatible',
+            'explicit_url_mode': cls.EMBEDDING_URL_MODE or 'base_url',
+            'local_model_name': cls.LOCAL_EMBEDDING_MODEL_NAME,
+            'local_model_source': cls.LOCAL_EMBEDDING_MODEL_SOURCE,
         }
 
     @classmethod
@@ -320,8 +347,33 @@ class Config:
         cls.reload()
         agent_settings = cls.get_agent_settings_status(reload_first=False)
 
+        explicit_configs = {
+            'agent': {
+                'api_key': cls.LLM_API_KEY or '',
+                'base_url': cls.LLM_BASE_URL or 'https://api.openai.com/v1',
+                'model_name': cls.LLM_MODEL_NAME or 'gpt-4o-mini',
+                'api_type': cls.LLM_API_TYPE or 'openai_compatible',
+                'url_mode': cls.LLM_URL_MODE or 'base_url',
+            },
+            'subagent': {
+                'api_key': cls.SUBAGENT_LLM_API_KEY or '',
+                'base_url': cls.SUBAGENT_LLM_BASE_URL or '',
+                'model_name': cls.SUBAGENT_LLM_MODEL_NAME or '',
+                'api_type': cls.SUBAGENT_LLM_API_TYPE or '',
+                'url_mode': cls.SUBAGENT_LLM_URL_MODE or '',
+            },
+            'parser': {
+                'api_key': cls.PARSER_LLM_API_KEY or '',
+                'base_url': cls.PARSER_LLM_BASE_URL or '',
+                'model_name': cls.PARSER_LLM_MODEL_NAME or '',
+                'api_type': cls.PARSER_LLM_API_TYPE or '',
+                'url_mode': cls.PARSER_LLM_URL_MODE or '',
+            },
+        }
+
         def role_status(role: str) -> Dict[str, Any]:
             resolved = cls.get_llm_config(role)
+            explicit = explicit_configs.get(role, {})
             return {
                 'api_key_configured': bool(resolved['api_key']),
                 'api_key_masked': cls.mask_secret(resolved['api_key']),
@@ -331,6 +383,12 @@ class Config:
                 'url_mode': resolved.get('url_mode') or 'base_url',
                 'resolved_from': resolved['resolved_from'],
                 'explicitly_configured': resolved['explicitly_configured'],
+                'explicit_api_key_configured': bool(explicit.get('api_key')),
+                'explicit_api_key_masked': cls.mask_secret(explicit.get('api_key')),
+                'explicit_base_url': explicit.get('base_url') or '',
+                'explicit_model_name': explicit.get('model_name') or '',
+                'explicit_api_type': explicit.get('api_type') or '',
+                'explicit_url_mode': explicit.get('url_mode') or '',
             }
 
         agent_llm = role_status('agent')
@@ -494,23 +552,37 @@ class Config:
         model_name: Any = None,
         api_type: Any = None,
         url_mode: Any = None,
+        provider: Any = None,
     ) -> Dict[str, Any]:
         updates: Dict[str, Any] = {}
+        cleaned_provider = str(provider if provider is not None else cls.EMBEDDING_PROVIDER or 'api').strip().lower()
+        if cleaned_provider not in {'api', 'local'}:
+            raise ValueError('Embedding provider 只能是 api 或 local')
+        if provider is not None:
+            updates['EMBEDDING_PROVIDER'] = cleaned_provider
 
-        if api_key is not None:
+        if cleaned_provider == 'local':
+            updates['EMBEDDING_MODEL_NAME'] = cls.LOCAL_EMBEDDING_MODEL_NAME
+            updates['EMBEDDING_API_TYPE'] = 'openai_compatible'
+            updates['EMBEDDING_URL_MODE'] = 'base_url'
+
+        if api_key is not None and cleaned_provider == 'api':
             cleaned_key = str(api_key).strip()
             if not cleaned_key:
                 raise ValueError('Embedding API Key 不能为空')
             updates['EMBEDDING_API_KEY'] = cleaned_key
 
-        if base_url is not None:
+        if base_url is not None and cleaned_provider == 'api':
             updates['EMBEDDING_BASE_URL'] = str(base_url).strip()
 
-        if model_name is not None:
+        if model_name is not None and cleaned_provider == 'api':
             updates['EMBEDDING_MODEL_NAME'] = str(model_name).strip() or 'text-embedding-3-small'
 
         if api_type is not None:
-            updates['EMBEDDING_API_TYPE'] = cls._validate_api_type(api_type)
+            cleaned_api_type = cls._validate_api_type(api_type)
+            if cleaned_api_type != 'openai_compatible':
+                raise ValueError('Embedding API 目前仅支持 OpenAI 兼容格式')
+            updates['EMBEDDING_API_TYPE'] = cleaned_api_type
 
         if url_mode is not None:
             updates['EMBEDDING_URL_MODE'] = cls._validate_url_mode(url_mode)

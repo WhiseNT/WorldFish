@@ -31,6 +31,7 @@ from app.models.map import (
 from app.services.enhanced_world_extractor import EnhancedWorldExtractor
 from app.services.world_templates import (
     DEFAULT_WORLD_TEMPLATE_ID,
+    build_world_template_default_data,
     get_world_template_detail,
     get_world_template_summary,
     list_world_templates,
@@ -300,16 +301,27 @@ def create_world():
     try:
         data = request.json or {}
         template_payload = _resolve_template_payload(data.get('template_id'), data.get('template_name', ''))
+        default_data = build_world_template_default_data(template_payload['template_id'])
+        default_world_info = default_data.get('world_info') if isinstance(default_data.get('world_info'), dict) else {}
+        default_settings = copy.deepcopy(default_data.get('settings') if isinstance(default_data.get('settings'), dict) else {})
+        incoming_settings = data.get('settings') if isinstance(data.get('settings'), dict) else {}
+        merged_settings = {**default_settings, **incoming_settings}
+        if isinstance(default_settings.get('mapData'), dict) or isinstance(incoming_settings.get('mapData'), dict):
+            merged_settings['mapData'] = {
+                **(default_settings.get('mapData') if isinstance(default_settings.get('mapData'), dict) else {}),
+                **(incoming_settings.get('mapData') if isinstance(incoming_settings.get('mapData'), dict) else {}),
+            }
         world = WorldManager.create_world(
-            name=data.get('name'),
-            description=data.get('description', ''),
-            era=data.get('era', ''),
-            anchor_time=data.get('anchor_time', ''),
-            settings=data.get('settings', {}),
-            writing_style=data.get('writing_style', ''),
-            reference_text=data.get('reference_text', ''),
+            name=data.get('name') or default_world_info.get('name'),
+            description=data.get('description', default_world_info.get('description', '')),
+            era=data.get('era', default_world_info.get('era', '')),
+            anchor_time=data.get('anchor_time', default_world_info.get('anchor_time', '')),
+            settings=merged_settings,
+            writing_style=data.get('writing_style', default_world_info.get('writing_style', '')),
+            reference_text=data.get('reference_text', default_world_info.get('reference_text', '')),
             template_id=template_payload['template_id'],
             template_name=template_payload['template_name'],
+            **({"dnd_campaign": default_world_info.get("dnd_campaign")} if isinstance(default_world_info.get("dnd_campaign"), dict) else {}),
         )
         return jsonify({
             'success': True,
@@ -470,6 +482,14 @@ def extract_world():
             return jsonify({
                 'success': False,
                 'message': '请提供文本内容或上传文件（支持 PDF、Markdown、TXT、JSON 格式）'
+            }), 400
+
+        needs_embedding = uses_rag_source or (scan_source == 'input' and bool(world_id) and bool(input_text))
+        if needs_embedding and direct_json_data is None and not Config.is_embedding_configured():
+            return jsonify({
+                'success': False,
+                'message': Config.EMBEDDING_REQUIRED_MESSAGE,
+                'missing_config': 'embedding',
             }), 400
 
         if uses_rag_source:
@@ -681,7 +701,7 @@ def extract_world():
 
                 # ── 启动 RAG 索引（与 LLM 提取并行）──
                 emb_config = Config.get_embedding_config()
-                if world_id and input_text and emb_config.get('api_key') and scan_source in {'input', 'input_and_rag'}:
+                if world_id and input_text and emb_config.get('available') and scan_source in {'input', 'input_and_rag'}:
                     def _do_rag():
                         try:
                             if should_cancel() or should_pause():
@@ -729,8 +749,8 @@ def extract_world():
                     _rag_result[0] = {'rag_indexed': False, 'rag_skipped': True, 'rag_skip_reason': '仅扫描已有知识库，未重复索引'}
                 elif not world_id:
                     logger.info("RAG 索引跳过: 未提供 world_id")
-                elif not emb_config.get('api_key'):
-                    logger.warning("RAG 索引跳过: 未配置 Embedding/LLM API Key")
+                elif not emb_config.get('available'):
+                    logger.warning("RAG 索引跳过: 未配置 Embedding 模型")
 
                 if text_len > extractor.LONG_TEXT_THRESHOLD:
                     progress_cb('chunking', 8, f"文本 {text_len} 字符，正在按 {volume_profile['profile']} 策略章节感知切分...", {'volume_profile': volume_profile})
@@ -1162,6 +1182,7 @@ def update_llm_config():
                 model_name=data.get('model_name') if 'model_name' in data else None,
                 api_type=data.get('api_type') if 'api_type' in data else None,
                 url_mode=data.get('url_mode') if 'url_mode' in data else None,
+                provider=data.get('provider') if 'provider' in data else None,
             )
         else:
             config = Config.save_llm_config(
@@ -1172,6 +1193,7 @@ def update_llm_config():
                 api_type=data.get('api_type') if 'api_type' in data else None,
                 url_mode=data.get('url_mode') if 'url_mode' in data else None,
             )
+
         return jsonify({
             'success': True,
             'config': config,
@@ -1192,6 +1214,9 @@ def list_llm_models():
         data = request.json or {}
         role = data.get('role') or 'agent'
         resolved_llm = Config.get_embedding_config() if role == 'embedding' else Config.get_llm_config(role)
+        provider = str(data.get('provider') or resolved_llm.get('provider') or 'api').strip().lower()
+        if role == 'embedding' and provider == 'local':
+            return jsonify({'success': True, 'models': [Config.LOCAL_EMBEDDING_MODEL_NAME]})
         api_key = data.get('api_key') or resolved_llm['api_key']
         base_url = data.get('base_url') or resolved_llm['base_url']
         api_type = data.get('api_type') or resolved_llm.get('api_type') or 'openai_compatible'
@@ -1212,8 +1237,10 @@ def test_llm_config():
         data = request.json or {}
 
         role = data.get('role') or 'agent'
+        provider = str(data.get('provider') or '').strip().lower()
         if role == 'embedding':
             resolved_llm = Config.get_embedding_config()
+            provider = provider or resolved_llm.get('provider') or 'api'
         else:
             resolved_llm = Config.get_llm_config(role)
         api_key = data.get('api_key') or resolved_llm['api_key']
@@ -1222,23 +1249,42 @@ def test_llm_config():
         api_type = data.get('api_type') or resolved_llm.get('api_type') or 'openai_compatible'
         url_mode = data.get('url_mode') or resolved_llm.get('url_mode') or 'base_url'
 
-        if not api_key:
+        if role == 'embedding' and provider == 'local':
+            test_result = {
+                'success': True,
+                'provider': 'local',
+                'model': Config.LOCAL_EMBEDDING_MODEL_NAME,
+                'model_source': Config.LOCAL_EMBEDDING_MODEL_SOURCE,
+                'message': '本地 Embedding 模型配置可用，首次实际向量化时会自动加载/下载模型。',
+            }
+            success_message = '本地 Embedding 配置可用'
+        elif not api_key:
             return jsonify({
                 'success': False,
-                'message': '请先提供 LLM API Key'
+                'message': '请先提供 API Key'
             }), 400
-
-        test_result = LLMClient.test_connection(
-            api_key=api_key,
-            base_url=base_url,
-            model=model_name,
-            api_type=api_type,
-            url_mode=url_mode,
-        )
+        elif role == 'embedding':
+            test_result = LLMClient.test_embedding_connection(
+                api_key=api_key,
+                base_url=base_url,
+                model=model_name,
+                api_type=api_type,
+                url_mode=url_mode,
+            )
+            success_message = 'Embedding 连接测试成功'
+        else:
+            test_result = LLMClient.test_connection(
+                api_key=api_key,
+                base_url=base_url,
+                model=model_name,
+                api_type=api_type,
+                url_mode=url_mode,
+            )
+            success_message = 'LLM 连接测试成功'
 
         return jsonify({
             'success': True,
-            'message': 'LLM 连接测试成功',
+            'message': success_message,
             'config': {
                 'api_key_configured': bool(api_key),
                 'api_key_masked': Config.mask_secret(api_key),

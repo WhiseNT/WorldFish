@@ -277,6 +277,63 @@ class LLMClient:
             "reply": reply.strip(),
         }
 
+    @classmethod
+    def test_embedding_connection(
+        cls,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        api_type: Optional[str] = None,
+        url_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        cleaned_api_type = (api_type or "openai_compatible").strip().lower()
+        cleaned_url_mode = (url_mode or "base_url").strip().lower()
+        if cleaned_api_type == "anthropic":
+            raise ValueError("Anthropic 当前不支持 OpenAI 标准 Embedding 测试，请使用 OpenAI 兼容 Embedding 服务")
+        if not api_key:
+            raise ValueError("Embedding API Key 未配置")
+
+        embedding_model = model or "text-embedding-3-small"
+        test_input = ["WorldFish embedding connection test."]
+        payload = {
+            "model": embedding_model,
+            "input": test_input,
+            "encoding_format": "float",
+        }
+
+        if cleaned_url_mode == "full_url":
+            response = requests.post(
+                base_url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            raw = response.json()
+            data = raw.get("data") if isinstance(raw, dict) else None
+        else:
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            response = client.embeddings.create(**payload)
+            data = response.data
+
+        if not data:
+            raise ValueError("Embedding API 未返回 data")
+        first = data[0]
+        embedding = first.get("embedding") if isinstance(first, dict) else getattr(first, "embedding", None)
+        if not isinstance(embedding, list) or not embedding:
+            raise ValueError("Embedding API 未返回有效向量")
+        if not all(isinstance(value, (int, float)) for value in embedding[: min(16, len(embedding))]):
+            raise ValueError("Embedding API 返回的向量不是数字数组")
+
+        return {
+            "ok": True,
+            "model": embedding_model,
+            "api_type": cleaned_api_type,
+            "url_mode": cleaned_url_mode,
+            "embedding_dimensions": len(embedding),
+            "sample_count": len(data),
+        }
+
     @staticmethod
     def _models_url(base_url: str, api_type: str, url_mode: str) -> str:
         url = (base_url or '').rstrip('/')

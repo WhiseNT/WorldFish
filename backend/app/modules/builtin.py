@@ -98,6 +98,19 @@ def get_builtin_module_definitions():
         ),
         BackendModuleDefinition(
             manifest=_manifest(
+                'trpg',
+                'TRPG 跑团',
+                '基于世界观和联机房间运行局域网跑团，提供掷骰、角色卡、场景记录和会话日志。',
+                'play',
+                routes=['/trpg'],
+                nav=[],
+                depends=['world-builder', 'collaboration'],
+                capabilities=['ui', 'room', 'dice', 'character-sheet', 'session-log'],
+            ),
+            blueprints=[],
+        ),
+        BackendModuleDefinition(
+            manifest=_manifest(
                 'report',
                 '报告生成',
                 '汇总模拟、图谱和资料上下文，生成结构化报告。',

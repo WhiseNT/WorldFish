@@ -13,8 +13,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
 from openai import OpenAI
 
 from ..config import Config
@@ -83,16 +81,21 @@ CHAPTER_HEADING_RE = re.compile(
 ProgressCallback = Callable[[str, int, str, Optional[Dict[str, Any]]], None]
 
 # ChromaDB 全局客户端（线程安全）
-_chroma_client: Optional[chromadb.PersistentClient] = None
+_chroma_client: Optional[Any] = None
 _chroma_lock = threading.Lock()
 
 
-def _get_chroma_client() -> chromadb.PersistentClient:
+def _get_chroma_client() -> Any:
     """获取或创建 ChromaDB 持久化客户端（单例）。"""
     global _chroma_client
     if _chroma_client is None:
         with _chroma_lock:
             if _chroma_client is None:
+                try:
+                    import chromadb
+                    from chromadb.config import Settings as ChromaSettings
+                except ModuleNotFoundError as exc:
+                    raise RuntimeError('ChromaDB 未安装，无法使用 RAG 知识库功能。请安装 chromadb 后重试。') from exc
                 chroma_dir = os.path.join(Config.UPLOAD_FOLDER, "chroma")
                 os.makedirs(chroma_dir, exist_ok=True)
                 _chroma_client = chromadb.PersistentClient(
@@ -103,14 +106,14 @@ def _get_chroma_client() -> chromadb.PersistentClient:
     return _chroma_client
 
 
-def _get_embedding_client() -> OpenAI:
-    """获取 Embedding 客户端。
-    
-    优先使用独立的 Embedding 配置（EMBEDDING_API_KEY / EMBEDDING_BASE_URL），
-    未配置时回退到 LLM 配置。
-    """
+def _get_embedding_client():
+    """获取 API Embedding 客户端；本地 provider 不创建 API client。"""
     emb_config = Config.get_embedding_config()
-    return OpenAI(api_key=emb_config["api_key"], base_url=emb_config["base_url"])
+    if emb_config.get("provider") == "local":
+        return None
+    if not emb_config.get("api_key"):
+        raise RuntimeError(Config.EMBEDDING_REQUIRED_MESSAGE)
+    return OpenAI(api_key=emb_config["api_key"], base_url=emb_config["base_url"] or None)
 
 
 def _world_collection_name(world_id: str) -> str:
@@ -216,17 +219,12 @@ class RagService:
     def _get_local_embedding_fn(cls):
         """获取本地 Embedding 函数（懒加载，首次使用时下载模型）。"""
         if cls._local_model is None:
-            import os
-            # 使用 HF 镜像加速下载（中国大陆）
-            if not os.environ.get("HF_ENDPOINT"):
-                os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-
             from sentence_transformers import SentenceTransformer
-            # 使用轻量多语言模型，支持中英文
-            model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-            logger.info(f"加载本地 Embedding 模型: {model_name}")
-            cls._local_model = SentenceTransformer(model_name)
+            model_name = Config.LOCAL_EMBEDDING_MODEL_NAME
+            logger.info(f"加载本地 Embedding 模型: {model_name} ({Config.LOCAL_EMBEDDING_MODEL_SOURCE})")
+            cls._local_model = SentenceTransformer(model_name, trust_remote_code=True)
         return cls._local_model
+
 
     def _emit_progress(
         self,
@@ -251,13 +249,35 @@ class RagService:
         progress_start: int = 25,
         progress_end: int = 80,
     ) -> List[List[float]]:
-        """将文本列表转为向量。先尝试 API，失败则回退到本地模型。"""
+        """将文本列表转为向量。根据显式 provider 使用 API 或本地模型。"""
         if not texts:
             return []
 
         emb_config = Config.get_embedding_config()
+        if not emb_config.get("available"):
+            raise RuntimeError(Config.EMBEDDING_REQUIRED_MESSAGE)
+
         total = len(texts)
         batch_count = max(1, (total + batch_size - 1) // batch_size)
+
+        if emb_config.get("provider") == "local":
+            self._emit_progress(progress_callback, "embedding", progress_start, f"正在使用本地模型生成向量：{Config.LOCAL_EMBEDDING_MODEL_NAME}", {
+                "total_chunks": total,
+                "embedding_provider": "local",
+                "model": Config.LOCAL_EMBEDDING_MODEL_NAME,
+                "model_source": Config.LOCAL_EMBEDDING_MODEL_SOURCE,
+            })
+            model = self._get_local_embedding_fn()
+            embeddings = model.encode(texts, normalize_embeddings=True)
+            self._emit_progress(progress_callback, "embedding", progress_end, f"本地向量生成完成：{total}/{total} 个文本块", {
+                "total_chunks": total,
+                "processed_chunks": total,
+                "embedding_provider": "local",
+            })
+            return [emb.tolist() if hasattr(emb, "tolist") else list(emb) for emb in embeddings]
+
+        if self._embedding_client is None:
+            raise RuntimeError(Config.EMBEDDING_REQUIRED_MESSAGE)
 
         def _api_embed_batch(batch: List[str]) -> List[List[float]]:
             response = self._embedding_client.embeddings.create(
@@ -268,45 +288,24 @@ class RagService:
             return [item.embedding for item in response.data]
 
         all_embeddings = []
-
-        try:
-            self._emit_progress(progress_callback, "embedding", progress_start, f"正在生成向量：共 {total} 个文本块，{batch_count} 个批次", {
+        self._emit_progress(progress_callback, "embedding", progress_start, f"正在生成向量：共 {total} 个文本块，{batch_count} 个批次", {
+            "total_chunks": total,
+            "batch_count": batch_count,
+            "embedding_provider": "api",
+        })
+        for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
+            batch = texts[i:i + batch_size]
+            all_embeddings.extend(_api_embed_batch(batch))
+            processed = min(i + len(batch), total)
+            progress = progress_start + int((progress_end - progress_start) * processed / max(total, 1))
+            self._emit_progress(progress_callback, "embedding", progress, f"正在生成向量：第 {batch_index}/{batch_count} 批，已处理 {processed}/{total} 个文本块", {
                 "total_chunks": total,
+                "processed_chunks": processed,
+                "batch_index": batch_index,
                 "batch_count": batch_count,
                 "embedding_provider": "api",
             })
-            for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
-                batch = texts[i:i + batch_size]
-                all_embeddings.extend(_api_embed_batch(batch))
-                processed = min(i + len(batch), total)
-                progress = progress_start + int((progress_end - progress_start) * processed / max(total, 1))
-                self._emit_progress(progress_callback, "embedding", progress, f"正在生成向量：第 {batch_index}/{batch_count} 批，已处理 {processed}/{total} 个文本块", {
-                    "total_chunks": total,
-                    "processed_chunks": processed,
-                    "batch_index": batch_index,
-                    "batch_count": batch_count,
-                    "embedding_provider": "api",
-                })
-            return all_embeddings
-        except Exception as e:
-            logger.warning(f"API Embedding 失败 ({e})，回退到本地模型")
-            self._emit_progress(progress_callback, "embedding_fallback", progress_start, "API Embedding 失败，正在回退到本地模型", {
-                "total_chunks": total,
-                "embedding_provider": "local",
-                "api_error": str(e)[:200],
-            })
-            try:
-                model = self._get_local_embedding_fn()
-                embeddings = model.encode(texts, normalize_embeddings=True)
-                self._emit_progress(progress_callback, "embedding", progress_end, f"本地向量生成完成：{total}/{total} 个文本块", {
-                    "total_chunks": total,
-                    "processed_chunks": total,
-                    "embedding_provider": "local",
-                })
-                return [emb.tolist() for emb in embeddings]
-            except Exception as local_e:
-                logger.error(f"本地 Embedding 也失败: {local_e}")
-                raise RuntimeError(f"Embedding 不可用：API({e}) + 本地({local_e})")
+        return all_embeddings
 
     # ------------------------------------------------------------------
     # 文档管理

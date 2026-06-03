@@ -6,6 +6,9 @@
       </keep-alive>
     </router-view>
     <ExtractionTaskFloating />
+    <SpecialEntryFloating />
+    <SillyTavernWorldBookEntryRegistrar />
+    <TrpgEntryRegistrar />
     <AgentFloating />
   </AppLayout>
 </template>
@@ -14,6 +17,9 @@
 import AppLayout from './components/AppLayout.vue'
 import AgentFloating from './components/AgentFloating.vue'
 import ExtractionTaskFloating from './components/ExtractionTaskFloating.vue'
+import SillyTavernWorldBookEntryRegistrar from './components/SillyTavernWorldBookEntryRegistrar.vue'
+import SpecialEntryFloating from './components/SpecialEntryFloating.vue'
+import TrpgEntryRegistrar from './components/TrpgEntryRegistrar.vue'
 
 function buildRouteCacheKey(route) {
   if (route?.name === 'WorldBuilder') {

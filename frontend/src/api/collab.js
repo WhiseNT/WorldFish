@@ -41,6 +41,12 @@ export const collabApi = {
   health() {
     return http.get('/api/collab/health')
   },
+  getLanInfo() {
+    return http.get('/api/collab/lan/info')
+  },
+  getRoomInvite(roomId) {
+    return http.get(`/api/collab/rooms/${roomId}/invite`)
+  },
   ensureWorldRoom(worldId, data = {}) {
     return http.post(`/api/collab/worlds/${worldId}/room`, data)
   },

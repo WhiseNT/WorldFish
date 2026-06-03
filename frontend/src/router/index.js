@@ -36,10 +36,22 @@ const routes = [
     meta: { moduleId: 'simulation' },
   },
   {
+    path: '/trpg',
+    name: 'TrpgRoom',
+    component: () => import('../views/TrpgRoomView.vue'),
+    meta: { moduleId: 'trpg' },
+  },
+  {
     path: '/rag',
     name: 'RagView',
     component: () => import('../views/RagView.vue'),
     meta: { moduleId: 'rag' },
+  },
+  {
+    path: '/exports/sillytavern-world-book',
+    name: 'SillyTavernWorldBookExport',
+    component: () => import('../views/SillyTavernWorldBookExportView.vue'),
+    meta: { moduleId: 'world-builder' },
   },
   {
     path: '/collab',

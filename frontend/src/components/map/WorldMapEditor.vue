@@ -17,6 +17,11 @@
         <button :disabled="!parentMap" @click="jumpToParentMap">返回上级</button>
         <button class="danger" :disabled="!currentMap" @click="deleteMap">删除</button>
       </div>
+      <div class="trpg-map-actions">
+        <span>跑团地图</span>
+        <button class="trpg-dnd" :disabled="loading" @click="createPresetTrpgMap('dnd')">创建 DND 战斗地图</button>
+        <button class="trpg-coc" :disabled="loading" @click="createPresetTrpgMap('coc')">创建 COC 调查地图</button>
+      </div>
       <div class="layer-switcher">
         <button v-for="layer in layers" :key="layer.value" :class="{ active: activeLayer === layer.value }" @click="activeLayer = layer.value">
           {{ layer.label }}
@@ -31,18 +36,77 @@
         <option value="continent">大陆地图</option>
         <option value="country">国家地图</option>
         <option value="region">区域地图</option>
+        <option value="city">城市/调查地图</option>
+        <option value="battlefield">战斗地图</option>
+        <option value="dungeon">地牢地图</option>
       </select>
-      <input v-model.number="newMap.radius" type="number" min="1" max="12" class="toolbar-field small" title="六边形半径" />
+      <select v-model="newMap.grid_type" class="toolbar-field">
+        <option value="hex">六边形</option>
+        <option value="square">方格</option>
+      </select>
+      <template v-if="newMap.grid_type === 'square'">
+        <input v-model.number="newMap.width" type="number" min="2" max="80" class="toolbar-field small" title="方格宽度" />
+        <input v-model.number="newMap.height" type="number" min="2" max="80" class="toolbar-field small" title="方格高度" />
+      </template>
+      <input v-else v-model.number="newMap.radius" type="number" min="1" max="12" class="toolbar-field small" title="六边形半径" />
       <button class="primary" :disabled="loading" @click="createMap">创建</button>
     </section>
 
     <p v-if="statusText" class="status-text">{{ statusText }}</p>
 
+    <section v-if="currentMap && isSquareMap(currentMap)" class="square-align-panel">
+      <div class="align-head">
+        <div>
+          <h3>方格背景图与对齐</h3>
+          <p>上传跑团地图图片后，调节格子大小、图片缩放和偏移，让网格与背景图对齐。</p>
+        </div>
+        <div class="align-actions">
+          <input ref="backgroundInput" type="file" accept="image/*" class="hidden-file" @change="handleBackgroundImageSelect" />
+          <button type="button" @click="$refs.backgroundInput.click()">上传背景图</button>
+          <button type="button" :disabled="!currentMap.background_image" @click="clearBackgroundImage">清除背景</button>
+        </div>
+      </div>
+      <div class="align-controls">
+        <label>格子大小
+          <input v-model.number="currentMap.view.grid_size" type="range" min="16" max="160" @input="saveCurrentMapMeta" />
+          <span>{{ currentMap.view.grid_size }}px</span>
+        </label>
+        <label>图片缩放
+          <input v-model.number="currentMap.view.image_scale" type="range" min="0.1" max="5" step="0.01" @input="saveCurrentMapMeta" />
+          <span>{{ currentMap.view.image_scale.toFixed(2) }}x</span>
+        </label>
+        <label>图片 X 偏移
+          <input v-model.number="currentMap.view.image_offset_x" type="range" min="-1000" max="1000" @input="saveCurrentMapMeta" />
+          <span>{{ currentMap.view.image_offset_x }}px</span>
+        </label>
+        <label>图片 Y 偏移
+          <input v-model.number="currentMap.view.image_offset_y" type="range" min="-1000" max="1000" @input="saveCurrentMapMeta" />
+          <span>{{ currentMap.view.image_offset_y }}px</span>
+        </label>
+        <label>网格透明度
+          <input v-model.number="currentMap.view.grid_opacity" type="range" min="0" max="1" step="0.01" @input="saveCurrentMapMeta" />
+          <span>{{ Math.round(currentMap.view.grid_opacity * 100) }}%</span>
+        </label>
+        <label>图片透明度
+          <input v-model.number="currentMap.view.image_opacity" type="range" min="0" max="1" step="0.01" @input="saveCurrentMapMeta" />
+          <span>{{ Math.round(currentMap.view.image_opacity * 100) }}%</span>
+        </label>
+      </div>
+    </section>
+
     <div v-if="currentMap" class="map-layout">
       <main class="map-main">
         <MapSearchPanel :loading="searching" :results="searchResults" @search="searchMap" @select-result="selectSearchResult" />
         <MapBatchEditor :selected-count="selectedIds.length" :saving="saving" @apply="applyBatchUpdate" />
+        <SquareGridMap
+          v-if="isSquareMap(currentMap)"
+          :map="currentMap"
+          :cells="currentMap.cells || []"
+          :selected-ids="selectedIds"
+          @select-cell="handleSelectCell"
+        />
         <HexGrid
+          v-else
           :map="currentMap"
           :cells="currentMap.cells || []"
           :selected-ids="selectedIds"
@@ -70,14 +134,16 @@
 </template>
 
 <script>
+import { createSquareMapCells, isSquareTrpgMap, normalizeMapView } from '../../utils/trpgMap.js'
 import HexGrid from './HexGrid.vue'
 import MapBatchEditor from './MapBatchEditor.vue'
 import MapCellPanel from './MapCellPanel.vue'
 import MapSearchPanel from './MapSearchPanel.vue'
+import SquareGridMap from './SquareGridMap.vue'
 
 export default {
   name: 'WorldMapEditor',
-  components: { HexGrid, MapBatchEditor, MapCellPanel, MapSearchPanel },
+  components: { HexGrid, MapBatchEditor, MapCellPanel, MapSearchPanel, SquareGridMap },
   props: {
     worldId: { type: String, default: '' },
     initialMaps: { type: Array, default: () => [] },
@@ -97,7 +163,7 @@ export default {
       searching: false,
       showCreate: false,
       statusText: '',
-      newMap: { name: '世界地图', type: 'world', radius: 4 },
+      newMap: { name: '世界地图', type: 'world', radius: 4, width: 24, height: 18, grid_type: 'hex', trpg_system: '', trpg_role: '' },
       layers: [
         { value: 'terrain', label: '地形' },
         { value: 'faction', label: '势力' },
@@ -151,9 +217,12 @@ export default {
         .map(item => ({
           ...item,
           cells: Array.isArray(item.cells) ? item.cells.map(cell => ({ color: '', linked_map_id: '', ...cell })) : [],
+          grid_type: item.grid_type || item.gridType || item.custom?.grid_type || 'hex',
           width: Number(item.width || ((Number(item.radius || 4) * 2) + 1)),
           height: Number(item.height || ((Number(item.radius || 4) * 2) + 1)),
           radius: Number(item.radius || Math.floor((Number(item.width || 9) - 1) / 2) || 4),
+          background_image: item.background_image || item.backgroundImage || '',
+          view: isSquareTrpgMap(item) ? normalizeMapView(item.view || {}) : (item.view || { scale: 1, offset_x: 0, offset_y: 0 }),
           parent_map_id: item.parent_map_id || '',
           parent_cell_id: item.parent_cell_id || '',
         }))
@@ -163,13 +232,54 @@ export default {
     emitMapsChange() {
       this.$emit('maps-change', this.maps)
     },
+    isSquareMap(map) {
+      return isSquareTrpgMap(map)
+    },
+    saveCurrentMapMeta() {
+      if (!this.currentMap) return
+      if (this.isSquareMap(this.currentMap)) {
+        this.currentMap.view = normalizeMapView(this.currentMap.view || {})
+      }
+      this.currentMap.updated_at = new Date().toISOString()
+      this.maps = this.maps.map(item => item.id === this.currentMap.id ? this.currentMap : item)
+      this.emitMapsChange()
+    },
+    handleBackgroundImageSelect(event) {
+      const file = event.target?.files?.[0]
+      if (!file || !this.currentMap) return
+      if (!file.type.startsWith('image/')) {
+        this.statusText = '请选择图片文件'
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => {
+        this.currentMap.background_image = String(reader.result || '')
+        this.saveCurrentMapMeta()
+        this.statusText = '背景图已加载，点击“保存世界观”后持久化'
+      }
+      reader.onerror = () => {
+        this.statusText = '背景图读取失败'
+      }
+      reader.readAsDataURL(file)
+      event.target.value = ''
+    },
+    clearBackgroundImage() {
+      if (!this.currentMap) return
+      this.currentMap.background_image = ''
+      this.saveCurrentMapMeta()
+      this.statusText = '背景图已清除，点击“保存世界观”后持久化'
+    },
     loadCurrentMap() {
+
       if (!this.currentMapId) {
         this.currentMap = null
         return
       }
       const target = this.maps.find(item => item.id === this.currentMapId)
       this.currentMap = target || null
+      if (this.currentMap && this.isSquareMap(this.currentMap)) {
+        this.currentMap.view = normalizeMapView(this.currentMap.view || {})
+      }
       this.selectedIds = []
       this.highlightedIds = []
       if (this.currentMap) this.statusText = `已加载：${this.currentMap.name}`
@@ -220,14 +330,23 @@ export default {
       }
       return cells
     },
+    async createPresetTrpgMap(system) {
+      const presets = {
+        dnd: { name: 'DND 战斗地图', type: 'battlefield', grid_type: 'square', width: 24, height: 18, radius: 0, trpg_system: 'dnd', trpg_role: 'battle' },
+        coc: { name: 'COC 调查地图', type: 'city', grid_type: 'square', width: 16, height: 12, radius: 0, trpg_system: 'coc', trpg_role: 'investigation' },
+      }
+      this.newMap = { ...this.newMap, ...(presets[system] || presets.dnd) }
+      await this.createMap()
+    },
     async createMap() {
       const ok = await this.ensureWorldId()
       if (!ok) return
       this.loading = true
       try {
+        const isSquare = this.newMap.grid_type === 'square'
         const radius = Math.max(1, Math.min(12, Number(this.newMap.radius || 4)))
-        const width = radius * 2 + 1
-        const height = radius * 2 + 1
+        const width = isSquare ? Math.max(2, Math.min(80, Number(this.newMap.width || 24))) : radius * 2 + 1
+        const height = isSquare ? Math.max(2, Math.min(80, Number(this.newMap.height || 18))) : radius * 2 + 1
         const id = this.createLocalId('map')
         const created = {
           id,
@@ -237,13 +356,22 @@ export default {
           type: this.newMap.type || 'world',
           width,
           height,
-          radius,
+          radius: isSquare ? 0 : radius,
+          grid_type: isSquare ? 'square' : 'hex',
+          background_image: '',
           parent_map_id: this.selectedCell?.map_id || '',
           parent_cell_id: this.selectedCell?.id || '',
+          trpg_system: this.newMap.trpg_system || '',
+          trpg_role: this.newMap.trpg_role || '',
+          custom: {
+            grid_type: isSquare ? 'square' : 'hex',
+            trpg_system: this.newMap.trpg_system || '',
+            trpg_role: this.newMap.trpg_role || '',
+          },
           is_default: this.maps.length === 0,
-          view: { scale: 1, offset_x: 0, offset_y: 0 },
+          view: isSquare ? normalizeMapView({}) : { scale: 1, offset_x: 0, offset_y: 0 },
           layers: ['terrain', 'faction', 'resource', 'event', 'status'].map(type => ({ type, visible: type === 'terrain', rules: {}, field: type })),
-          cells: this.createHexagonCells(id, radius),
+          cells: isSquare ? createSquareMapCells(id, width, height) : this.createHexagonCells(id, radius),
           change_records: [],
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -428,7 +556,17 @@ export default {
 .toolbar-field option:hover,
 .toolbar-field option:focus { background: var(--wf-dropdown-option-active); }
 .toolbar-field.small { width: 86px; }
-.map-actions, .layer-switcher { display: flex; gap: 8px; flex-wrap: wrap; }
+.map-actions, .layer-switcher, .trpg-map-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.trpg-map-actions {
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.035);
+}
+.trpg-map-actions span { color: var(--wf-text-muted); font-size: 13px; font-weight: 600; }
+.trpg-map-actions .trpg-dnd { color: #93c5fd; }
+.trpg-map-actions .trpg-coc { color: #fbbf24; }
 button {
   border: 1px solid var(--wf-border-light);
   border-radius: var(--radius-md);
@@ -444,6 +582,22 @@ button.active, .primary { background: var(--wf-accent); color: var(--wf-text-on-
 button.danger { color: var(--wf-danger); }
 button:disabled { opacity: .4; cursor: not-allowed; }
 .status-text { margin: 0; color: var(--wf-text-muted); font-size: 13px; }
+.hidden-file { display: none; }
+.square-align-panel {
+  display: grid;
+  gap: var(--spacing-md);
+  border: 1px solid var(--wf-border);
+  border-radius: var(--radius-lg);
+  background: var(--wf-bg-card);
+  padding: var(--spacing-md);
+}
+.align-head { display: flex; justify-content: space-between; gap: var(--spacing-md); align-items: flex-start; }
+.align-head h3 { margin: 0 0 4px; }
+.align-head p { margin: 0; color: var(--wf-text-secondary); line-height: 1.5; }
+.align-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.align-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.align-controls label { display: grid; gap: 5px; color: var(--wf-text-secondary); font-size: 13px; }
+.align-controls span { color: var(--wf-text-muted); font-family: var(--font-mono); }
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 .map-main { display: grid; gap: 12px; }
 .empty-map-state {

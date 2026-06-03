@@ -10,9 +10,13 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import re
+import socket
 import time
+from urllib.parse import urlencode
 
 from flask import Blueprint, jsonify, request
 
@@ -32,6 +36,8 @@ MAX_SUMMARY_LEN = 2000
 ID_PATTERN = re.compile(r'^[A-Za-z0-9_\-:.]{1,128}$')
 SYNC_TIMEOUT_SECONDS = 25
 SYNC_INTERVAL_SECONDS = 1.0
+DEFAULT_FRONTEND_PORT = 5567
+DEFAULT_BACKEND_PORT = 5568
 
 
 def _ok(**payload):
@@ -80,6 +86,116 @@ def _validate_payload(payload) -> dict:
     return payload
 
 
+def _int_env(keys, default: int) -> int:
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _is_lan_ipv4(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return bool(
+        address.version == 4
+        and not address.is_loopback
+        and not address.is_unspecified
+        and not address.is_multicast
+        and not address.is_link_local
+    )
+
+
+def _collect_lan_ipv4_addresses() -> list[str]:
+    addresses: set[str] = set()
+
+    try:
+        hostname = socket.gethostname()
+        for value in socket.gethostbyname_ex(hostname)[2]:
+            if _is_lan_ipv4(value):
+                addresses.add(value)
+    except OSError:
+        pass
+
+    try:
+        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            value = item[4][0]
+            if _is_lan_ipv4(value):
+                addresses.add(value)
+    except OSError:
+        pass
+
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(('8.8.8.8', 80))
+        value = probe.getsockname()[0]
+        if _is_lan_ipv4(value):
+            addresses.add(value)
+    except OSError:
+        pass
+    finally:
+        try:
+            probe.close()
+        except (NameError, OSError):
+            pass
+
+    def sort_key(value: str):
+        address = ipaddress.ip_address(value)
+        return (0 if address.is_private else 1, value)
+
+    return sorted(addresses, key=sort_key)
+
+
+def _request_host_without_port() -> str:
+    host = request.headers.get('X-Forwarded-Host') or request.host or ''
+    host = host.split(',')[0].strip()
+    if not host:
+        return ''
+    if host.startswith('['):
+        return host.strip('[]')
+    return host.split(':')[0]
+
+
+def _collab_lan_payload(room_id: str = '') -> dict:
+    frontend_port = _int_env(['FRONTEND_PORT'], DEFAULT_FRONTEND_PORT)
+    backend_port = _int_env(['FLASK_PORT', 'BACKEND_PORT'], DEFAULT_BACKEND_PORT)
+    scheme = request.headers.get('X-Forwarded-Proto') or request.scheme or 'http'
+    lan_hosts = _collect_lan_ipv4_addresses()
+    request_host = _request_host_without_port()
+    if request_host and _is_lan_ipv4(request_host) and request_host not in lan_hosts:
+        lan_hosts.insert(0, request_host)
+
+    hosts = lan_hosts or ['127.0.0.1']
+    query = {'roomId': room_id} if room_id else {}
+    collab_path = '/collab'
+    query_text = f'?{urlencode(query)}' if query else ''
+    addresses = [
+        {
+            'host': host,
+            'frontend_url': f'{scheme}://{host}:{frontend_port}',
+            'backend_url': f'{scheme}://{host}:{backend_port}',
+            'join_url': f'{scheme}://{host}:{frontend_port}{collab_path}{query_text}',
+        }
+        for host in hosts
+    ]
+    return {
+        'hostname': socket.gethostname(),
+        'frontend_port': frontend_port,
+        'backend_port': backend_port,
+        'addresses': addresses,
+        'primary_host': hosts[0],
+        'primary_frontend_url': addresses[0]['frontend_url'],
+        'primary_backend_url': addresses[0]['backend_url'],
+        'primary_join_url': addresses[0]['join_url'],
+    }
+
+
 def _handle(action, status_on_value=400):
     """统一异常 → HTTP 映射。返回 (response, None) 或 (None, result)。"""
     try:
@@ -106,6 +222,11 @@ def health():
         return _ok(status='ok', stats=stats)
     except Exception as exc:  # noqa: BLE001
         return _error(f'协作存储不可用: {exc}', 500)
+
+
+@collab_bp.route('/lan/info', methods=['GET'])
+def lan_info():
+    return _ok(lan=_collab_lan_payload())
 
 
 @collab_bp.route('/bootstrap', methods=['GET'])
@@ -172,6 +293,17 @@ def get_room(room_id: str):
     if not room:
         return _error(f'房间不存在: {room_id}', 404)
     return _ok(room=room.to_dict())
+
+
+@collab_bp.route('/rooms/<room_id>/invite', methods=['GET'])
+def get_room_invite(room_id: str):
+    if not _valid_id(room_id):
+        return _error('room_id 非法', 400)
+    room = CollabManager.get_room(room_id)
+    if not room:
+        return _error(f'房间不存在: {room_id}', 404)
+    lan = _collab_lan_payload(room_id)
+    return _ok(room=room.to_dict(), lan=lan, invite_url=lan['primary_join_url'])
 
 
 @collab_bp.route('/rooms/<room_id>/join', methods=['POST'])
