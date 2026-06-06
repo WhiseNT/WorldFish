@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
+from ..domain.canonical_world import CANONICAL_WORLD_MODEL_VERSION
 from ..utils.logger import get_logger
 
 logger = get_logger("worldfish.model.world")
@@ -654,6 +655,7 @@ class WorldSetting:
 
     _KNOWN_FIELDS = {
         "id",
+        "schema_version",
         "name",
         "description",
         "era",
@@ -684,7 +686,9 @@ class WorldSetting:
         **extra_fields: Any,
     ):
         now = datetime.now().isoformat()
+        schema_version = extra_fields.pop("schema_version", CANONICAL_WORLD_MODEL_VERSION)
         self.id = id
+        self.schema_version = schema_version or CANONICAL_WORLD_MODEL_VERSION
         self.name = name
         self.description = description or ""
         self.era = era or ""
@@ -735,6 +739,7 @@ class WorldSetting:
         world = cls(
             id=payload.get("id") or f"world_{uuid.uuid4().hex[:12]}",
             name=payload.get("name", ""),
+            schema_version=payload.get("schema_version") or CANONICAL_WORLD_MODEL_VERSION,
             description=payload.get("description", ""),
             era=payload.get("era", ""),
             anchor_time=payload.get("anchor_time", ""),
@@ -760,9 +765,11 @@ class WorldSetting:
         if isinstance(world_info, dict):
             payload = {**world_info, **payload}
 
-        for field_name in ("name", "description", "era", "anchor_time", "writing_style", "reference_text"):
+        for field_name in ("name", "description", "era", "anchor_time", "writing_style", "reference_text", "schema_version"):
             if field_name in payload:
                 setattr(self, field_name, payload.get(field_name) or "")
+        if not self.schema_version:
+            self.schema_version = CANONICAL_WORLD_MODEL_VERSION
 
         if "settings" in payload:
             self.settings = payload.get("settings") or {}
@@ -783,6 +790,7 @@ class WorldSetting:
         _normalize_world_entity_setting_links(self)
         data = {
             "id": self.id,
+            "schema_version": self.schema_version or CANONICAL_WORLD_MODEL_VERSION,
             "name": self.name,
             "description": self.description,
             "era": self.era,

@@ -114,7 +114,7 @@ def test_collab_api_bootstrap_and_module_guard(tmp_path):
         assert response.status_code == 200
         assert response.get_json()['room']['id'] == 'local_room'
 
-        registry.disable('collaboration')
+        registry.disable('collaboration', cascade=True)
         response = client.get('/api/collab/bootstrap')
         assert response.status_code == 503
         assert response.get_json()['module_id'] == 'collaboration'
