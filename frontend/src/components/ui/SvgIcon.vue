@@ -142,6 +142,10 @@
       <path d="M18 3v4h-4" />
       <path d="M6 21v-4h4" />
     </template>
+    <template v-else-if="name === 'send'">
+      <path d="M22 2 11 13" />
+      <path d="m22 2-7 20-4-9-9-4 20-7z" />
+    </template>
     <template v-else-if="name === 'undo'">
       <path d="M9 7 4 12l5 5" />
       <path d="M4 12h10a6 6 0 0 1 0 12" transform="translate(0 -5)" />
